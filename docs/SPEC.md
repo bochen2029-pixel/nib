@@ -62,6 +62,23 @@ consumed, since that is the state the inverse will be applied to.
 2.3.3 A new edit after one or more undos discards the redo stack. The log retains every revision
 regardless.
 
+2.3.4 Undo MUST operate on **groups**, not single edits. A burst of typing is one thing a person
+did, and an editor that unpicks it a character at a time is correct against the log and unusable.
+An edit joins the open group only if **all** of: the same author, contiguous with the previous
+edit, within `Doc::kGroupMs` (700 ms) of it, and of the same kind (inserting or deleting). A
+newline closes the group on the edit that inserted it, since a person who pressed Enter has
+finished a thought.
+
+2.3.5 The **author** clause of 2.3.4 is load-bearing beyond convenience: from Stage 1 the resident
+writes into the same buffer a person is typing into, and its edits MUST NOT fuse into that
+person's undo. `Doc::apply` — the path a non-local changeset takes — closes the open group
+unconditionally.
+
+2.3.6 The undo and redo stacks carry **opposite orderings**, and both are normative. An undo group
+is stored in edit order and applied newest-first, because each inverse was computed against the
+text its own edit produced (2.3.2) and they compose only in that order. A redo group is stored in
+apply order and applied forwards. Reversing either half-restores a burst.
+
 ---
 
 ## 3 · The changeset library
@@ -341,8 +358,16 @@ splices (canonical form and applied result), one thousand random edits interleav
 
 11.4 The window MUST be verified by a driver that posts window messages and reads an artefact —
 `WM_APP+1` commands and the `NIB_LOG` file. **Synthesising global input is forbidden**: it lands
-wherever the focus happens to be, which can type into another application's window. **[BUILT: the
-seam. The driver itself is unbuilt.]**
+wherever the focus happens to be, which can type into another application's window. **[BUILT]** —
+`tools/drive.py`, 17 checks, 2026-09-04.
+
+11.4.1 The driver MUST bind to the window of the process it launched, not to a class name.
+`FindWindow` by class alone returns any nib window, including one left over from an earlier case or
+one the operator has open; two runs in three failed that way, and the failure presents as a defect
+in the editor rather than in the harness.
+
+11.4.2 The driver MUST wait on artefacts — a further line appearing in `NIB_LOG` — rather than
+sleeping a fixed interval. A battery that sleeps is a battery that is flaky on a loaded box.
 
 11.5 No performance number appears in any document or on any surface unless it was measured on the
 machine it claims, with its date.
