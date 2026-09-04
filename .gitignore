@@ -1,0 +1,13 @@
+*.obj
+*.res
+*.exe
+*.pdb
+*.ilk
+*.log
+*.png
+!docs/*.png
+fray.ini
+obj/
+runs/
+build-dependents.txt
+build-imports.txt
