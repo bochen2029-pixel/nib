@@ -1,0 +1,11 @@
+# nib.theme - the palette from the operator's screenshots.
+# Colours are data. Edit freely, or re-derive them from any image:
+#     python tools/theme_detect.py shot.png
+# nib reads this file at startup and falls back to its own defaults for anything missing.
+background #0d1520
+foreground #2196f3
+dim        #3f5f7a
+accent     #2196f3
+selection  #16324a
+font       Consolas
+font_pt    11

@@ -5,19 +5,23 @@
 // rebuilt when the window moves to a different monitor, because a text editor that is blurry on
 // the second screen is a text editor nobody uses on the second screen.
 //
-// What is here: the buffer and its caret, typing, backspace and delete, Enter, the arrows, Home
-// and End, page up and down, wheel and keyboard scrolling, undo and redo, and the status line.
-// What is deliberately NOT here yet: selection, files, find. They are the next slice, and the
-// window is more useful sooner without them than late with them.
-//
 // The one law this file must not break: **every edit goes through Doc::splice.** Nothing touches
-// the text directly, so the log stays complete and `--selftest`'s replay check keeps meaning
-// something.
+// the text directly, so the log stays complete and the replay check keeps meaning something.
+//
+// Two conventions that are decisions, not accidents:
+//   * The document holds LF only, because the changeset format counts '\n' and a CRLF document
+//     would make every line's length disagree with its op. A file's own convention is REMEMBERED
+//     on open and restored on save — nib does not silently convert somebody's file.
+//   * A save is atomic: a temporary beside the target, then a replace. A crash halfway through
+//     must not be able to destroy the thing it was saving.
 #include "doc.h"
 
 #include <windows.h>
+#include <commdlg.h>
 #include <windowsx.h>
 
+#include <cstdarg>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -25,31 +29,135 @@ namespace nib {
 
 namespace {
 
+// The driver seam. A window is verified by posting the messages a keyboard would cause and then
+// reading an artefact — never by synthesising global input, which lands wherever the focus happens
+// to be and can type into somebody else's window. WM_APP+1 carries a command; NIB_LOG names a file
+// every command result is appended to. Same shape as glance's WM_APP_REATTACH and GLANCE_LOG.
+// The palette is data: `nib.theme` beside the exe, written by tools/theme_detect.py from an
+// image, or edited by hand. Anything missing or unparsable falls back to the value below.
+struct Theme {
+    COLORREF bg = RGB(0x0d, 0x15, 0x20);
+    COLORREF fg = RGB(0x21, 0x96, 0xf3);
+    COLORREF dim = RGB(0x3f, 0x5f, 0x7a);
+    COLORREF accent = RGB(0x21, 0x96, 0xf3);
+    COLORREF sel = RGB(0x16, 0x32, 0x4a);
+    std::wstring font = L"Consolas";
+    int pt = 11;
+};
+
+enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop };
+constexpr UINT WM_NIB_CMD = WM_APP + 1;
+
 struct View {
     Doc doc;
     LineIndex idx;
     size_t caret = 0;          // byte offset into the document
-    size_t want_col = 0;       // the column the caret is aiming for while moving vertically
+    size_t anchor = 0;         // the other end of the selection; == caret means no selection
+    size_t want_col = 0;       // the column the caret aims for while moving vertically
     size_t top_line = 0;       // the first line painted
+    bool dragging = false;
+
+    std::wstring path;         // "" = untitled
+    bool crlf = false;         // the file used CRLF, and will again
+    bool bom = false;          // the file began with a UTF-8 BOM, and will again
+    size_t saved_rev = 0;      // the revision count when it was last written
+
     HFONT font = nullptr;
-    int cw = 8, ch = 16;       // one character's advance and a line's height, in physical px
+    int cw = 8, ch = 16;
     int dpi = 96;
     std::string status;
-    bool dirty_status = true;
+    FILE* log = nullptr;
+    Theme th;
 };
 
+// "#rrggbb" -> COLORREF, or false and the caller keeps its default
+bool parse_hex(const std::string& v, COLORREF& out) {
+    if (v.size() != 7 || v[0] != '#') return false;
+    unsigned r = 0, gg = 0, b = 0;
+    if (sscanf(v.c_str() + 1, "%2x%2x%2x", &r, &gg, &b) != 3) return false;
+    out = RGB(r, gg, b);
+    return true;
+}
+
+void load_theme(Theme& t) {
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring dir(exe);
+    const size_t slash = dir.find_last_of(L"\\/");
+    dir = slash == std::wstring::npos ? L"." : dir.substr(0, slash);
+    FILE* f = _wfopen((dir + L"\\nib.theme").c_str(), L"rb");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof line, f)) {
+        std::string s2(line);
+        while (!s2.empty() && (s2.back() == 10 || s2.back() == 13 || s2.back() == 32)) s2.pop_back();
+        if (s2.empty() || s2[0] == '#') continue;
+        const size_t sp = s2.find_first_of(" \t");
+        if (sp == std::string::npos) continue;
+        const std::string k = s2.substr(0, sp);
+        std::string v = s2.substr(sp);
+        while (!v.empty() && (v[0] == ' ' || v[0] == '	')) v.erase(0, 1);
+        if (k == "background") parse_hex(v, t.bg);
+        else if (k == "foreground") parse_hex(v, t.fg);
+        else if (k == "dim") parse_hex(v, t.dim);
+        else if (k == "accent") parse_hex(v, t.accent);
+        else if (k == "selection") parse_hex(v, t.sel);
+        else if (k == "font_pt") { const int n = atoi(v.c_str()); if (n >= 6 && n <= 48) t.pt = n; }
+        else if (k == "font") {
+            const int n = MultiByteToWideChar(CP_UTF8, 0, v.data(), (int)v.size(), nullptr, 0);
+            std::wstring w2((size_t)(n > 0 ? n : 0), L'\00');
+            if (n > 0) { MultiByteToWideChar(CP_UTF8, 0, v.data(), (int)v.size(), w2.data(), n); t.font = w2; }
+        }
+    }
+    fclose(f);
+}
+
 View* g = nullptr;
-constexpr int kPad = 8;        // logical px of margin, scaled by DPI
-constexpr int kStatusLines = 1;
+constexpr int kPad = 8;
+
+void nlog(const char* fmt, ...) {
+    if (!g || !g->log) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(g->log, fmt, ap);
+    va_end(ap);
+    fputc(10, g->log);
+    fflush(g->log);
+}
 
 int px(int logical) { return MulDiv(logical, g->dpi, 96); }
+bool dirty() { return g->doc.revisions() != g->saved_rev; }
+
+std::wstring widen(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+    std::wstring w((size_t)(n > 0 ? n : 0), L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
+    return w;
+}
+
+std::string narrow(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s((size_t)(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+void set_status(const std::string& s) { g->status = s; }
+
+void set_title(HWND h) {
+    std::wstring t = L"nib — ";
+    t += g->path.empty() ? L"untitled" : g->path.substr(g->path.find_last_of(L"\\/") + 1);
+    if (dirty()) t += L" •";
+    SetWindowTextW(h, t.c_str());
+}
 
 void make_font(HWND h) {
     if (g->font) DeleteObject(g->font);
-    // Consolas at 11pt: the family's console face, and it is metrically simple
-    g->font = CreateFontW(-MulDiv(11, g->dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g->font = CreateFontW(-MulDiv(g->th.pt, g->dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                           DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                          FIXED_PITCH | FF_MODERN, L"Consolas");
+                          FIXED_PITCH | FF_MODERN, g->th.font.c_str());
     HDC dc = GetDC(h);
     HGDIOBJ old = SelectObject(dc, g->font);
     TEXTMETRICW tm{};
@@ -63,17 +171,26 @@ void make_font(HWND h) {
 int visible_lines(HWND h) {
     RECT rc;
     GetClientRect(h, &rc);
-    const int body = rc.bottom - px(kPad) * 2 - g->ch * kStatusLines;
+    const int body = rc.bottom - px(kPad) * 2 - g->ch;
     return body / g->ch > 0 ? body / g->ch : 1;
 }
 
-void set_status(const std::string& s) {
-    g->status = s;
-    g->dirty_status = true;
+// ---- selection -------------------------------------------------------------------------------
+bool has_sel() { return g->anchor != g->caret; }
+size_t sel_lo() { return g->anchor < g->caret ? g->anchor : g->caret; }
+size_t sel_hi() { return g->anchor < g->caret ? g->caret : g->anchor; }
+void clear_sel() { g->anchor = g->caret; }
+
+std::string sel_text() {
+    if (!has_sel()) return {};
+    return g->doc.text().substr(sel_lo(), sel_hi() - sel_lo());
 }
 
-// Keep the caret on screen. Called after every move; the view follows the caret and never the
-// other way round, so typing at the bottom of a long document does not jump.
+size_t col_of(size_t offset) {
+    const size_t line = g->idx.line_of(offset);
+    return offset - g->idx.start[line];
+}
+
 void scroll_to_caret(HWND h) {
     const size_t line = g->idx.line_of(g->caret);
     const int rows = visible_lines(h);
@@ -81,14 +198,16 @@ void scroll_to_caret(HWND h) {
     else if (line >= g->top_line + (size_t)rows) g->top_line = line - (size_t)rows + 1;
 }
 
-void after_edit(HWND h, bool moved_caret) {
+void after_edit(HWND h, bool caret_from_doc) {
     g->idx.build(g->doc.text());
-    if (moved_caret) {
+    if (caret_from_doc) {
         const size_t c = (size_t)g->doc.last_caret();
         g->caret = c <= g->doc.size() ? c : g->doc.size();
     }
     if (g->caret > g->doc.size()) g->caret = g->doc.size();
+    clear_sel();
     scroll_to_caret(h);
+    set_title(h);
     InvalidateRect(h, nullptr, TRUE);
 }
 
@@ -102,91 +221,287 @@ void edit_splice(HWND h, int64_t start, int64_t ndel, const std::string& ins) {
     after_edit(h, true);
 }
 
-void insert_text(HWND h, const std::string& s) { edit_splice(h, (int64_t)g->caret, 0, s); }
+// Typing with a selection replaces it — one splice, so it is one revision and one undo, which is
+// what a person means by "I replaced that".
+void insert_text(HWND h, const std::string& s) {
+    if (has_sel()) edit_splice(h, (int64_t)sel_lo(), (int64_t)(sel_hi() - sel_lo()), s);
+    else edit_splice(h, (int64_t)g->caret, 0, s);
+}
 
 void backspace(HWND h) {
+    if (has_sel()) { edit_splice(h, (int64_t)sel_lo(), (int64_t)(sel_hi() - sel_lo()), std::string()); return; }
     if (g->caret == 0) return;
-    // step back one whole UTF-8 sequence, so a multi-byte character is one keystroke to delete
     size_t at = g->caret - 1;
     while (at > 0 && ((unsigned char)g->doc.text()[at] & 0xC0) == 0x80) --at;
     edit_splice(h, (int64_t)at, (int64_t)(g->caret - at), std::string());
 }
 
 void del_forward(HWND h) {
+    if (has_sel()) { edit_splice(h, (int64_t)sel_lo(), (int64_t)(sel_hi() - sel_lo()), std::string()); return; }
     if (g->caret >= g->doc.size()) return;
     size_t end = g->caret + 1;
     while (end < g->doc.size() && ((unsigned char)g->doc.text()[end] & 0xC0) == 0x80) ++end;
     edit_splice(h, (int64_t)g->caret, (int64_t)(end - g->caret), std::string());
 }
 
-size_t col_of(size_t offset) {
-    const size_t line = g->idx.line_of(offset);
-    return offset - g->idx.start[line];
-}
-
-void move_to(HWND h, size_t offset, bool keep_want_col) {
+void move_to(HWND h, size_t offset, bool extend, bool keep_want_col) {
     g->caret = offset > g->doc.size() ? g->doc.size() : offset;
+    if (!extend) g->anchor = g->caret;
     if (!keep_want_col) g->want_col = col_of(g->caret);
     scroll_to_caret(h);
     InvalidateRect(h, nullptr, TRUE);
 }
 
-void move_vertical(HWND h, int delta) {
+void move_vertical(HWND h, int delta, bool extend) {
     const size_t line = g->idx.line_of(g->caret);
     int64_t target = (int64_t)line + delta;
     if (target < 0) target = 0;
     if (target >= (int64_t)g->idx.count()) target = (int64_t)g->idx.count() - 1;
-    move_to(h, g->idx.offset_of((size_t)target, g->want_col, g->doc.text()), true);
+    move_to(h, g->idx.offset_of((size_t)target, g->want_col, g->doc.text()), extend, true);
 }
 
-void move_horizontal(HWND h, int delta) {
+void move_horizontal(HWND h, int delta, bool extend) {
+    // an unextended move with a selection collapses to its edge, as every editor does
+    if (!extend && has_sel()) { move_to(h, delta < 0 ? sel_lo() : sel_hi(), false, false); return; }
     if (delta < 0) {
         if (g->caret == 0) return;
         size_t at = g->caret - 1;
         while (at > 0 && ((unsigned char)g->doc.text()[at] & 0xC0) == 0x80) --at;
-        move_to(h, at, false);
+        move_to(h, at, extend, false);
     } else {
         if (g->caret >= g->doc.size()) return;
         size_t at = g->caret + 1;
         while (at < g->doc.size() && ((unsigned char)g->doc.text()[at] & 0xC0) == 0x80) ++at;
-        move_to(h, at, false);
+        move_to(h, at, extend, false);
     }
 }
 
-std::wstring widen(const std::string& s) {
-    if (s.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w((size_t)(n > 0 ? n : 0), L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
-    return w;
+size_t offset_at_point(int mx, int my) {
+    const int x = mx - px(kPad), y = my - px(kPad);
+    const int64_t row = y / g->ch;
+    int64_t line = (int64_t)g->top_line + (row < 0 ? 0 : row);
+    if (line < 0) line = 0;
+    if (line >= (int64_t)g->idx.count()) line = (int64_t)g->idx.count() - 1;
+    const int64_t col = x > 0 ? (x + g->cw / 2) / g->cw : 0;
+    return g->idx.offset_of((size_t)line, (size_t)(col < 0 ? 0 : col), g->doc.text());
 }
 
+// ---- the clipboard ---------------------------------------------------------------------------
+void copy_sel(HWND h) {
+    if (!has_sel()) return;
+    const std::wstring w = widen(sel_text());
+    if (!OpenClipboard(h)) return;
+    EmptyClipboard();
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (w.size() + 1) * sizeof(wchar_t));
+    if (mem) {
+        if (void* p = GlobalLock(mem)) {
+            memcpy(p, w.c_str(), (w.size() + 1) * sizeof(wchar_t));
+            GlobalUnlock(mem);
+            SetClipboardData(CF_UNICODETEXT, mem);
+        }
+    }
+    CloseClipboard();
+    set_status("copied " + std::to_string(sel_hi() - sel_lo()) + " chars");
+}
+
+void paste(HWND h) {
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(h)) return;
+    std::string text;
+    if (HANDLE mem = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* p = (const wchar_t*)GlobalLock(mem)) {
+            text = narrow(p);
+            GlobalUnlock(mem);
+        }
+    }
+    CloseClipboard();
+    // pasted CRLF becomes LF: the document is LF, and the file's own convention is restored on save
+    std::string lf;
+    lf.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') continue;
+        lf += text[i] == '\r' ? '\n' : text[i];
+    }
+    if (!lf.empty()) insert_text(h, lf);
+}
+
+// ---- files ------------------------------------------------------------------------------------
+bool read_all(const std::wstring& path, std::string& out) {
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER sz{};
+    GetFileSizeEx(f, &sz);
+    out.resize((size_t)sz.QuadPart);
+    size_t got = 0;
+    while (got < out.size()) {
+        DWORD n = 0;
+        if (!ReadFile(f, out.data() + got, (DWORD)(out.size() - got), &n, nullptr) || !n) break;
+        got += n;
+    }
+    CloseHandle(f);
+    out.resize(got);
+    return true;
+}
+
+// Atomic: write beside the target, then replace. A crash halfway through must not be able to
+// destroy the file it was saving.
+bool write_atomic(const std::wstring& path, const std::string& bytes, std::string& err) {
+    const std::wstring tmp = path + L".nib-tmp";
+    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { err = "cannot create the temporary file"; return false; }
+    size_t put = 0;
+    bool ok = true;
+    while (put < bytes.size()) {
+        DWORD n = 0;
+        if (!WriteFile(f, bytes.data() + put, (DWORD)(bytes.size() - put), &n, nullptr)) { ok = false; break; }
+        put += n;
+    }
+    if (ok) ok = FlushFileBuffers(f) != FALSE;   // on the disk before the rename, or the atomicity is a story
+    CloseHandle(f);
+    if (!ok) { DeleteFileW(tmp.c_str()); err = "the write failed"; return false; }
+    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(tmp.c_str());
+        err = "the replace failed";
+        return false;
+    }
+    return true;
+}
+
+void load_into(HWND h, const std::wstring& path, std::string raw) {
+    g->bom = raw.size() >= 3 && (unsigned char)raw[0] == 0xEF && (unsigned char)raw[1] == 0xBB && (unsigned char)raw[2] == 0xBF;
+    if (g->bom) raw.erase(0, 3);
+    g->crlf = raw.find("\r\n") != std::string::npos;
+    std::string lf;
+    lf.reserve(raw.size());
+    for (size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '\r' && i + 1 < raw.size() && raw[i + 1] == '\n') continue;
+        lf += raw[i] == '\r' ? '\n' : raw[i];
+    }
+    g->doc.set(lf);
+    g->path = path;
+    g->saved_rev = g->doc.revisions();
+    g->caret = g->anchor = 0;
+    g->top_line = 0;
+    g->idx.build(g->doc.text());
+    set_status(std::string("opened · ") + (g->crlf ? "CRLF" : "LF") + (g->bom ? " · BOM" : ""));
+    set_title(h);
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+bool save_to(HWND h, const std::wstring& path) {
+    std::string bytes;
+    if (g->bom) bytes += "\xEF\xBB\xBF";
+    const std::string& t = g->doc.text();
+    if (g->crlf) {
+        for (char c : t) {
+            if (c == '\n') bytes += '\r';
+            bytes += c;
+        }
+    } else {
+        bytes += t;
+    }
+    std::string err;
+    if (!write_atomic(path, bytes, err)) { set_status("save failed: " + err); InvalidateRect(h, nullptr, TRUE); return false; }
+    g->path = path;
+    g->saved_rev = g->doc.revisions();
+    nlog("saved	%zu	%zu", bytes.size(), g->doc.revisions());
+    set_status("saved " + std::to_string(bytes.size()) + " bytes · " + (g->crlf ? "CRLF" : "LF"));
+    set_title(h);
+    InvalidateRect(h, nullptr, TRUE);
+    return true;
+}
+
+bool ask_path(HWND h, bool saving, std::wstring& out) {
+    wchar_t buf[MAX_PATH]{};
+    if (!out.empty()) wcsncpy_s(buf, out.c_str(), _TRUNCATE);
+    OPENFILENAMEW o{};
+    o.lStructSize = sizeof o;
+    o.hwndOwner = h;
+    o.lpstrFilter = L"Text\0*.txt;*.md;*.log\0All files\0*.*\0";
+    o.lpstrFile = buf;
+    o.nMaxFile = MAX_PATH;
+    o.Flags = saving ? (OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST) : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST);
+    const BOOL ok = saving ? GetSaveFileNameW(&o) : GetOpenFileNameW(&o);
+    if (!ok) return false;
+    out = buf;
+    return true;
+}
+
+void do_save(HWND h, bool force_ask) {
+    std::wstring p = g->path;
+    if (force_ask || p.empty()) {
+        if (!ask_path(h, true, p)) return;
+    }
+    save_to(h, p);
+}
+
+void do_open(HWND h) {
+    std::wstring p;
+    if (!ask_path(h, false, p)) return;
+    std::string raw;
+    if (!read_all(p, raw)) { set_status("cannot read that file"); InvalidateRect(h, nullptr, TRUE); return; }
+    load_into(h, p, std::move(raw));
+}
+
+// Returns false when the user wants to stay. Unsaved work is never discarded silently — the whole
+// point of an editor is that what you typed is still there.
+bool ok_to_discard(HWND h) {
+    if (!dirty()) return true;
+    const int r = MessageBoxW(h, L"This document has unsaved changes.\n\nSave before closing?",
+                              L"nib", MB_YESNOCANCEL | MB_ICONWARNING);
+    if (r == IDCANCEL) return false;
+    if (r == IDNO) return true;
+    std::wstring p = g->path;
+    if (p.empty() && !ask_path(h, true, p)) return false;
+    return save_to(h, p);
+}
+
+// ---- painting -----------------------------------------------------------------------------------
 void paint(HWND h) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(h, &ps);
     RECT rc;
     GetClientRect(h, &rc);
 
-    const COLORREF bg = RGB(8, 13, 22), fg = RGB(184, 195, 211), dim = RGB(95, 107, 128);
+    const COLORREF bg = g->th.bg, fg = g->th.fg, dim = g->th.dim, selbg = g->th.sel;
     HBRUSH back = CreateSolidBrush(bg);
     FillRect(dc, &rc, back);
     DeleteObject(back);
 
     HGDIOBJ old = SelectObject(dc, g->font);
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, fg);
 
     const int rows = visible_lines(h);
     const int x0 = px(kPad), y0 = px(kPad);
     const std::string& t = g->doc.text();
+    const size_t lo = sel_lo(), hi = sel_hi();
+
     for (int r = 0; r < rows; ++r) {
         const size_t line = g->top_line + (size_t)r;
         if (line >= g->idx.count()) break;
         const size_t a = g->idx.start[line];
         const size_t len = g->idx.line_len(line, t);
+        const int y = y0 + r * g->ch;
+
+        // the selection band for this line, drawn under the glyphs
+        if (has_sel() && hi > a && lo < a + len + 1) {
+            const size_t s = lo > a ? lo - a : 0;
+            const size_t e = hi < a + len ? hi - a : len;
+            const bool spans_newline = hi > a + len;
+            const int sx = x0 + (int)widen(t.substr(a, s)).size() * g->cw;
+            const int ex = x0 + (int)widen(t.substr(a, e > s ? e : s)).size() * g->cw + (spans_newline ? g->cw / 2 : 0);
+            if (ex > sx) {
+                RECT band{ sx, y, ex, y + g->ch };
+                HBRUSH sb = CreateSolidBrush(selbg);
+                FillRect(dc, &band, sb);
+                DeleteObject(sb);
+            }
+        }
+
         if (len) {
+            SetTextColor(dc, fg);
             const std::wstring w = widen(t.substr(a, len));
-            TextOutW(dc, x0, y0 + r * g->ch, w.c_str(), (int)w.size());
+            TextOutW(dc, x0, y, w.c_str(), (int)w.size());
         }
     }
 
@@ -197,20 +512,21 @@ void paint(HWND h) {
         const int cx = x0 + (int)before.size() * g->cw;
         const int cy = y0 + (int)(cl - g->top_line) * g->ch;
         RECT car{ cx, cy, cx + px(2), cy + g->ch };
-        HBRUSH cb = CreateSolidBrush(RGB(45, 212, 191));
+        HBRUSH cb = CreateSolidBrush(g->th.accent);
         FillRect(dc, &car, cb);
         DeleteObject(cb);
     }
 
-    // the status line: the estate's signature, and the place the two switches will live
+    // the status line: the estate's signature, and where the two switches will live
     SetTextColor(dc, dim);
+    char buf[320];
     const size_t line = g->idx.line_of(g->caret);
-    char buf[256];
-    _snprintf_s(buf, sizeof buf, _TRUNCATE,
-                "nib  %llu:%llu  %llu chars  %llu revisions  %s%s",
-                (unsigned long long)(line + 1), (unsigned long long)(col_of(g->caret) + 1),
+    char sel[64] = "";
+    if (has_sel()) _snprintf_s(sel, sizeof sel, _TRUNCATE, "  %llu selected", (unsigned long long)(hi - lo));
+    _snprintf_s(buf, sizeof buf, _TRUNCATE, "nib  %llu:%llu%s  %llu chars  %llu revisions%s  %s",
+                (unsigned long long)(line + 1), (unsigned long long)(col_of(g->caret) + 1), sel,
                 (unsigned long long)g->doc.size(), (unsigned long long)g->doc.revisions(),
-                g->doc.can_undo() ? "undo " : "", g->status.c_str());
+                dirty() ? "  unsaved" : "", g->status.c_str());
     const std::wstring sw = widen(buf);
     TextOutW(dc, x0, rc.bottom - px(kPad) - g->ch, sw.c_str(), (int)sw.size());
 
@@ -224,35 +540,28 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             g->dpi = (int)GetDpiForWindow(h);
             make_font(h);
             g->idx.build(g->doc.text());
+            set_title(h);
             return 0;
 
         case WM_DPICHANGED: {
             g->dpi = HIWORD(wp);
             make_font(h);
             const RECT* r = (const RECT*)lp;
-            SetWindowPos(h, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(h, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
             InvalidateRect(h, nullptr, TRUE);
             return 0;
         }
 
-        case WM_PAINT:
-            paint(h);
-            return 0;
-
-        case WM_ERASEBKGND:
-            return 1;   // painted whole in WM_PAINT; erasing first only flickers
-
-        case WM_SIZE:
-            scroll_to_caret(h);
-            InvalidateRect(h, nullptr, TRUE);
-            return 0;
+        case WM_PAINT: paint(h); return 0;
+        case WM_ERASEBKGND: return 1;
+        case WM_SIZE: scroll_to_caret(h); InvalidateRect(h, nullptr, TRUE); return 0;
 
         case WM_CHAR: {
             const wchar_t c = (wchar_t)wp;
+            if (GetKeyState(VK_CONTROL) & 0x8000) return 0;   // Ctrl chords are handled in WM_KEYDOWN
             if (c == '\r') { insert_text(h, "\n"); return 0; }
-            if (c == '\t') { insert_text(h, "    "); return 0; }   // spaces, until tabs earn a setting
-            if (c < 0x20) return 0;                                 // control characters are not text
+            if (c == '\t') { insert_text(h, "    "); return 0; }
+            if (c < 0x20) return 0;
             const wchar_t w[2] = { c, 0 };
             char utf8[8]{};
             const int n = WideCharToMultiByte(CP_UTF8, 0, w, 1, utf8, sizeof utf8, nullptr, nullptr);
@@ -267,30 +576,40 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             switch (wp) {
                 case VK_BACK: backspace(h); return 0;
                 case VK_DELETE: del_forward(h); return 0;
-                case VK_LEFT: move_horizontal(h, -1); return 0;
-                case VK_RIGHT: move_horizontal(h, 1); return 0;
-                case VK_UP: move_vertical(h, -1); return 0;
-                case VK_DOWN: move_vertical(h, 1); return 0;
-                case VK_HOME: move_to(h, g->idx.start[g->idx.line_of(g->caret)], false); return 0;
+                case VK_LEFT: move_horizontal(h, -1, shift); return 0;
+                case VK_RIGHT: move_horizontal(h, 1, shift); return 0;
+                case VK_UP: move_vertical(h, -1, shift); return 0;
+                case VK_DOWN: move_vertical(h, 1, shift); return 0;
+                case VK_HOME:
+                    move_to(h, ctrl ? 0 : g->idx.start[g->idx.line_of(g->caret)], shift, false);
+                    return 0;
                 case VK_END: {
+                    if (ctrl) { move_to(h, g->doc.size(), shift, false); return 0; }
                     const size_t l = g->idx.line_of(g->caret);
-                    move_to(h, g->idx.start[l] + g->idx.line_len(l, g->doc.text()), false);
+                    move_to(h, g->idx.start[l] + g->idx.line_len(l, g->doc.text()), shift, false);
                     return 0;
                 }
-                case VK_PRIOR: move_vertical(h, -visible_lines(h)); return 0;
-                case VK_NEXT: move_vertical(h, visible_lines(h)); return 0;
-                case 'Z':
-                    if (ctrl && !shift) {
-                        if (g->doc.undo(err)) { after_edit(h, false); set_status(""); }
-                        else set_status(err);
-                        InvalidateRect(h, nullptr, TRUE);
-                        return 0;
+                case VK_PRIOR: move_vertical(h, -visible_lines(h), shift); return 0;
+                case VK_NEXT: move_vertical(h, visible_lines(h), shift); return 0;
+                case 'A':
+                    if (ctrl) { g->anchor = 0; move_to(h, g->doc.size(), true, false); }
+                    return 0;
+                case 'C': if (ctrl) copy_sel(h); return 0;
+                case 'X':
+                    if (ctrl && has_sel()) {
+                        copy_sel(h);
+                        edit_splice(h, (int64_t)sel_lo(), (int64_t)(sel_hi() - sel_lo()), std::string());
                     }
-                    if (ctrl && shift) {
-                        if (g->doc.redo(err)) { after_edit(h, false); set_status(""); }
+                    return 0;
+                case 'V': if (ctrl) paste(h); return 0;
+                case 'S': if (ctrl) do_save(h, shift); return 0;
+                case 'O': if (ctrl) { if (ok_to_discard(h)) do_open(h); } return 0;
+                case 'Z':
+                    if (ctrl) {
+                        const bool ok = shift ? g->doc.redo(err) : g->doc.undo(err);
+                        if (ok) { after_edit(h, false); set_status(""); }
                         else set_status(err);
                         InvalidateRect(h, nullptr, TRUE);
-                        return 0;
                     }
                     return 0;
                 case 'Y':
@@ -302,8 +621,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     return 0;
                 case 'R':
                     if (ctrl) {
-                        // the falsifier, on demand: fold the whole log and compare. Stage 0's
-                        // promise is checkable from inside the editor, at any moment.
+                        // the falsifier, on demand: fold the whole log and compare
                         std::string out, e;
                         const bool ok = g->doc.replay(out, e);
                         set_status(ok && out == g->doc.text()
@@ -316,6 +634,44 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             }
         }
 
+        case WM_NIB_CMD: {
+            std::string err;
+            switch ((int)wp) {
+                case CmdSave: do_save(h, false); break;
+                case CmdSaveAs: do_save(h, true); break;
+                case CmdOpen: if (ok_to_discard(h)) do_open(h); break;
+                case CmdUndo:
+                    if (g->doc.undo(err)) after_edit(h, false); else set_status(err);
+                    nlog("undo	%zu", g->doc.revisions());
+                    InvalidateRect(h, nullptr, TRUE);
+                    break;
+                case CmdRedo:
+                    if (g->doc.redo(err)) after_edit(h, false); else set_status(err);
+                    nlog("redo	%zu", g->doc.revisions());
+                    InvalidateRect(h, nullptr, TRUE);
+                    break;
+                case CmdSelectAll: g->anchor = 0; move_to(h, g->doc.size(), true, false); break;
+                case CmdTop: move_to(h, 0, false, false); break;
+                case CmdHome: move_to(h, g->idx.start[g->idx.line_of(g->caret)], false, false); break;
+                case CmdEnd: {
+                    const size_t l = g->idx.line_of(g->caret);
+                    move_to(h, g->idx.start[l] + g->idx.line_len(l, g->doc.text()), false, false);
+                    break;
+                }
+                case CmdSelToHome: move_to(h, g->idx.start[g->idx.line_of(g->caret)], true, false); break;
+                case CmdReplay: {
+                    std::string out, e;
+                    const bool ok = g->doc.replay(out, e);
+                    nlog("replay	%d	%zu", ok && out == g->doc.text() ? 1 : 0, g->doc.revisions());
+                    set_status(ok && out == g->doc.text() ? "replay: byte-exact" : "REPLAY DIFFERS: " + e);
+                    InvalidateRect(h, nullptr, TRUE);
+                    break;
+                }
+                default: break;
+            }
+            return 0;
+        }
+
         case WM_MOUSEWHEEL: {
             const int delta = GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
             const int64_t top = (int64_t)g->top_line - delta * 3;
@@ -326,16 +682,26 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         }
 
         case WM_LBUTTONDOWN: {
-            // click to place the caret: pure arithmetic, because the face is monospaced
-            const int x = GET_X_LPARAM(lp) - px(kPad), y = GET_Y_LPARAM(lp) - px(kPad);
-            const int64_t row = y / g->ch;
-            size_t line = g->top_line + (size_t)(row < 0 ? 0 : row);
-            if (line >= g->idx.count()) line = g->idx.count() - 1;
-            const int64_t col = x > 0 ? (x + g->cw / 2) / g->cw : 0;
-            move_to(h, g->idx.offset_of(line, (size_t)col, g->doc.text()), false);
+            const size_t at = offset_at_point(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+            move_to(h, at, (GetKeyState(VK_SHIFT) & 0x8000) != 0, false);
+            g->dragging = true;
+            SetCapture(h);
             SetFocus(h);
             return 0;
         }
+
+        case WM_MOUSEMOVE:
+            if (g->dragging) move_to(h, offset_at_point(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)), true, false);
+            return 0;
+
+        case WM_LBUTTONUP:
+            if (g->dragging) { g->dragging = false; ReleaseCapture(); }
+            return 0;
+
+        case WM_CLOSE:
+            if (!ok_to_discard(h)) return 0;
+            DestroyWindow(h);
+            return 0;
 
         case WM_DESTROY:
             PostQuitMessage(0);
@@ -348,10 +714,11 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
 }  // namespace
 
-int run_editor(const std::string& initial) {
+int run_editor(const std::string& path_utf8) {
     static View view;
     g = &view;
-    if (!initial.empty()) g->doc.set(initial);
+    if (const char* lp = getenv("NIB_LOG")) g->log = fopen(lp, "ab");
+    load_theme(g->th);
 
     const HINSTANCE hinst = GetModuleHandleW(nullptr);
     WNDCLASSW wc{};
@@ -361,10 +728,17 @@ int run_editor(const std::string& initial) {
     wc.lpszClassName = L"nibWindow";
     RegisterClassW(&wc);
 
-    HWND h = CreateWindowExW(0, wc.lpszClassName, L"nib — untitled",
-                             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    HWND h = CreateWindowExW(0, wc.lpszClassName, L"nib", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              CW_USEDEFAULT, CW_USEDEFAULT, 900, 640, nullptr, nullptr, hinst, nullptr);
     if (!h) return 1;
+
+    if (!path_utf8.empty()) {
+        const std::wstring wp = widen(path_utf8);
+        std::string raw;
+        if (read_all(wp, raw)) load_into(h, wp, std::move(raw));
+        else { g->path = wp; set_status("new file"); set_title(h); }   // a path that is not there yet is a new file
+    }
+
     ShowWindow(h, SW_SHOW);
     UpdateWindow(h);
 
@@ -374,6 +748,7 @@ int run_editor(const std::string& initial) {
         DispatchMessageW(&msg);
     }
     if (g->font) DeleteObject(g->font);
+    if (g->log) fclose(g->log);
     return 0;
 }
 

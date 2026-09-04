@@ -8,7 +8,7 @@
 
 namespace nib {
 int run_selftest();                          // selftest.cpp
-int run_editor(const std::string& initial);  // edit.cpp
+int run_editor(const std::string& path);     // edit.cpp
 
 namespace {
 
@@ -51,27 +51,7 @@ int main(int argc, char** argv) {
     using namespace nib;
     const std::string a = argc > 1 ? argv[1] : "--help";
     if (a == "--selftest") return run_selftest();
-    if (a == "--edit") {
-        std::string initial;
-        if (argc > 2) {
-            FILE* f = fopen(argv[2], "rb");
-            if (!f) { fprintf(stderr, "nib: cannot read %s\n", argv[2]); return 2; }
-            char buf[65536];
-            size_t n;
-            while ((n = fread(buf, 1, sizeof buf, f)) > 0) initial.append(buf, n);
-            fclose(f);
-        }
-        return run_editor(initial);
-    }
-    if (a == "--version") { printf("nib 0.1.0\n"); return 0; }
-    if (a == "--unpack" && argc > 2) return do_unpack(argv[2]);
-    if (a == "--ops" && argc > 2) return do_ops(argv[2]);
-    if (a == "--check" && argc > 2) {
-        std::string err;
-        if (!check_rep(argv[2], err)) { fprintf(stderr, "nib: %s\n", err.c_str()); return 1; }
-        printf("canonical\n");
-        return 0;
-    }
+    if (a == "--edit") return run_editor(argc > 2 ? argv[2] : "");
     if (a == "--splice" && argc > 5) {
         const std::string orig = argv[2], ins = argv[5];
         const long long start = atoll(argv[3]), ndel = atoll(argv[4]);
