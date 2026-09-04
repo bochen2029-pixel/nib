@@ -1,0 +1,233 @@
+// nib · selftest.cpp — the changeset port's oracle.
+//
+// The vectors are Etherpad's, not invented here: the worked example in
+// `doc/api/changeset_library.md`, the attribute-string example beside it, and the composed
+// changesets in `src/tests/backend-new/specs/easysync-*.ts`. Where a number is asserted it is
+// asserted by equality, because a format is not something to be nearly right about.
+#include "changeset.h"
+
+#include <cstdio>
+#include <string>
+#include <vector>
+
+namespace nib {
+
+namespace {
+
+int g_pass = 0, g_fail = 0;
+
+void check(bool ok, const std::string& what) {
+    if (ok) ++g_pass;
+    else ++g_fail;
+    printf("  %s  %s\n", ok ? "ok  " : "FAIL", what.c_str());
+    fflush(stdout);
+}
+void section(const char* s) { printf("\n%s\n", s); }
+
+std::string ops_summary(const std::vector<Op>& ops) {
+    std::string s;
+    for (const Op& o : ops) {
+        if (!s.empty()) s += " ";
+        s += o.opcode;
+        s += std::to_string(o.chars);
+        if (o.lines) s += "/" + std::to_string(o.lines) + "L";
+        if (!o.attribs.empty()) s += o.attribs;
+    }
+    return s;
+}
+
+}  // namespace
+
+int run_selftest() {
+    printf("nib --selftest · the changeset port (Etherpad Easysync, C++)\n");
+
+    section("base 36");
+    {
+        // JavaScript's Number.prototype.toString(36), which is what the format is written in
+        const struct { int64_t n; const char* s; } v[] = {
+            { 0, "0" }, { 1, "1" }, { 9, "9" }, { 10, "a" }, { 35, "z" },
+            { 36, "10" }, { 35 * 36 + 35, "zz" }, { 1295, "zz" }, { 1296, "100" },
+        };
+        bool ok = true;
+        std::string bad;
+        for (const auto& x : v) {
+            if (num_to_string(x.n) != x.s) { ok = false; bad = std::to_string(x.n) + " -> " + num_to_string(x.n) + ", expected " + x.s; break; }
+            if (parse_num(x.s) != x.n) { ok = false; bad = std::string(x.s) + " -> " + std::to_string(parse_num(x.s)); break; }
+        }
+        check(ok, ok ? "nine values round-trip base 36 both ways" : bad);
+        // the header of the documented example: 'z' is 35, and that is the document's old length
+        check(parse_num("z") == 35, "z parses as 35, the old length in Etherpad's worked example");
+    }
+
+    section("unpack — Etherpad's worked example");
+    {
+        // doc/api/changeset_library.md:
+        //   unpack('Z:z>1|2=m=b*0|1+1$\n')
+        //   -> { oldLen: 35, newLen: 36, ops: '|2=m=b*0|1+1', charBank: '\n' }
+        const std::string cs = "Z:z>1|2=m=b*0|1+1$\n";
+        Unpacked u;
+        std::string err;
+        const bool ok = unpack(cs, u, err);
+        check(ok, ok ? "it unpacks" : "unpack failed: " + err);
+        check(u.old_len == 35, "oldLen is 35 (got " + std::to_string(u.old_len) + ")");
+        check(u.new_len == 36, "newLen is 36 (got " + std::to_string(u.new_len) + ")");
+        check(u.ops == "|2=m=b*0|1+1", "ops are |2=m=b*0|1+1 (got " + u.ops + ")");
+        check(u.char_bank == "\n", "the charBank is one newline");
+        check(pack(u.old_len, u.new_len, u.ops, u.char_bank) == cs, "pack is unpack's inverse, byte for byte");
+    }
+
+    section("deserializeOps — the same example");
+    {
+        // the documentation prints exactly these three ops:
+        //   Op { opcode: '=', chars: 22, lines: 2, attribs: '' }
+        //   Op { opcode: '=', chars: 11, lines: 0, attribs: '' }
+        //   Op { opcode: '+', chars: 1,  lines: 1, attribs: '*0' }
+        std::vector<Op> ops;
+        std::string err;
+        const bool ok = deserialize_ops("|2=m=b*0|1+1", ops, err);
+        check(ok, ok ? "the ops parse" : "parse failed: " + err);
+        check(ops.size() == 3, "three ops (got " + std::to_string(ops.size()) + ")");
+        if (ops.size() == 3) {
+            check(ops[0].opcode == '=' && ops[0].chars == 22 && ops[0].lines == 2 && ops[0].attribs.empty(),
+                  "op 1 is = 22 chars over 2 lines");
+            check(ops[1].opcode == '=' && ops[1].chars == 11 && ops[1].lines == 0 && ops[1].attribs.empty(),
+                  "op 2 is = 11 chars, in-line");
+            check(ops[2].opcode == '+' && ops[2].chars == 1 && ops[2].lines == 1 && ops[2].attribs == "*0",
+                  "op 3 inserts 1 newline carrying attribute *0");
+            std::string round;
+            for (const Op& o : ops) round += o.str();
+            check(round == "|2=m=b*0|1+1", "the three ops re-serialise to the same string (" + round + ")");
+        }
+    }
+
+    section("deserializeOps — the atext attribute string");
+    {
+        // the same encoding is used for a pad's attribute string; the docs print these five ops
+        std::vector<Op> ops;
+        std::string err;
+        const bool ok = deserialize_ops("*0*1+9*0|1+1*0*1*2+b|1+1*0+b|2+2", ops, err);
+        check(ok && ops.size() == 6, ok ? "six ops (got " + std::to_string(ops.size()) + ")" : "parse failed: " + err);
+        if (ops.size() == 6) {
+            check(ops[0].chars == 9 && ops[0].lines == 0 && ops[0].attribs == "*0*1", "9 chars with author and bold");
+            check(ops[2].chars == 11 && ops[2].attribs == "*0*1*2", "11 chars with three attributes");
+            check(ops[5].chars == 2 && ops[5].lines == 2 && ops[5].attribs.empty(), "two newlines, unattributed");
+            check(ops_summary(ops) == "+9*0*1 +1/1L*0 +11*0*1*2 +1/1L +11*0 +2/2L", "the whole run reads back: " + ops_summary(ops));
+        }
+    }
+
+    section("applyToText");
+    {
+        std::string out, err;
+        // insert one attributed newline at position 33 of a 35-character document
+        const std::string doc = "0123456789\n0123456789\n0123456789\nx";   // 34 chars... build it exactly
+        (void)doc;
+        // a small, hand-checkable case first
+        bool ok = apply_to_text("Z:5>1=2+1$X", "abcde", out, err);
+        check(ok && out == "abXcde", ok ? "inserting X after 2 chars gives " + out : "failed: " + err);
+        ok = apply_to_text("Z:5<2=1-2$", "abcde", out, err);
+        check(ok && out == "ade", ok ? "deleting 2 chars after 1 gives " + out : "failed: " + err);
+        ok = apply_to_text("Z:5>0=5$", "abcde", out, err);
+        check(ok && out == "abcde", ok ? "an all-keep changeset is the identity" : "failed: " + err);
+        // the length assertion must fire rather than guess
+        ok = apply_to_text("Z:5>1=2+1$X", "abcdef", out, err);
+        check(!ok && err.find("mismatched apply") != std::string::npos,
+              !ok ? "a document of the wrong length is refused: " + err : "it was NOT refused");
+        // a multiline insert, with the newline count checked against the bank
+        ok = apply_to_text("Z:3>2=1|1+2$X\n", "ab\n", out, err);
+        check(ok && out == "aX\nb\n", ok ? "a multiline insert lands: " + std::string("aX\\nb\\n") : "failed: " + err);
+        ok = apply_to_text("Z:3>2=1+2$X\n", "ab\n", out, err);
+        check(!ok, !ok ? "an insert whose lines disagree with its bank is refused: " + err : "it was NOT refused");
+    }
+
+    section("checkRep — the canonical form");
+    {
+        std::string err;
+        // Etherpad's own compose test uses these three as valid inputs and output
+        const char* good[] = { "Z:2>1*1+1*1=1$x", "Z:3>0*0|1=3$", "Z:2>1+1*0|1=2$x", "Z:z>1|2=m=b*0|1+1$\n" };
+        for (const char* cs : good) {
+            const bool ok = check_rep(cs, err);
+            check(ok, ok ? std::string("canonical: ") + cs : std::string(cs) + " rejected: " + err);
+            err.clear();
+        }
+        // a trailing bare keep is implicit — writing it out is NOT canonical, and that is the
+        // check that proves this port agrees with Etherpad about the format rather than merely
+        // parsing it
+        const bool nc = check_rep("Z:5>1=2+1=2$X", err);
+        check(!nc && err.find("canonical") != std::string::npos,
+              !nc ? "a written-out trailing keep is refused as non-canonical" : "it was accepted, which is wrong");
+        err.clear();
+        // two adjacent keeps that share attributes must have been fused
+        const bool nf = check_rep("Z:5>0=2=3$", err);
+        const std::string nf_err = err;
+        check(!nf, !nf ? "unfused adjacent keeps are refused: " + nf_err.substr(0, 46) : "unfused keeps were accepted");
+        err.clear();
+        // a claimed length that does not match the ops
+        const bool nl = check_rep("Z:5>9=2+1$X", err);
+        check(!nl && err.find("claimed length") != std::string::npos,
+              !nl ? "a wrong claimed length is caught: " + err : "a wrong length was accepted");
+        err.clear();
+        // characters left over in the bank
+        const bool nb = check_rep("Z:5>1=2+1$XY", err);
+        check(!nb && err.find("excess characters") != std::string::npos,
+              !nb ? "excess bank characters are caught: " + err : "excess bank was accepted");
+    }
+
+    section("the assemblers — fusing is part of the format");
+    {
+        SmartAssembler a;
+        Op k1; k1.opcode = '='; k1.chars = 2;
+        Op k2; k2.opcode = '='; k2.chars = 3;
+        a.append(k1);
+        a.append(k2);
+        check(a.str() == "=5", "two adjacent keeps fuse into =5 (got " + a.str() + ")");
+
+        SmartAssembler b;
+        Op ins; ins.opcode = '+'; ins.chars = 1;
+        Op del; del.opcode = '-'; del.chars = 2;
+        b.append(ins);
+        b.append(del);
+        check(b.str() == "-2+1", "a delete and an insert emit as -2+1, deletes first (got " + b.str() + ")");
+
+        SmartAssembler c;
+        Op bold; bold.opcode = '='; bold.chars = 2; bold.attribs = "*1";
+        Op plain; plain.opcode = '='; plain.chars = 2;
+        c.append(bold);
+        c.append(plain);
+        check(c.str() == "*1=2=2", "keeps with different attributes do not fuse (got " + c.str() + ")");
+
+        // [xxx\n, yyy, zzz\n] fuses to one multiline op, per MergingOpAssembler's own comment
+        MergingAssembler m;
+        Op a1; a1.opcode = '+'; a1.chars = 4; a1.lines = 1;
+        Op a2; a2.opcode = '+'; a2.chars = 3;
+        Op a3; a3.opcode = '+'; a3.chars = 4; a3.lines = 1;
+        m.append(a1);
+        m.append(a2);
+        m.append(a3);
+        check(m.str() == "|2+b", "xxx\\n yyy zzz\\n fuses to |2+b (got " + m.str() + ")");
+
+        // and [xxx\n, yyy] does not — the in-line tail is emitted separately
+        MergingAssembler m2;
+        m2.append(a1);
+        m2.append(a2);
+        check(m2.str() == "|1+4+3", "xxx\\n yyy stays two ops (got " + m2.str() + ")");
+    }
+
+    section("refusals");
+    {
+        std::string err;
+        Unpacked u;
+        check(!unpack("hello", u, err), "a string that is not a changeset is refused");
+        err.clear();
+        std::vector<Op> ops;
+        const bool bad_opcode = deserialize_ops("=2!3", ops, err);
+        check(!bad_opcode, "an invalid opcode is refused: " + err);
+        err.clear();
+        const bool no_len = deserialize_ops("=", ops, err);
+        check(!no_len, "an opcode with no length is refused: " + err);
+    }
+
+    printf("\n%d passed, %d failed\n", g_pass, g_fail);
+    return g_fail ? 3 : 0;
+}
+
+}  // namespace nib

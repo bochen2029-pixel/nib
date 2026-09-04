@@ -1,0 +1,25 @@
+@echo off
+rem nib build - MSVC (VS2022), static CRT, /W4 /WX, C++20.
+rem ACT I GATE (CLAUDE.md rule 2): no network DLL among the dependents. The build FAILS if one
+rem appears. Act II is where this gate narrows rather than disappears - see BLUEPRINT section 7.
+setlocal enabledelayedexpansion
+where cl >nul 2>nul
+if errorlevel 1 (
+  set "VCV=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+  if not exist "!VCV!" ( echo build: vcvars64.bat not found & exit /b 1 )
+  call "!VCV!" >nul
+)
+cd /d "%~dp0"
+set CXXFLAGS=/nologo /c /std:c++20 /O2 /W4 /WX /permissive- /EHsc /utf-8 /MT /Zc:__cplusplus /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Isrc
+cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\selftest.cpp || exit /b 1
+link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj selftest.obj kernel32.lib || exit /b 1
+dumpbin /nologo /dependents nib.exe > build-dependents.txt || exit /b 1
+findstr /i /c:"ws2_32" /c:"wininet" /c:"winhttp" /c:"urlmon" /c:"dnsapi" build-dependents.txt >nul
+if not errorlevel 1 (
+  echo build: FAIL - a network DLL is among the dependents:
+  findstr /i /c:"ws2_32" /c:"wininet" /c:"winhttp" /c:"urlmon" /c:"dnsapi" build-dependents.txt
+  exit /b 1
+)
+del build-dependents.txt
+echo OK: nib.exe  (gate: no network DLL)
+exit /b 0

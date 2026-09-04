@@ -56,3 +56,33 @@
 - What is actually left: the editor shell (the only large new piece), changeset.cpp with
   Etherpad vectors as the selftest oracle, PadSource, and the emit path with floor control and
   the forming region. fusord loop, segmenter, seat, seed, tape: lifted verbatim.
+
+## 2026-09-03 (later still) · Stage 0a - the changeset port, read half, green
+
+- 41 checks, 0 failed, first run. Every vector is Etherpads own: the worked example in
+  doc/api/changeset_library.md (Z:z>1|2=m=b*0|1+1$ unpacks to 35/36 and yields exactly three
+  ops), the atext attribute string beside it, and the changesets used as inputs and expected
+  output in src/tests/backend-new/specs/easysync-compose.ts.
+- Ported: base36 both ways, Op and its serialisation, deserializeOps as a hand-written scanner
+  matching the regex token for token, unpack/pack, applyToText with the newline-count assertions,
+  the three assemblers, and checkRep.
+- CANONICAL FORM IS THE REAL TEST. checkRep re-serialises the ops it just read and demands the
+  result be byte-identical to its input, so the port cannot merely parse the format - it has to
+  agree about which ops fuse, in what order deletes and inserts are emitted, and that a trailing
+  bare keep is left implicit. Four negative vectors pin that: a written-out trailing keep, two
+  unfused adjacent keeps, a wrong claimed length, and excess bank characters are each refused.
+- A scanner rather than std::regex: this runs on every keystroke and the grammar is four tokens
+  wide. The alternations last branch is the error path, and $ is the only character allowed to
+  end the ops.
+- MY OWN BUG, caught by reading the output. Three checks were written as
+  check(f(&err), "..." + err) - and C++ leaves argument evaluation order unspecified, so err can
+  be read BEFORE f runs. The first run printed "an invalid opcode is refused: " with an empty
+  message. It is the exact trap the family selftests document (compute first, format after) and
+  I walked into it anyway. Fixed; the message now reads "invalid operation: !3".
+- Left to port, in order: makeSplice and a builder (the editor has to CREATE changesets, not just
+  read them), compose (folding consecutive local edits), then AttributePool, atext and follow
+  (authorship, and Act II concurrency).
+- The stronger oracle for those, when it is time: pnpm install the Etherpad tree and run the real
+  Changeset.ts on the same random inputs, comparing byte for byte. Etherpads compose tests are
+  already randomised over 30 seeds - a differential harness against the reference is worth more
+  than any vector I can hand-pick.
