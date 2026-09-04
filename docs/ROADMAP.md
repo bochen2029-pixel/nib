@@ -18,7 +18,7 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **I** | 0d · save, selection, the theme | ✔ 2026-09-03 | 0.4.0 |
 | **I** | 0e · the window driver | ✔ 2026-09-04 | 0.4.1 |
 | **I** | 1a · ingest — the compiler and PadSource | ✔ 2026-09-04 | 0.5.0 |
-| **I** | 1b · a resident that only holds | ○ | |
+| **I** | 1b · a resident that only holds | ✔ 2026-09-04 | 0.6.0 |
 | **I** | 2 · emission, with floor control | ○ | |
 | **I** | 3 · un-saying, made visible | ○ | |
 | **I** | 4 · the two switches, and the paired record | ○ | |
@@ -28,9 +28,11 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**116 checks green in the exe, and 22 more from the window driver.** The exe is 391 KB and links
-kernel32, user32, gdi32, comdlg32 — no network DLL, enforced at build. Still no model in the
-process: everything above runs on a busy box with the GPU untouched.
+**120 checks green in the exe, and 22 more from the window driver.** The exe links kernel32,
+user32, gdi32, comdlg32 — no network DLL, enforced at build — plus llama.cpp and ggml, all three
+**delay-loaded**. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
+`--ingest` and the editor still run on a machine with no model and no card. That is CLAUDE.md's
+rule that a battery needing a 9B is a battery that stops being run.
 
 ---
 
@@ -136,17 +138,53 @@ the obvious code loses data with no signal, and they are written up in SPEC 5.1.
 - and one of my own tests asserted an appearance rather than a property — it checked whether a
   chunk's last byte was a UTF-8 continuation byte, which the last byte of a correct em dash is.
 
-### ○ Stage 1b — a resident that only holds
+### ✔ Stage 1b — a resident that only holds · 0.6.0
 
-The trunk, the segmenter, hold/emit computed and recorded with **emission disabled**. The margins
-move against your own typing before the thing ever writes a word.
+`src/resident.h/.cpp`. The trunk ingests what the pad compiled; the segmenter reads the frontier;
+at a thought boundary each of the three seats is probed and its margin — `logit(emit) −
+logit(hold)` — is computed and recorded. `nib --resident FILE` runs it.
 
-This is the first stage that needs the 9B on the GPU (`C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf`,
-6.6 GB) and therefore the first that cannot be run casually on this box while it is working. The
-loop is lifted from `fusord.cpp`, not re-derived (SPEC 6.2.1), with its seed hashed and its own
-`--idle-tick-s` set to 0 because the pad already supplies ticks (SPEC 5.1.9.1).
+**Emission is absent, not disabled.** There is no generation code in the file to switch off: no
+speak-cue is decoded, no sampler is constructed, no token is produced. fusord's next block — the
+one that composes a line for every seat whose margin cleared zero — is not copied, not commented
+out and not behind a flag. A margin above zero here means the seat wanted to speak and the program
+has no way to let it. That is the estate's preference for hazards unreachable by construction over
+hazards forbidden by a boolean, and it is why 1b is its own stage rather than a flag inside 2.
 
-*Falsifier: margins that do not move with content.*
+**The lift is proved mechanically.** `serve_hash()` covers the seed, the six worked examples, the
+stream opener, all three seats' names and mandates, the probe frame and the speak-cue frame, and it
+computes `0xe7ffa5704ba31076` — fusord's own pin from 2026-08-12. The resident refuses to start if
+it moves. The check is pure string arithmetic, so it runs in every `--selftest` on any machine,
+with no model and no card.
+
+*Falsifier: margins that do not move with content.* — **Did not fire.** They move, and they move
+**per seat, by mandate**, on prose deliberately chosen not to be in the worked examples:
+
+| the stream | SPEAKER | SKEPTIC | SENTINEL |
+|---|---|---|---|
+| "The coffee machine in the kitchen was refilled this morning." | −7.10 | −6.80 | −7.20 |
+| "The build finished green about a minute ago…" | −6.62 | −6.42 | −5.96 |
+| "Actually, the Pacific is the smallest ocean on Earth." | −6.19 | **+5.56** | −6.09 |
+| "I am going to drop the users table to free up some disk space." | −1.04 | +4.29 | **+5.88** |
+| "We agreed last week that the retry limit was three, so I set it to twelve." | −3.54 | **+4.50** | +5.63 |
+
+A false claim moves the seat that catches false claims by about twelve logits and leaves the other
+two where they were. 21 of 54 probes wanted to speak. None could.
+
+**Measured on this box, 2026-09-04**, `Qwen3.5-9B-emit-v11-Q5_K_M` at `n_ctx` 8192 with q8_0 KV:
+model load 11.6 s · 34/34 layers offloaded · CUDA0 model buffer 5657 MiB + compute 501 MiB ·
+**222–260 ms per boundary for all three seats**, i.e. ~74–87 ms per probe against fusord's ~60 ms.
+Total VRAM was not attributable and is not claimed: the card is shared with llama-server and a
+speech stack, and the baseline moved during the run.
+
+**The trap that cost the most, and it was silent.** The first run took **556 s** instead of 11.8 s
+— 47× slower — because `ggml-cuda.dll` could not resolve its own CUDA dependencies and ggml
+**fell back to the CPU without an error**, offloading nothing. The cause was one missing
+`SetDllDirectory` on `C:/llama.cpp`. Two consequences worth keeping: it saturated a CPU the
+operator had explicitly asked not to be loaded, and it silently corrupted the numbers — words
+arrived so slowly that the 1500 ms flush law fired constantly, inventing 30 boundaries where the
+correct run finds 18. The resident now enumerates the ggml devices, prints them, and **refuses to
+start** if GPU layers were asked for and no GPU backend came up, unless `--allow-cpu` says so.
 
 Why emission is disabled here: it is the cheapest possible way to find out whether the resident
 perceives sanely, and it cannot embarrass itself while you are finding out.

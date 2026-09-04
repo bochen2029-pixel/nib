@@ -7,6 +7,7 @@
 #include "changeset.h"
 #include "doc.h"
 #include "ingest.h"
+#include "resident.h"
 
 #include <windows.h>
 
@@ -813,6 +814,35 @@ int run_selftest() {
                        (unsigned long long)total, (unsigned long long)src.compiler().percepts()));
         check(src.pending() == auricle::fusor::DeltaRing::capacity(),
               ssprintf("the ring is full at its capacity of %zu", src.pending()));
+    }
+
+    section("the resident's serve format - train equals serve, as a run that fails");
+    {
+        // SPEC 6.2.2. The seed, the six worked examples, the stream opener, each seat's name and
+        // mandate, the probe frame and the speak-cue frame are lifted from fusord.cpp verbatim.
+        // This hash covers all of them, and matching fusord's own pin is the PROOF that the lift
+        // was byte-exact - not a promise in a comment that somebody copied carefully.
+        //
+        // It is deliberately pure string arithmetic: no model, no GPU, no DLL. A gate that only
+        // fires when a 9B is loaded is a gate that stops being checked.
+        const uint64_t h = serve_hash();
+        check(h == kServeHashPin,
+              ssprintf("the serve bytes hash to 0x%016llx and fusord pinned 0x%016llx on 2026-08-12",
+                       (unsigned long long)h, (unsigned long long)kServeHashPin));
+        check(seat_count() == 3, ssprintf("three seats (%zu)", seat_count()));
+        check(std::string(seats()[0].name) == "SPEAKER" &&
+              std::string(seats()[1].name) == "SKEPTIC" &&
+              std::string(seats()[2].name) == "SENTINEL",
+              "named SPEAKER, SKEPTIC, SENTINEL, in that order - the order is part of the hash");
+
+        // A resident that has not been started judges nothing rather than crashing: --selftest
+        // must never need the card.
+        Resident r;
+        std::vector<Judgment> js;
+        r.feed("bo", "anything at all.", 1000, 0, js);
+        r.finish(js);
+        check(js.empty() && !r.running(),
+              ssprintf("an unstarted resident is inert, so the battery never needs a GPU (%zu judgments)", js.size()));
     }
 
     section("refusals");

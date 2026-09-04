@@ -87,7 +87,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.5.0 · the active work · Stages 0a–1a · 116 + 22 checks** |
+| **nib** | `C:\nib` | **0.6.0 · the active work · Stages 0a–1b · 120 + 22 checks · the mind holds** |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.
@@ -131,11 +131,11 @@ amnesia, and a resident does not have amnesia; the interaction is the prompt.
 5. `C:\nib\docs\BLUEPRINT.md` — the design and the intent.
 6. `C:\nib\docs\devlog.md` — what happened, in order, with the traps.
 
-### 4.3 Built and green — 116 checks in the exe, 22 in the driver
+### 4.3 Built and green — 120 checks in the exe, 22 in the driver
 
 ```
 C:\nib\build.bat               /W4 /WX, gate: no network DLL among the dependents
-C:\nib\nib.exe --selftest      116 passed, 0 failed
+C:\nib\nib.exe --selftest      120 passed, 0 failed
 python C:/nib/tools/drive.py   22 passed, 0 failed   (the window, driven by messages)
 ```
 
@@ -154,6 +154,8 @@ python C:/nib/tools/drive.py   22 passed, 0 failed   (the window, driven by mess
 - **`src/selftest.cpp`** — the oracle. **`src/nib.cpp`** — the CLI.
 - **`src/ingest.h/.cpp`** — the compiler and `PadSource`. Edits become percepts; percepts become
   `Delta`s on auricle's ring. No model, no GPU, no threads of its own.
+- **`src/resident.h/.cpp`** — the trunk, the segmenter, and the hold/emit probe. The loop is
+  lifted from `fusord.cpp` and its seed is hashed against fusord's pin. **No emit path exists.**
 - **`tools/drive.py`** — the window battery. Posts messages, reads artefacts, never synthesises
   input and never looks at the screen.
 - **`tools/theme_detect.py`** — derives `nib.theme` from an image. **`nib.theme`** — the palette
@@ -169,6 +171,7 @@ python C:/nib/tools/drive.py   22 passed, 0 failed   (the window, driven by mess
 | 0d | no save loses a file or silently changes its conventions | the Stage 0e driver: bytes compared on disk, CRLF stayed CRLF, a BOM came back, the file survived close-and-reopen |
 | 0e | every save path is reachable without global input | 17 checks over eight cases, three consecutive identical runs |
 | 1a | no percept is dropped without a loud count | byte conservation over **4,000 random typings, removals and idles**, and fired again from inside the running window |
+| 1b | margins move with content | they move **per seat by mandate**: a false claim moves SKEPTIC ~12 logits and leaves SPEAKER and SENTINEL where they were |
 
 `Ctrl+R` in the editor runs the Stage 0 falsifier live and prints the answer on the status line.
 
@@ -182,6 +185,7 @@ nib --unpack CS | --ops CS | --check CS | --apply CS TEXT
 python tools/theme_detect.py shot.png
 python tools/drive.py [--exe X] [--keep]   the window battery; exit 3 on any mismatch
 nib --ingest FILE [--chars N --quiet-ms T --tick-s S --counts]   the percept stream, no GPU
+nib --resident FILE [--ctx N --gpu-layers N --all]               the margins (needs the GPU)
 ```
 
 Editor keys: `Ctrl+S` save · `Ctrl+Shift+S` save as · `Ctrl+O` open · `Ctrl+A/C/X/V` ·
@@ -243,16 +247,29 @@ and 22 driver checks, three identical runs.
   line ends, so one percept per word would probe three seats per word. A word boundary is where a
   percept may *end*. `.`/`!`/`?` close a thought; `;`/`:` do not (fusord measured that).
 
-**Now: Stage 1b — a resident that only holds.** The trunk, the segmenter, hold/emit computed and
-recorded with **emission disabled**; the margins move against your own typing before the thing ever
-writes a word. Read `C:\auricle\src\fusor\fusord.cpp` and **lift the loop rather than re-deriving
-it** (SPEC 6.2.1), with the seed hashed and the build refusing to run if a character drifted
-(6.2.2), and its own `--idle-tick-s` set to 0 because the pad already supplies ticks (SPEC 5.1.9.1).
+**Stage 1b is done (2026-09-04, 0.6.0)** — `src/resident.h/.cpp`, `nib --resident FILE`. The
+margins move per seat by mandate; 21 of 54 probes wanted to speak and none could. `serve_hash()`
+computes `0xe7ffa5704ba31076`, fusord's own pin, which is the mechanical proof the lift was verbatim.
 
-**This is the first stage that needs the GPU** — `C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf`,
-6.6 GB, on a card the operator shares with llama-server and a speech stack. Per §1.5 it does not
-get loaded without being asked. Everything through 1a runs with the GPU untouched, and per
-`CLAUDE.md` every stage below Stage 2 must stay runnable that way.
+**The trap that cost the most, and it was silent.** The first run took **556 s instead of 11.8 s**
+because `ggml-cuda.dll` could not resolve its CUDA dependencies and ggml **fell back to the CPU
+with no error at all**, offloading nothing. One missing `SetDllDirectory` on `C:/llama.cpp`. It
+saturated the CPU §1.5 says not to load, and it silently corrupted the record — the 1500 ms flush
+law is wall-clock, so the slow run invented 30 boundaries where the correct run finds 18. The
+resident now enumerates the ggml devices and **refuses to start** without a GPU unless
+`--allow-cpu` says so. Generalise it: when a fallback is silent and the two paths differ by 47×,
+the fallback must be a refusal.
+
+**Now: Stage 2 — emission, with floor control.** This is the first stage where the thing can
+speak, and everything in 1b exists so that letting it is a deliberate, dated decision. SPEC §6.3:
+the resident writes into its own blocks and never inside a human's paragraph (6.3.1); an emission
+targeting a block that has had a human keystroke within the floor window is **refused before it is
+composed**, not after (6.3.2); and emission rate must express a real internal state — no invented
+hesitation, no fake typos, no "thinking…" that is not thinking (6.3.3, CLAUDE.md rule 5).
+
+The speak-cue is already carried and hashed in `resident.cpp`, so Stage 2 decodes a constant that
+is already pinned. What it must add is the floor rule, and it must add it as a serializer
+constraint rather than a manner — CLAUDE.md rule 4.
 
 Two constraints from `source.h` that still hold, and are already honoured in `PadSource`:
 

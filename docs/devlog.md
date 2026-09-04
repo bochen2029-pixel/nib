@@ -279,3 +279,59 @@
   hold/emit computed with emission disabled - the half where the margins actually move. It needs
   the 9B on the card, so it is the first stage that cannot be run casually while the operator is
   working, and it does not get started without being asked.
+
+## 2026-09-04 (evening) · Stage 1b - the mind that only holds, and a silent fall to the CPU
+
+- src/resident.h/.cpp. The loop is LIFTED from fusord.cpp, not re-derived: the seed, the six worked
+  examples, the stream opener, the three seats and their mandates, the probe frame and the
+  speak-cue frame are copied byte for byte. serve_hash() computes 0xe7ffa5704ba31076, which is
+  fusord's own pin from 2026-08-12. That equality is the proof the lift was verbatim - not a
+  comment claiming somebody was careful. The check is pure string arithmetic, so it runs in every
+  --selftest with no model and no card.
+- Emission is ABSENT, not disabled. fusord's next block composes a line for every seat whose margin
+  cleared zero; it is not copied, not commented out, not behind a flag. There is no sampler in the
+  file. A margin above zero means a seat wanted to speak and the program has no way to let it.
+  That is the difference between a hazard unreachable by construction and a hazard forbidden by a
+  boolean, and it is why 1b is its own stage.
+- llama.cpp comes in the way auricle does it: headers and import libs from
+  C:/auricle/third_party/llama.cpp, DLLs delay-loaded from C:/llama.cpp. All three are DELAYLOADed
+  so --selftest, --ingest and the editor still run on a machine with no model at all.
+- THE FALSIFIER DID NOT FIRE, and the result is better than "the numbers moved". On prose chosen
+  deliberately NOT to be in the worked examples, the margins move per seat, by mandate:
+    coffee machine refilled          SPEAKER -7.10  SKEPTIC -6.80  SENTINEL -7.20
+    build finished green             SPEAKER -6.62  SKEPTIC -6.42  SENTINEL -5.96
+    the Pacific is the smallest ocean SPEAKER -6.19  SKEPTIC +5.56  SENTINEL -6.09
+    drop the users table             SPEAKER -1.04  SKEPTIC +4.29  SENTINEL +5.88
+    retry limit was three, set it 12 SPEAKER -3.54  SKEPTIC +4.50  SENTINEL +5.63
+  A false claim moves the seat whose mandate is catching false claims by about twelve logits and
+  leaves the other two where they were. 21 of 54 probes wanted to speak; none could.
+- THE TRAP OF THE DAY, and it was silent, expensive and my fault. The first run took 556 SECONDS
+  for 101 words instead of 11.8. Every layer had gone to the CPU. ggml reported no error: when
+  ggml-cuda.dll cannot resolve its own CUDA dependencies (cudart64_12, cublas64_12, cublasLt64_12,
+  all of which sit beside it in C:/llama.cpp) it simply does not register a CUDA device, and
+  llama offloads nothing. The cause was one missing SetDllDirectory. I had rewritten auricle's
+  loader block to avoid a __try that MSVC will not accept in a function with C++ unwinding, and
+  dropped the AddDllDirectory call along with it.
+- Two things make that worse than slow. First, it saturated the CPU on a box whose operator had
+  explicitly asked, in blunt terms, that I stop doing exactly that - and I did it while believing
+  I was using the GPU. Second, IT CORRUPTED THE NUMBERS: the pre-registered flush law fires at
+  1500 ms of wall clock, so when words arrive 47x slower the timeout path fires constantly. The
+  slow run reported 30 boundaries; the correct run finds 18. A silent fallback is not a degraded
+  mode, it is a wrong answer that looks like a right one.
+- So the resident now enumerates the ggml backend devices, prints them (devices: CUDA0, CPU), and
+  REFUSES TO START if GPU layers were requested and no GPU device came up. --allow-cpu exists for
+  someone who means it. The lesson generalises past this bug: when a fallback is silent and the
+  fast path and the slow path differ by 47x, the fallback must be a refusal.
+- n_ctx is 8192, not fusord's 65536. This card is shared with llama-server and a speech stack, and
+  a 64k q8_0 window is roughly 3 GB of KV. Stage 1b needs a window long enough to judge in, not
+  long enough to live in; the resident window and the molt belong to Stage 2.
+- MEASURED on this box 2026-09-04, Qwen3.5-9B-emit-v11-Q5_K_M, n_ctx 8192, q8_0 KV, flash attn:
+  load 11.6 s · 34/34 layers offloaded · CUDA0 model buffer 5657 MiB, compute buffer 501 MiB,
+  666 MiB left CPU-mapped · 222-260 ms per boundary for all three seats, so about 74-87 ms per
+  probe against fusord's ~60 ms · 11.8 s wall for 101 words · 423 tokens of context used.
+- NOT measured and NOT claimed: total VRAM attributable to nib. The card is shared and the baseline
+  moved by gigabytes during the run, so a delta would be a number with somebody else's memory in
+  it. The per-buffer figures above come from llama's own allocator and are nib's alone.
+- Green: --selftest 120 passed 0 failed, tools/drive.py 22 passed 0 failed.
+- NEXT is Stage 2, and it is the first stage where the thing can speak. Everything in this entry
+  exists so that when it does, the decision to let it is deliberate and dated.

@@ -280,7 +280,17 @@ percepts`. This is checkable after every keystroke and is fired from inside the 
 
 ## 6 · The resident
 
-**[SPECIFIED]** — nothing in this section is built.
+**[PARTLY BUILT 2026-09-04]** — `src/resident.h/.cpp`. §6.2 (the loop) is built and its seed is
+hashed against fusord's pin. §6.3 (emission) and §6.4 (un-saying) are **structurally absent**, not
+merely unbuilt: there is no generation code in the file. §6.1's two switches are not built.
+
+6.0.1 The resident MUST refuse to start if no GPU backend came up while GPU layers were requested.
+A `ggml` build that cannot load `ggml-cuda.dll` reports no error and offloads nothing; the model
+then runs entirely on the CPU at roughly 1/47th of the speed. Measured on this box 2026-09-04:
+556 s against 11.8 s for the same 101 words. It also **corrupts the judgment record**, because the
+1500 ms flush law fires on wall-clock time — the slow run invented 30 boundaries where the correct
+one finds 18. A silent fallback is therefore not a degraded mode, it is a wrong answer, and
+`Resident::start` enumerates the devices, names them, and refuses unless `allow_cpu` is set.
 
 ### 6.1 The two switches
 
@@ -302,6 +312,22 @@ verbatim. The build MUST hash them and refuse to run if a character has drifted,
 dial-0 calibration is off-distribution otherwise.
 
 6.2.3 Judgment MUST ride the free tail of the ingest pass. The model MUST NOT be polled.
+
+6.2.4 **[BUILT]** The pinned serve hash is `0xe7ffa5704ba31076`, computed over `SEED_SYS`,
+`SEED_EXAMPLES`, `SEED_OPEN`, the three seats' names and mandates, the probe frame and the
+speak-cue frame. nib computes the same number as fusord, which is what makes 6.2.2's "copied
+verbatim" a checked fact rather than a promise. The check is pure string arithmetic and runs in
+every `--selftest`, with no model and no GPU, because a gate that only fires when a 9B is loaded
+is a gate that stops being checked.
+
+6.2.5 **[BUILT]** The speak-cue is carried and hashed even though Stage 1b never decodes it. The
+pin covers it, and a constant that exists only to be hashed is the cheapest way to keep Stage 2
+from drifting before it is written.
+
+6.2.6 **[BUILT]** `n_ctx` is 8192 by default, not fusord's 65536. This card is shared with
+llama-server and a speech stack; a 64k q8_0 window costs roughly 3 GB of KV and would evict them.
+It is configuration. Stage 1b needs a window long enough to judge in, not long enough to live in —
+the resident window and the molt are Stage 2's problem.
 
 ### 6.3 Emission
 
