@@ -145,3 +145,70 @@
 - glance read nibs window through its pixel path while it ran, which is the first time two of
   these tools have looked at each other. It picked the status line out cleanly: nib 1:1 163 chars
   1 revisions.
+
+## 2026-09-03 (late) · Stage 0d - save, selection, the theme, and a seam instead of a keyboard
+
+- Save is atomic: a temporary beside the target, flushed, then MoveFileEx over the original, so a
+  crash halfway cannot destroy the file it was saving. A file keeps its own conventions - CRLF
+  stays CRLF, a UTF-8 BOM comes back - while the document in memory is LF-only, because the
+  changeset format counts newlines and a CRLF pair would count as two.
+- Selection: shift with every movement key, click-and-drag, Ctrl+A, and Ctrl+C/X/V through the
+  real clipboard. Typing over a selection is ONE splice - one revision, one undo - which is what a
+  person means by I replaced that.
+- The theme is data. tools/theme_detect.py samples an image and writes nib.theme; the window reads
+  it at startup and falls back to compiled defaults for anything missing.
+- TRAP, and the correction was blunt and deserved: asked to match colours from a screenshot, I
+  went and sampled a live application window instead. Wrong, and slower. Do what the operator says,
+  not what you infer they meant.
+- TRAP, worse: the first window driver synthesised global keystrokes with keybd_event. Those land
+  wherever the focus happens to be, which on this box means the operators other windows. Killed
+  within a minute. The root cause of why it seemed necessary is worth keeping: a POSTED key message
+  does not update the threads key state, so GetKeyState(VK_CONTROL) reads false and a posted Ctrl+S
+  silently does nothing.
+- So the window got a seam instead of a keyboard: WM_APP+1 with a command in wParam, and the
+  environment variable NIB_LOG naming a file the window appends a tab-separated result line to.
+  A driver posts messages and reads an artefact. It never looks at the screen and never types into
+  anyone elses window.
+- Marked done ahead of its evidence, and the ROADMAP said so in the document rather than quietly:
+  save was verified by hand, because the thing that would verify it is Stage 0e.
+
+## 2026-09-04 · Stage 0e - the window driver, which earned its keep on the first run
+
+- tools/drive.py: 17 checks over eight cases - type and save, a selection typed over, undo and redo
+  by group, backspace and delete, the live replay, close and reopen, CRLF and BOM, and a path that
+  did not exist yet. It posts WM_CHAR and WM_APP+1, and asserts on the bytes on disk and the lines
+  in NIB_LOG. No keybd_event, no SendInput.
+- It waits on artefacts rather than sleeping a guessed interval: wait_for polls the log until one
+  more line of the kind it wants has appeared. A test that sleeps is a test that is flaky on a busy
+  box, and this box is busy.
+- FINDING 1, from the first run: undo unpicked typing one character at a time. Technically correct
+  and unusable. Doc now groups - a burst by the same hand, contiguous, within 700 ms and of the
+  same kind is one thing a person did. A pause, a newline, a jump elsewhere, a switch between
+  typing and deleting, or a different author closes the group. That last clause is not cosmetic:
+  in Act I the resident writes into the same buffer, and its edits must never fuse into a persons
+  undo.
+- FINDING 2, from the run after the fix: redo replayed a group backwards. The two stacks carry
+  OPPOSITE conventions - an undo group is stored in edit order and applied newest-first, because
+  each inverse was computed against the text its own edit produced; a redo group is stored in apply
+  order and applied forwards. Mixing them up half-restores a burst, which looks like corruption and
+  is not.
+- Both defects had survived 71 unit tests. Neither is subtle once seen. The unit tests could not
+  see them because they asserted what the code did rather than what a person would expect, which is
+  the failure mode a driver exists to catch.
+- Two of the old unit tests then failed, correctly: they had encoded per-character undo as the
+  expected behaviour. Replaced with six that name the property - what closes a group, and that one
+  undo takes back one burst.
+- TRAP, and it looked exactly like an editor bug: two runs in three reported 16 passed 1 failed,
+  the third 17 passed 0 failed. The cause was in the driver. FindWindow by class name alone returns
+  ANY nib window - a leftover from an earlier case whose process had not yet exited, or the
+  operators own editor. Fixed by enumerating windows and matching GetWindowThreadProcessId against
+  the pid the driver launched, plus a wait for the process to actually go on close. Three runs,
+  three identical results.
+- The lesson worth carrying: when a test is intermittent, suspect the test before the code. An
+  intermittent test is not weak evidence of a bug, it is strong evidence of a bug somewhere, and
+  the harness is where to look first.
+- Stage 0d is now marked done WITH its evidence. That was the one place in the ROADMAP where a
+  stage was ahead of its proof, and it is closed.
+- Green on this box, 2026-09-04: nib.exe --selftest 77 passed 0 failed; python tools/drive.py
+  17 passed 0 failed. The exe is 350 KB and links kernel32, user32, gdi32, comdlg32 - no network
+  DLL, enforced at build.

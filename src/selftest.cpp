@@ -7,6 +7,8 @@
 #include "changeset.h"
 #include "doc.h"
 
+#include <windows.h>
+
 #include <cstdarg>
 #include <cstdio>
 #include <string>
@@ -384,37 +386,74 @@ int run_selftest() {
         check(mid && ok && out == d.text(), mid ? (ok ? "an edit in the middle still replays: " + d.text().substr(0, 20) : "replay failed: " + e) : "splice failed: " + err);
     }
 
-    section("undo and redo — appended, never truncated");
+    section("undo and redo — by group, appended, never truncated");
     {
+        // Undo takes back one thing a person DID, not one character. A burst of typing with no
+        // pause, contiguous, by the same hand, is one group. The window driver found this the
+        // hard way: undo used to unpick a word letter by letter, which is technically correct
+        // and unusable.
         Doc d;
         std::string err;
         d.splice(0, 0, "abc", "me", err);
         d.splice(3, 0, "def", "me", err);
+        check(d.undo_groups() == 1, ssprintf("two contiguous appends with no pause are ONE group (%zu)", d.undo_groups()));
+
         const std::string full = d.text();
         const size_t revs_before = d.revisions();
-
         const bool u1 = d.undo(err);
-        check(u1 && d.text() == "abc", u1 ? "undo takes the document back to " + d.text() : "undo failed: " + err);
-        check(d.revisions() == revs_before + 1,
+        check(u1 && d.text().empty(), u1 ? "one undo takes back the whole burst (left: \"" + d.text() + "\")" : "undo failed: " + err);
+        check(d.revisions() > revs_before,
               ssprintf("and the log GREW rather than shrank: %zu revisions, was %zu", d.revisions(), revs_before));
 
         const bool r1 = d.redo(err);
-        check(r1 && d.text() == full, r1 ? "redo restores " + d.text() : "redo failed: " + err);
+        check(r1 && d.text() == full, r1 ? "one redo puts the whole burst back: " + d.text() : "redo failed: " + err);
 
-        // the log still replays after undo and redo have been through it
         std::string out, e;
         const bool ok = d.replay(out, e);
-        check(ok && out == d.text(), ok ? ssprintf("the whole log, %zu revisions including the undo, replays byte-exact", d.revisions()) : "replay failed: " + e);
+        check(ok && out == d.text(), ok ? ssprintf("the whole log, %zu revisions including the undo and redo, replays byte-exact", d.revisions()) : "replay failed: " + e);
+    }
 
-        // undo twice, then a new edit: the redo stack is gone, and the log is still whole
-        d.undo(err);
-        d.undo(err);
-        check(d.text().empty(), "two undos empty the document (" + std::to_string(d.text().size()) + " chars)");
-        const bool fork = d.splice(0, 0, "xyz", "me", err);
-        check(fork && !d.can_redo(), fork ? "a new edit after an undo forks the future and drops the redos" : "splice failed: " + err);
-        std::string out2, e2;
-        const bool ok2 = d.replay(out2, e2);
-        check(ok2 && out2 == "xyz", ok2 ? "and the log still replays to " + out2 : "replay failed: " + e2);
+    section("what closes an undo group");
+    {
+        std::string err;
+        {   // a pause: the world moved on between the two, so they are two things
+            Doc d;
+            d.splice(0, 0, "abc", "me", err);
+            Sleep(Doc::kGroupMs + 150);
+            d.splice(3, 0, "def", "me", err);
+            check(d.undo_groups() == 2, ssprintf("a pause longer than %lld ms starts a new group (%zu)", (long long)Doc::kGroupMs, d.undo_groups()));
+            d.undo(err);
+            check(d.text() == "abc", "so one undo leaves the first burst standing: \"" + d.text() + "\"");
+        }
+        {   // a newline: a person who pressed Enter finished a thought
+            Doc d;
+            d.splice(0, 0, "abc", "me", err);
+            d.splice(3, 0, "\n", "me", err);
+            d.splice(4, 0, "def", "me", err);
+            check(d.undo_groups() >= 2, ssprintf("a newline closes the group (%zu groups)", d.undo_groups()));
+            d.undo(err);
+            check(d.text() == "abc\n", "so one undo leaves the finished line: \"" + d.text() + "\"");
+        }
+        {   // moving away: an edit somewhere else is a different act
+            Doc d;
+            d.splice(0, 0, "abcdef", "me", err);
+            d.splice(0, 0, "X", "me", err);   // back at the start, not contiguous with the last
+            check(d.undo_groups() == 2, ssprintf("an edit that is not contiguous starts a new group (%zu)", d.undo_groups()));
+        }
+        {   // typing then deleting are different kinds, and do not fuse
+            Doc d;
+            d.splice(0, 0, "abc", "me", err);
+            d.splice(2, 1, "", "me", err);
+            check(d.undo_groups() == 2, ssprintf("typing then deleting are two groups (%zu)", d.undo_groups()));
+            d.undo(err);
+            check(d.text() == "abc", "and undoing the delete restores the character: \"" + d.text() + "\"");
+        }
+        {   // a different hand: the resident's edit never joins a person's burst
+            Doc d;
+            d.splice(0, 0, "abc", "me", err);
+            d.splice(3, 0, "def", "resident", err);
+            check(d.undo_groups() == 2, ssprintf("a different author starts a new group (%zu)", d.undo_groups()));
+        }
     }
 
     section("the document — a thousand random edits");

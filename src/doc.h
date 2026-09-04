@@ -62,8 +62,24 @@ private:
 
     std::string text_;
     std::vector<Rev> log_;
-    std::vector<std::string> undo_, redo_;   // changesets, each against the text of its moment
+    // Undo works in GROUPS, not single edits. A burst of typing is one thing a person did, and
+    // an editor that unpicks it a character at a time is technically correct and unusable. A group
+    // is a list of inverses; undoing applies them newest-first, each one appended to the log like
+    // any other change, so the log stays whole (§2.3.1).
+    std::vector<std::vector<std::string>> undo_, redo_;
+    // what closes a group: a different author, a pause, an edit that is not contiguous with the
+    // last, a change of kind (typing then deleting), or a newline having just been typed
+    int64_t group_at_ = -1;
+    int64_t group_ms_ = 0;
+    char group_kind_ = 0;          // 'i' inserting, 'd' deleting
+    std::string group_author_;
+    bool group_open_ = false;
     int64_t last_caret_ = 0;
+
+public:
+    // how many separate things a person would have to press Ctrl+Z to take back
+    size_t undo_groups() const { return undo_.size(); }
+    static constexpr int64_t kGroupMs = 700;   // a pause longer than this starts a new group
 };
 
 // ---- the view's arithmetic, kept out of the window so it can be tested without one ------------

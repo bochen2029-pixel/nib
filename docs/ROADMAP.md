@@ -16,7 +16,7 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **I** | 0b · the write half | ✔ 2026-09-03 | 0.2.0 |
 | **I** | 0c · the editor shell | ✔ 2026-09-03 | 0.3.0 |
 | **I** | 0d · save, selection, the theme | ✔ 2026-09-03 | 0.4.0 |
-| **I** | 0e · the window driver | ○ | |
+| **I** | 0e · the window driver | ✔ 2026-09-04 | 0.4.1 |
 | **I** | 1 · ingest, and a resident that only holds | ○ | |
 | **I** | 2 · emission, with floor control | ○ | |
 | **I** | 3 · un-saying, made visible | ○ | |
@@ -27,8 +27,8 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**71 checks green.** The exe is 216 KB and links kernel32, user32, gdi32, comdlg32 — no network
-DLL, enforced at build.
+**77 checks green in the exe, and 17 more from the window driver.** The exe is 350 KB and links
+kernel32, user32, gdi32, comdlg32 — no network DLL, enforced at build.
 
 ---
 
@@ -70,21 +70,42 @@ mouse, clipboard. `nib.theme` read at startup, `tools/theme_detect.py` to derive
 The `WM_APP+1` / `NIB_LOG` driver seam.
 
 *Falsifier: a save that can lose the previous file, or a file whose conventions nib silently
-changed.* — Not yet fired at: **the driver is Stage 0e and save is currently verified by hand.**
-This is the one place where the stage is marked done ahead of its evidence, and it is marked so
-deliberately rather than quietly.
+changed.* — **Fired at on 2026-09-04 and did not go off.** Stage 0e's driver reaches every save
+path through the command seam and compares the bytes on disk; a CRLF file came back CRLF, a BOM
+came back, and the file survived close-and-reopen byte for byte. Until that day this stage was
+marked done ahead of its evidence, and the ROADMAP said so rather than hiding it.
 
-### ○ Stage 0e — the window driver
+### ✔ Stage 0e — the window driver · 0.4.1
 
-A driver that posts `WM_APP+1` commands and reads `NIB_LOG` and the file on disk: type, select,
-replace, save, undo, reopen, compare bytes. Closes the gap left by 0d.
+`tools/drive.py`: launches the window with `NIB_LOG` set, posts `WM_CHAR` to type and `WM_APP+1`
+for the chords, then reads the log and the bytes on disk. **17 checks** across eight cases — type
+and save, a selection typed over, undo and redo by group, backspace and delete, the live replay,
+close and reopen, CRLF and BOM, and a path that did not exist.
 
 **It must not synthesise global input.** The first attempt did, and global keystrokes land wherever
 the focus happens to be — which can type into another application's window. That is why the seam
 exists.
 
 *Falsifier: a save path that the driver cannot reach without global input, or a save that loses a
-byte across a close-and-reopen cycle.*
+byte across a close-and-reopen cycle.* — Did not fire. Every path was reachable by posting
+messages; no byte was lost.
+
+**The driver earned its keep on its first run**, which is the argument for writing one at all. It
+found two defects that 71 unit tests had not:
+
+- **Undo unpicked typing one character at a time.** Technically correct and unusable. `Doc` now
+  groups: a burst by the same hand, contiguous, within 700 ms and of the same kind is one thing a
+  person did. A pause, a newline, a jump elsewhere, a switch between typing and deleting, or a
+  different author closes the group.
+- **Redo replayed a group backwards.** The two stacks carry opposite conventions — an undo group is
+  stored in edit order and applied newest-first, a redo group is stored in apply order and applied
+  forwards — and mixing them up half-restored a burst.
+
+It also caught **its own** flakiness, which is worth recording because the failure looked like the
+editor's: `FindWindow` by class name alone returns *any* nib window, including one left over from
+an earlier case or the operator's own. Two runs in three failed for that reason. The driver now
+enumerates windows and binds to the pid it launched, and runs three times for three identical
+results.
 
 ### ○ Stage 1 — ingest, and a resident that only holds
 

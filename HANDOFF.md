@@ -87,7 +87,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.4.0 · the active work** |
+| **nib** | `C:\nib` | **0.4.1 · the active work · Stages 0a–0e · 77 + 17 checks** |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.
@@ -131,11 +131,12 @@ amnesia, and a resident does not have amnesia; the interaction is the prompt.
 5. `C:\nib\docs\BLUEPRINT.md` — the design and the intent.
 6. `C:\nib\docs\devlog.md` — what happened, in order, with the traps.
 
-### 4.3 Built and green — 71 checks
+### 4.3 Built and green — 77 checks in the exe, 17 in the driver
 
 ```
-C:\nib\build.bat            /W4 /WX, gate: no network DLL among the dependents
-C:\nib\nib.exe --selftest   71 passed, 0 failed
+C:\nib\build.bat               /W4 /WX, gate: no network DLL among the dependents
+C:\nib\nib.exe --selftest      77 passed, 0 failed
+python C:/nib/tools/drive.py   17 passed, 0 failed   (the window, driven by messages)
 ```
 
 - **`src/changeset.h/.cpp`** — Etherpad's Easysync format in C++: base36, `Op`,
@@ -146,11 +147,13 @@ C:\nib\nib.exe --selftest   71 passed, 0 failed
   inserts, and that a trailing bare keep is implicit.
 - **`src/doc.h/.cpp`** — the document is an **op log**, not a string. Every edit is a changeset.
   Undo is an inverse changeset **appended**; the log is never truncated. The inverse is computed
-  against the text the edit *produces*.
+  against the text the edit *produces*. Undo works in **groups**, not single edits — see §5.
 - **`src/edit.cpp`** — Win32/GDI window. Typing, navigation, selection, clipboard, atomic save,
   open, CRLF/BOM preservation, undo/redo, the status line, per-monitor DPI, the theme loader, the
   driver seam.
 - **`src/selftest.cpp`** — the oracle. **`src/nib.cpp`** — the CLI.
+- **`tools/drive.py`** — the window battery. Posts messages, reads artefacts, never synthesises
+  input and never looks at the screen.
 - **`tools/theme_detect.py`** — derives `nib.theme` from an image. **`nib.theme`** — the palette
   (colours are data; the operator's is dark navy `#0d1520` / azure `#2196f3` / dim `#3f5f7a`).
 
@@ -161,6 +164,8 @@ C:\nib\nib.exe --selftest   71 passed, 0 failed
 | 0a | the port agrees with Etherpad | 41 checks on Etherpad's own vectors + 4 negative canonical-form cases |
 | 0b | a splice is canonical and applies correctly | **10,000 random splices**, deterministic generator |
 | 0c | the log replays byte-exact | **1,000 random edits interleaved with undos** — 767 edits, 214 undos, 965 revisions, checked after *every* one |
+| 0d | no save loses a file or silently changes its conventions | the Stage 0e driver: bytes compared on disk, CRLF stayed CRLF, a BOM came back, the file survived close-and-reopen |
+| 0e | every save path is reachable without global input | 17 checks over eight cases, three consecutive identical runs |
 
 `Ctrl+R` in the editor runs the Stage 0 falsifier live and prints the answer on the status line.
 
@@ -172,6 +177,7 @@ nib --edit [FILE]                    the window
 nib --splice "text" START NDEL "ins" the changeset for one edit, and the result
 nib --unpack CS | --ops CS | --check CS | --apply CS TEXT
 python tools/theme_detect.py shot.png
+python tools/drive.py [--exe X] [--keep]   the window battery; exit 3 on any mismatch
 ```
 
 Editor keys: `Ctrl+S` save · `Ctrl+Shift+S` save as · `Ctrl+O` open · `Ctrl+A/C/X/V` ·
@@ -191,27 +197,33 @@ why the command channel exists.
 
 ## 5 · Resume here
 
-**Stage 0e — the window driver.** Everything needed is in place; only the driver is missing.
+**Stage 0e is done (2026-09-04, 0.4.1).** `C:\nib\tools\drive.py` — 17 checks over eight cases,
+posting `WM_CHAR` and `WM_NIB_CMD` and asserting on the bytes on disk and the lines in `NIB_LOG`.
+Its falsifier did not fire: every save path was reachable without global input, and no byte was
+lost across close-and-reopen. That also closed the one honest gap in the ROADMAP — Stage 0d is no
+longer marked done ahead of its evidence.
 
-Write `C:\nib\tools\drive.py` that:
-1. launches `nib.exe --edit <temp file>` with `NIB_LOG` set,
-2. posts `WM_CHAR` to type,
-3. posts `WM_NIB_CMD` for save, select-all, undo, redo, replay,
-4. reads `NIB_LOG` and the file on disk, and asserts the bytes,
-5. covers: type → save → verify bytes; select → type over → save → verify; undo → save → verify;
-   close and reopen → verify; a CRLF file stays CRLF; a BOM survives.
+Run both oracles before any commit:
 
-It **must not** call `keybd_event` or `SendInput`. It should exit non-zero on any mismatch, so it
-can join `--selftest`'s discipline even though it lives outside the exe.
+```
+C:\nib\nib.exe --selftest        77 passed, 0 failed
+python C:/nib/tools/drive.py     17 passed, 0 failed
+```
 
-*Falsifier for 0e: a save path the driver cannot reach without global input, or a save that loses a
-byte across close-and-reopen.*
+Three things the driver found, kept here because they are the kind of thing that comes back:
 
-Closing 0e also closes the one honest gap in the ROADMAP: **Stage 0d is marked done ahead of its
-evidence** — save is currently verified by hand — and that is stated in `docs/ROADMAP.md` rather
-than hidden.
+- **Undo groups.** A burst by the same hand, contiguous, within `Doc::kGroupMs` (700 ms) and of the
+  same kind is one undo. A pause, a newline, a jump elsewhere, a switch between typing and
+  deleting, or a **different author** closes it. That last clause is load-bearing for Stage 1: the
+  resident writes into the same buffer and must never fuse into a person's undo.
+- **The two undo stacks carry opposite conventions.** An undo group is stored in edit order and
+  applied newest-first; a redo group is stored in apply order and applied forwards. Reversing
+  either one half-restores a burst and looks like corruption.
+- **When a test is intermittent, suspect the test.** Two runs in three failed because
+  `FindWindow` by class name returns *any* nib window — a leftover, or the operator's own. The
+  driver now binds to the pid it launched. This looked exactly like an editor bug and was not.
 
-**After 0e: Stage 1** — `PadSource` implementing `auricle::fusor::StreamingTextSource`, the ingest
+**Now: Stage 1** — `PadSource` implementing `auricle::fusor::StreamingTextSource`, the ingest
 compiler, and a resident that **only holds** (emission disabled). Read `C:\auricle\src\fusor\source.h`
 first; it already states three constraints you would otherwise discover painfully:
 
@@ -226,11 +238,11 @@ first; it already states three constraints you would otherwise discover painfull
 
 ## 6 · Open loops and hazards, right now
 
-**6.1 `nib.exe` is locked by a running instance.** The operator has a nib window open from an
-earlier build (it predates save *and* selection, so its content cannot be copied out through the
-UI). This session therefore built to **`C:\nib\nib-next.exe`**. When that window is closed,
-`nib-next.exe` must be renamed over `nib.exe`, or just rebuild. **Do not kill that window** — it
-holds unsaved text the operator may want.
+**6.1 Resolved 2026-09-04.** `nib.exe` was locked by an instance the operator had open from a build
+predating save; the session built to `nib-next.exe` rather than kill the window. That window has
+since been closed by the operator, `nib-next.exe` is gone, and `nib.exe` is the current build. The
+standing rule survives the incident: **if `nib.exe` is locked, build beside it — never kill a
+window that may hold unsaved text.**
 
 **6.2 `compose` and `follow` are not ported, deliberately.** Act I needs neither. Before either is
 trusted, build the **differential harness**: `pnpm install` the Etherpad tree and run the real

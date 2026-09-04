@@ -4,6 +4,7 @@
 #include "changeset.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace nib {
 
@@ -12,6 +13,11 @@ void Doc::set(const std::string& t) {
     log_.clear();
     undo_.clear();
     redo_.clear();
+    group_open_ = false;
+    group_at_ = -1;
+    group_ms_ = 0;
+    group_kind_ = 0;
+    group_author_.clear();
     last_caret_ = 0;
     if (!t.empty()) {
         // the opening move is itself a changeset, so a replay of the log reproduces the file
@@ -33,6 +39,13 @@ bool Doc::push(const std::string& cs, const std::string& inverse, const std::str
     return true;
 }
 
+// A monotonic millisecond clock, for grouping only. Nothing in the document model depends on wall
+// time; this decides where one thing a person did ends and the next begins, and nothing else.
+static int64_t mono_ms() {
+    return (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 bool Doc::splice(int64_t start, int64_t ndel, const std::string& ins, const std::string& author, std::string& err) {
     if (start < 0) start = 0;
     if (start > (int64_t)text_.size()) start = (int64_t)text_.size();
@@ -47,7 +60,27 @@ bool Doc::splice(int64_t start, int64_t ndel, const std::string& ins, const std:
     const std::string inv = make_splice(after, start, (int64_t)ins.size(), deleted);
 
     if (!push(cs, inv, author, err)) return false;
-    undo_.push_back(inv);
+
+    // ---- grouping: is this a continuation of what the person was already doing? ----------
+    const int64_t now = mono_ms();
+    const char kind = ins.empty() ? 'd' : 'i';
+    // typing continues where it left off; deleting backwards arrives AT the previous start
+    const bool contiguous = kind == 'i' ? start == group_at_ : (start + ndel == group_at_ || start == group_at_);
+    const bool same_hand = author == group_author_;
+    const bool in_time = now - group_ms_ <= kGroupMs;
+    const bool extend = group_open_ && same_hand && in_time && contiguous && kind == group_kind_;
+
+    if (extend) undo_.back().push_back(inv);
+    else undo_.push_back(std::vector<std::string>{ inv });
+
+    // A newline closes the group: a person who pressed Enter has finished a thought, and undoing
+    // back across it is almost never what they meant.
+    group_open_ = ins.find('\n') == std::string::npos;
+    group_at_ = kind == 'i' ? start + (int64_t)ins.size() : start;
+    group_ms_ = now;
+    group_kind_ = kind;
+    group_author_ = author;
+
     redo_.clear();   // a new edit forks the future; the redos that were waiting are gone
     last_caret_ = start + (int64_t)ins.size();
     return true;
@@ -62,31 +95,50 @@ bool Doc::apply(const std::string& cs, const std::string& author, std::string& e
     const std::string before = text_;
     if (!push(cs, std::string(), author, err)) return false;
     log_.back().inverse = make_splice(text_, 0, (int64_t)text_.size(), before);
+    group_open_ = false;   // somebody else's change ends whatever this hand was in the middle of
     return true;
 }
 
 bool Doc::undo(std::string& err) {
     if (undo_.empty()) { err = "nothing to undo"; return false; }
-    const std::string inv = undo_.back();
+    const std::vector<std::string> group = undo_.back();
     undo_.pop_back();
-    // the redo is the inverse of the inverse: computed against the text the undo will produce
-    std::string after;
-    if (!apply_to_text(inv, text_, after, err)) return false;
-    const std::string redo_cs = make_splice(after, 0, (int64_t)after.size(), text_);
-    if (!push(inv, redo_cs, "undo", err)) return false;
-    redo_.push_back(redo_cs);
+    group_open_ = false;   // the next edit starts a fresh group, whatever it is
+
+    // apply the group's inverses NEWEST first: each was computed against the text its own edit
+    // produced, so they only compose in that order
+    std::vector<std::string> redo_group;
+    for (size_t i = group.size(); i-- > 0;) {
+        std::string after;
+        if (!apply_to_text(group[i], text_, after, err)) return false;
+        const std::string redo_cs = make_splice(after, 0, (int64_t)after.size(), text_);
+        if (!push(group[i], redo_cs, "undo", err)) return false;
+        redo_group.push_back(redo_cs);
+    }
+    // redoing replays them in the order they were undone
+    std::reverse(redo_group.begin(), redo_group.end());
+    redo_.push_back(redo_group);
     return true;
 }
 
 bool Doc::redo(std::string& err) {
     if (redo_.empty()) { err = "nothing to redo"; return false; }
-    const std::string cs = redo_.back();
+    const std::vector<std::string> group = redo_.back();
     redo_.pop_back();
-    std::string after;
-    if (!apply_to_text(cs, text_, after, err)) return false;
-    const std::string inv = make_splice(after, 0, (int64_t)after.size(), text_);
-    if (!push(cs, inv, "redo", err)) return false;
-    undo_.push_back(inv);
+    group_open_ = false;
+
+    // The two groups carry opposite conventions, and mixing them up silently half-restores a
+    // burst — which is exactly what the window driver caught. An UNDO group is stored in edit
+    // order and applied backwards; a REDO group is stored in apply order and applied FORWARDS.
+    std::vector<std::string> undo_group;
+    for (size_t i = 0; i < group.size(); ++i) {
+        std::string after;
+        if (!apply_to_text(group[i], text_, after, err)) return false;
+        const std::string inv = make_splice(after, 0, (int64_t)after.size(), text_);
+        if (!push(group[i], inv, "redo", err)) return false;
+        undo_group.push_back(inv);   // already in edit order, which undo() expects
+    }
+    undo_.push_back(undo_group);
     return true;
 }
 
