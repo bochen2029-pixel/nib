@@ -115,3 +115,33 @@
   Changeset.ts is the right oracle for those, when they arrive.
 - Next is the editor shell: buffer, view, cursor, selection, undo, files, DPI, status line. It is
   the only large unknown left before a resident can be wired in.
+
+## 2026-09-03 (night) · Stage 0c - the editor shell
+
+- 71 checks, 0 failed. doc.cpp (the document as an op log) and edit.cpp (a Win32/GDI window).
+  The operator typed in it while this was being written: 62 revisions, 224 characters, 9 lines.
+- THE FALSIFIER HOLDS, and it is checked after every edit rather than once at the end: a thousand
+  random splices, undos and redos - 767 edits, 214 undos, 965 revisions - and the log folded from
+  the empty document reproduced the text byte for byte every single time.
+- UNDO IS APPENDED, NEVER TRUNCATED. An undo is a new changeset that inverts the last one, so the
+  log only ever grows: the test asserts the revision count GREW after an undo. That is Etherpad
+  model and it is the estate law that the world is never edited - and it matters for Act II,
+  because a truncated log is a history a peer cannot reconcile against.
+- The inverse is computed against the text the edit PRODUCES, not the text it consumed. Getting
+  that backwards is the subtle way an append-only undo goes wrong, which is why the random test
+  interleaves undos with edits rather than testing them in isolation.
+- Ctrl+R runs the falsifier from inside the editor and prints the answer on the status line. The
+  promise Stage 0 makes is checkable by the person using it, at any moment, not only by the test.
+- The window: Consolas so a column is arithmetic and the caret cannot drift from the model,
+  per-monitor DPI with the font rebuilt on WM_DPICHANGED, a drawn caret rather than the system
+  one, typing, backspace and delete (UTF-8 aware, so one keystroke removes one character and not
+  one byte), Enter, arrows, Home/End, page up and down, wheel, click-to-place, undo and redo.
+- The one law the window must not break: every edit goes through Doc::splice. Nothing touches the
+  text directly, so the log stays complete and the replay check keeps meaning something.
+- NOT here yet, and the next slice: SELECTION, FILES (there is no save - a window closed now loses
+  its content) and find. Deliberate: the window is more useful sooner without them than late with
+  them, but save is the first thing to add and it should be added before anyone writes anything
+  they want to keep.
+- glance read nibs window through its pixel path while it ran, which is the first time two of
+  these tools have looked at each other. It picked the status line out cleanly: nib 1:1 163 chars
+  1 revisions.

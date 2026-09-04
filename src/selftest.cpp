@@ -5,6 +5,7 @@
 // changesets in `src/tests/backend-new/specs/easysync-*.ts`. Where a number is asserted it is
 // asserted by equality, because a format is not something to be nearly right about.
 #include "changeset.h"
+#include "doc.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -350,6 +351,130 @@ int run_selftest() {
         }
         check(canon_fail == 0, canon_fail == 0 ? ssprintf("%d random splices are all canonical", tried) : ssprintf("%d not canonical, first: %s", canon_fail, first_bad.c_str()));
         check(apply_fail == 0, apply_fail == 0 ? ssprintf("%d random splices all apply to the expected text", tried) : ssprintf("%d wrong, first: %s", apply_fail, first_bad.c_str()));
+    }
+
+    section("the document — Stage 0's falsifier");
+    {
+        // The promise: the log, folded from the empty document, reproduces the text byte for byte.
+        // It is checked after EVERY edit, not once at the end, so a divergence names the keystroke
+        // that caused it rather than the session that contained it.
+        Doc d;
+        std::string err;
+        const char* script[] = { "hello", " world", "\n", "second line", "\n\nfourth" };
+        int steps = 0, diverged = 0;
+        std::string first_bad;
+        for (const char* piece : script) {
+            if (!d.splice((int64_t)d.size(), 0, piece, "me", err)) { first_bad = err; break; }
+            ++steps;
+            std::string out, e;
+            if (!d.replay(out, e) || out != d.text()) {
+                ++diverged;
+                if (first_bad.empty()) first_bad = "after step " + std::to_string(steps) + ": " + e;
+            }
+        }
+        check(steps == 5 && diverged == 0,
+              diverged == 0 ? "five appends, and the log replays byte-exact after each" : first_bad);
+        check(d.text() == "hello world\nsecond line\n\nfourth", "the text is what was typed: " + d.text());
+        check(d.revisions() == 5, ssprintf("five revisions on the log (%zu)", d.revisions()));
+
+        // an edit in the middle, which is where an append-only log usually goes wrong
+        const bool mid = d.splice(5, 6, "!! ", "me", err);
+        std::string out, e;
+        const bool ok = d.replay(out, e);
+        check(mid && ok && out == d.text(), mid ? (ok ? "an edit in the middle still replays: " + d.text().substr(0, 20) : "replay failed: " + e) : "splice failed: " + err);
+    }
+
+    section("undo and redo — appended, never truncated");
+    {
+        Doc d;
+        std::string err;
+        d.splice(0, 0, "abc", "me", err);
+        d.splice(3, 0, "def", "me", err);
+        const std::string full = d.text();
+        const size_t revs_before = d.revisions();
+
+        const bool u1 = d.undo(err);
+        check(u1 && d.text() == "abc", u1 ? "undo takes the document back to " + d.text() : "undo failed: " + err);
+        check(d.revisions() == revs_before + 1,
+              ssprintf("and the log GREW rather than shrank: %zu revisions, was %zu", d.revisions(), revs_before));
+
+        const bool r1 = d.redo(err);
+        check(r1 && d.text() == full, r1 ? "redo restores " + d.text() : "redo failed: " + err);
+
+        // the log still replays after undo and redo have been through it
+        std::string out, e;
+        const bool ok = d.replay(out, e);
+        check(ok && out == d.text(), ok ? ssprintf("the whole log, %zu revisions including the undo, replays byte-exact", d.revisions()) : "replay failed: " + e);
+
+        // undo twice, then a new edit: the redo stack is gone, and the log is still whole
+        d.undo(err);
+        d.undo(err);
+        check(d.text().empty(), "two undos empty the document (" + std::to_string(d.text().size()) + " chars)");
+        const bool fork = d.splice(0, 0, "xyz", "me", err);
+        check(fork && !d.can_redo(), fork ? "a new edit after an undo forks the future and drops the redos" : "splice failed: " + err);
+        std::string out2, e2;
+        const bool ok2 = d.replay(out2, e2);
+        check(ok2 && out2 == "xyz", ok2 ? "and the log still replays to " + out2 : "replay failed: " + e2);
+    }
+
+    section("the document — a thousand random edits");
+    {
+        // The same property under abuse: random splices at random offsets, with the replay checked
+        // every time. This is the check that would catch an inverse computed against the wrong
+        // text, which is the subtle way an append-only undo goes wrong.
+        uint64_t z = 0xD1B54A32D192ED03ull;
+        auto next = [&z]() {
+            z += 0x9E3779B97F4A7C15ull;
+            uint64_t x = z;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+            return x ^ (x >> 31);
+        };
+        auto rnd = [&next](uint64_t n) { return n ? (uint64_t)(next() % n) : 0ull; };
+
+        Doc d;
+        std::string err;
+        int edits = 0, undos = 0, diverged = 0;
+        std::string first_bad;
+        for (int i = 0; i < 1000; ++i) {
+            const uint64_t roll = rnd(10);
+            if (roll < 2 && d.can_undo()) {
+                if (d.undo(err)) ++undos;
+            } else if (roll < 3 && d.can_redo()) {
+                d.redo(err);
+            } else {
+                const int64_t start = (int64_t)rnd(d.size() + 1);
+                const int64_t ndel = (int64_t)rnd((uint64_t)((int64_t)d.size() - start) + 1);
+                std::string ins;
+                for (uint64_t k = 0, n = rnd(6); k < n; ++k) {
+                    const uint64_t r = rnd(28);
+                    ins += r < 26 ? (char)('a' + r) : '\n';
+                }
+                if (d.splice(start, ndel, ins, "me", err)) ++edits;
+            }
+            std::string out, e;
+            if (!d.replay(out, e) || out != d.text()) {
+                ++diverged;
+                if (first_bad.empty()) first_bad = ssprintf("diverged at i=%d after %d edits: %s", i, edits, e.c_str());
+            }
+        }
+        check(diverged == 0, diverged == 0
+                                 ? ssprintf("%d edits and %d undos, and the log replayed byte-exact every single time (%zu revisions)", edits, undos, d.revisions())
+                                 : first_bad);
+    }
+
+    section("the line index");
+    {
+        const std::string t = "one\ntwo\n\nfour";
+        LineIndex ix;
+        ix.build(t);
+        check(ix.count() == 4, ssprintf("four lines (%zu)", ix.count()));
+        check(ix.line_len(0, t) == 3 && ix.line_len(2, t) == 0 && ix.line_len(3, t) == 4,
+              "line lengths drop the newline: 3, 0, 4");
+        check(ix.line_of(0) == 0 && ix.line_of(3) == 0 && ix.line_of(4) == 1 && ix.line_of(t.size()) == 3,
+              "an offset maps to its line, and the newline belongs to the line it ends");
+        check(ix.offset_of(1, 2, t) == 6, ssprintf("line 1 column 2 is offset 6 (got %zu)", ix.offset_of(1, 2, t)));
+        check(ix.offset_of(0, 99, t) == 3, "a column past the end of a line clamps to its end");
     }
 
     section("refusals");

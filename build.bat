@@ -11,8 +11,8 @@ if errorlevel 1 (
 )
 cd /d "%~dp0"
 set CXXFLAGS=/nologo /c /std:c++20 /O2 /W4 /WX /permissive- /EHsc /utf-8 /MT /Zc:__cplusplus /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Isrc
-cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\selftest.cpp || exit /b 1
-link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj selftest.obj kernel32.lib || exit /b 1
+cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\doc.cpp src\edit.cpp src\selftest.cpp || exit /b 1
+link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj doc.obj edit.obj selftest.obj kernel32.lib user32.lib gdi32.lib || exit /b 1
 dumpbin /nologo /dependents nib.exe > build-dependents.txt || exit /b 1
 findstr /i /c:"ws2_32" /c:"wininet" /c:"winhttp" /c:"urlmon" /c:"dnsapi" build-dependents.txt >nul
 if not errorlevel 1 (
