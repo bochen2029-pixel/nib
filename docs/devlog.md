@@ -212,3 +212,70 @@
 - Green on this box, 2026-09-04: nib.exe --selftest 77 passed 0 failed; python tools/drive.py
   17 passed 0 failed. The exe is 350 KB and links kernel32, user32, gdi32, comdlg32 - no network
   DLL, enforced at build.
+
+## 2026-09-04 (later) · Stage 1a - the pad compiles a world, and the seam lies about its own size
+
+- The interface is auricle's and is included UNMODIFIED from C:/auricle/src (SPEC 5.1.1), not
+  copied. build.bat adds the include path and fails loudly if source.h is not there. Copying it
+  would have been easier and would have let the two drift, which is the whole thing the clause is
+  guarding against.
+- Before writing any of the compiler I compiled a 20-line probe against the header under nib's own
+  flags. That was worth more than the rest of the morning: it found three facts that the header,
+  and nib's own SPEC quoting it, had wrong.
+- TRAP 1: sizeof(Delta) is 528, not 512. The header's comment says kPayloadMax = 496 keeps a Delta
+  "a tidy 512B"; 8 + 16 + 2 + 496 = 522, which the uint64_t pads to 528. nib's SPEC 5.1.7 had
+  repeated the claim without checking it. Harmless, but a spec that states a false number about a
+  binary layout is a spec nobody should trust about the next one.
+- TRAP 2, and this one had teeth: fill_delta reserves the last payload byte for a NUL, so handing
+  it exactly kPayloadMax bytes yields len = 495 and says NOTHING. SPEC 5.1.7 instructed the
+  compiler to "chunk at that bound" - which would have quietly dropped one byte out of every full
+  chunk of a long paste. That is precisely the failure rule 7 and SPEC 5.1.4 exist to prevent, and
+  it was written into the spec by the same hand that wrote the rule. The bound is 495; it is now a
+  named constant, kChunkMax, with the reason beside it.
+- TRAP 3: a PadSource embeds the 1024-slot ring by value, so at 528 bytes a Delta it is ~528 KB -
+  more than half a default 1 MB stack. Declaring one as a local in the selftest crashed the exe at
+  construction with NO output whatsoever, exit 0xC00000FD. A test battery that prints nothing looks
+  like a build problem, not a stack overflow, and cost a few minutes of looking in the wrong place.
+  It is now a comment in ingest.h, a clause in the spec, and a check that prints the size.
+- TRAP 4, mine: the UTF-8 chunking test asserted that a chunk's last byte is not a continuation
+  byte. The last byte of a correctly-chunked em dash (E2 80 94) is 0x94, which IS a continuation
+  byte, so the test failed a correct chunker. Same shape as the selection check the window driver
+  caught two days ago: I asserted an appearance instead of a property. Replaced with a real
+  standalone-validity walk.
+- A DESIGN correction that came out of reading fusord rather than the spec: SPEC 5.1.2 said a
+  percept is emitted at a word boundary. It must not be. fusord prepends "\n[lane] " per Delta and
+  runs a final judge when the line ends, so one percept per word would hand the trunk one bracketed
+  line per word and probe three seats on every one - the exact over-segmentation that fusord's
+  boundary set was tightened to escape on 2026-08-12. A word boundary is where a percept may END.
+  The trigger is a closed thought, N characters, or T ms of quiet; and '.', '!', '?' close a
+  thought while ';' and ':' do not, because those are syntax. Same boundary set as fusord, so
+  train equals serve.
+- N and T are NOT chosen. SPEC 14.3 says they are to be measured against real typing, and they are
+  configuration with provisional values that are not evidence of anything. nib --ingest FILE exists
+  to look at them against real prose without a GPU: it compiles a file as if typed and prints the
+  percept stream exactly as the trunk would see it, plus the conservation arithmetic. On nib's own
+  README, 3350 bytes became 81 percepts, longest 102 bytes, nothing lost.
+- Deletions are percepts (rule 7: a person backspacing a sentence is often the most interesting
+  thing in the stream). The removed text arrives intact behind a marker; the marker is nib's and
+  not the world's, so it is subtracted back out of the byte count and the conservation identity
+  stays exact. The marker's wording is OPEN - it is off-distribution for v11 and is a decision, not
+  a finding.
+- The falsifier is stated as ARITHMETIC rather than as a claim: with nothing pending, bytes in ==
+  bytes out, and pushed + dropped == percepts. That makes "a percept dropped without a loud count"
+  checkable after every keystroke instead of merely asserted. 4000 random typings, removals and
+  idles with a deterministic generator: 47993 bytes in, 47993 out. A deliberately overflowed ring
+  counted 1976 drops and swallowed none.
+- The editor hooks it at edit_splice, the one funnel every edit already goes through, which is why
+  the law "every edit goes through Doc::splice" was worth having in the first place. The deleted
+  text is captured BEFORE the splice, because by definition it does not exist afterwards. A 120 ms
+  timer notices the quiet and repaints only when the count actually moved.
+- The window driver got a twelfth command so the falsifier fires from inside the running window,
+  not only in a unit test: it reports percepts, dropped, bytes in, bytes out and pushed. 32 bytes
+  typed by posted messages, 32 out, 13 percepts, 0 dropped.
+- Green on this box, 2026-09-04: --selftest 116 passed 0 failed, drive.py 22 passed 0 failed,
+  three consecutive identical runs. The exe is 391 KB and still links only kernel32, user32,
+  gdi32 and comdlg32. There is no model in the process and the GPU was never touched.
+- NOT done, and it is half of Stage 1: the resident. Stage 1b is the trunk, the segmenter, and
+  hold/emit computed with emission disabled - the half where the margins actually move. It needs
+  the 9B on the card, so it is the first stage that cannot be run casually while the operator is
+  working, and it does not get started without being asked.

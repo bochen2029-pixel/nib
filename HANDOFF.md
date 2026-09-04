@@ -87,7 +87,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.4.1 · the active work · Stages 0a–0e · 77 + 17 checks** |
+| **nib** | `C:\nib` | **0.5.0 · the active work · Stages 0a–1a · 116 + 22 checks** |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.
@@ -131,12 +131,12 @@ amnesia, and a resident does not have amnesia; the interaction is the prompt.
 5. `C:\nib\docs\BLUEPRINT.md` — the design and the intent.
 6. `C:\nib\docs\devlog.md` — what happened, in order, with the traps.
 
-### 4.3 Built and green — 77 checks in the exe, 17 in the driver
+### 4.3 Built and green — 116 checks in the exe, 22 in the driver
 
 ```
 C:\nib\build.bat               /W4 /WX, gate: no network DLL among the dependents
-C:\nib\nib.exe --selftest      77 passed, 0 failed
-python C:/nib/tools/drive.py   17 passed, 0 failed   (the window, driven by messages)
+C:\nib\nib.exe --selftest      116 passed, 0 failed
+python C:/nib/tools/drive.py   22 passed, 0 failed   (the window, driven by messages)
 ```
 
 - **`src/changeset.h/.cpp`** — Etherpad's Easysync format in C++: base36, `Op`,
@@ -152,6 +152,8 @@ python C:/nib/tools/drive.py   17 passed, 0 failed   (the window, driven by mess
   open, CRLF/BOM preservation, undo/redo, the status line, per-monitor DPI, the theme loader, the
   driver seam.
 - **`src/selftest.cpp`** — the oracle. **`src/nib.cpp`** — the CLI.
+- **`src/ingest.h/.cpp`** — the compiler and `PadSource`. Edits become percepts; percepts become
+  `Delta`s on auricle's ring. No model, no GPU, no threads of its own.
 - **`tools/drive.py`** — the window battery. Posts messages, reads artefacts, never synthesises
   input and never looks at the screen.
 - **`tools/theme_detect.py`** — derives `nib.theme` from an image. **`nib.theme`** — the palette
@@ -166,6 +168,7 @@ python C:/nib/tools/drive.py   17 passed, 0 failed   (the window, driven by mess
 | 0c | the log replays byte-exact | **1,000 random edits interleaved with undos** — 767 edits, 214 undos, 965 revisions, checked after *every* one |
 | 0d | no save loses a file or silently changes its conventions | the Stage 0e driver: bytes compared on disk, CRLF stayed CRLF, a BOM came back, the file survived close-and-reopen |
 | 0e | every save path is reachable without global input | 17 checks over eight cases, three consecutive identical runs |
+| 1a | no percept is dropped without a loud count | byte conservation over **4,000 random typings, removals and idles**, and fired again from inside the running window |
 
 `Ctrl+R` in the editor runs the Stage 0 falsifier live and prints the answer on the status line.
 
@@ -178,6 +181,7 @@ nib --splice "text" START NDEL "ins" the changeset for one edit, and the result
 nib --unpack CS | --ops CS | --check CS | --apply CS TEXT
 python tools/theme_detect.py shot.png
 python tools/drive.py [--exe X] [--keep]   the window battery; exit 3 on any mismatch
+nib --ingest FILE [--chars N --quiet-ms T --tick-s S --counts]   the percept stream, no GPU
 ```
 
 Editor keys: `Ctrl+S` save · `Ctrl+Shift+S` save as · `Ctrl+O` open · `Ctrl+A/C/X/V` ·
@@ -223,14 +227,38 @@ Three things the driver found, kept here because they are the kind of thing that
   `FindWindow` by class name returns *any* nib window — a leftover, or the operator's own. The
   driver now binds to the pid it launched. This looked exactly like an editor bug and was not.
 
-**Now: Stage 1** — `PadSource` implementing `auricle::fusor::StreamingTextSource`, the ingest
-compiler, and a resident that **only holds** (emission disabled). Read `C:\auricle\src\fusor\source.h`
-first; it already states three constraints you would otherwise discover painfully:
+**Stage 1a is done (2026-09-04, 0.5.0)** — `src/ingest.h/.cpp`. `PadSource` implements
+`auricle::fusor::StreamingTextSource`; the compiler turns edits into percepts; the editor feeds it
+from `edit_splice`; `nib --ingest FILE` shows the percept stream with no GPU. 116 selftest checks
+and 22 driver checks, three identical runs.
+
+**Four things it found that the header and the spec had wrong** — do not re-derive these:
+
+- `sizeof(Delta)` is **528**, not the 512 `source.h`'s own comment claims.
+- `fill_delta` **silently truncates at 495**: it reserves the last byte for a NUL. SPEC 5.1.7 used
+  to say chunk at 496, which loses a byte per full chunk with no signal. Use `nib::kChunkMax`.
+- a `PadSource` is **~528 KB and must never be a stack local** — it crashes at construction with
+  no output at all (`0xC00000FD`), which looks like a broken build rather than a stack overflow.
+- a percept is a **clause, not a word**. fusord prepends `\n[lane] ` per Delta and judges when the
+  line ends, so one percept per word would probe three seats per word. A word boundary is where a
+  percept may *end*. `.`/`!`/`?` close a thought; `;`/`:` do not (fusord measured that).
+
+**Now: Stage 1b — a resident that only holds.** The trunk, the segmenter, hold/emit computed and
+recorded with **emission disabled**; the margins move against your own typing before the thing ever
+writes a word. Read `C:\auricle\src\fusor\fusord.cpp` and **lift the loop rather than re-deriving
+it** (SPEC 6.2.1), with the seed hashed and the build refusing to run if a character drifted
+(6.2.2), and its own `--idle-tick-s` set to 0 because the pad already supplies ticks (SPEC 5.1.9.1).
+
+**This is the first stage that needs the GPU** — `C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf`,
+6.6 GB, on a card the operator shares with llama-server and a speech stack. Per §1.5 it does not
+get loaded without being asked. Everything through 1a runs with the GPU untouched, and per
+`CLAUDE.md` every stage below Stage 2 must stay runnable that way.
+
+Two constraints from `source.h` that still hold, and are already honoured in `PadSource`:
 
 - **self-echo** (spec §5.8): a delta whose lane is one of the resident's own seats must never be
   fed back, or the nucleus deliberates about interrupting itself. In a pad the resident writes into
-  the buffer it reads, so this filter belongs in `PadSource`, at the source.
-- `kPayloadMax` is 496 so a `Delta` is 512 bytes on the ring — the compiler chunks there.
+  the buffer it reads, so this filter lives in `PadSource`, at the source, and is case-insensitive.
 - the lane string is **train ≡ serve**; the trunk sees `[lane] text` byte-identically to the tune
   format, so lane naming is not a UI decision.
 

@@ -15,6 +15,7 @@
 //   * A save is atomic: a temporary beside the target, then a replace. A crash halfway through
 //     must not be able to destroy the thing it was saving.
 #include "doc.h"
+#include "ingest.h"
 
 #include <windows.h>
 #include <commdlg.h>
@@ -22,6 +23,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -45,7 +47,7 @@ struct Theme {
     int pt = 11;
 };
 
-enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop };
+enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop, CmdIngest };
 constexpr UINT WM_NIB_CMD = WM_APP + 1;
 
 struct View {
@@ -68,6 +70,13 @@ struct View {
     std::string status;
     FILE* log = nullptr;
     Theme th;
+
+    // Stage 1: the pad compiles a world. The source is heap-allocated because it embeds the ring
+    // and is ~528 KB — see the note in ingest.h. Nothing reads from it yet; the resident is the
+    // next stage. What exists now is the guarantee that when the mind arrives, everything typed
+    // since the window opened was already compiled, in order, with nothing lost.
+    std::unique_ptr<PadSource> ingest;
+    uint64_t last_percepts = 0;
 };
 
 // "#rrggbb" -> COLORREF, or false and the caller keeps its default
@@ -213,10 +222,24 @@ void after_edit(HWND h, bool caret_from_doc) {
 
 void edit_splice(HWND h, int64_t start, int64_t ndel, const std::string& ins) {
     std::string err;
+    // What is about to be removed, captured BEFORE the splice: a deletion is a percept and the
+    // world is never edited (SPEC 5.1.3), so the bytes have to be read while they still exist.
+    std::string gone;
+    if (ndel > 0 && start >= 0 && (size_t)start <= g->doc.size())
+        gone = g->doc.text().substr((size_t)start, (size_t)ndel);
+
     if (!g->doc.splice(start, ndel, ins, "me", err)) {
         set_status("refused: " + err);
         InvalidateRect(h, nullptr, TRUE);
         return;
+    }
+
+    // Ingest is unconditional (SPEC 5.1.4) and happens only after the edit is accepted, so the
+    // stream the resident sees is exactly the document's history and never a refused attempt.
+    if (g->ingest) {
+        const uint64_t t = auricle::fusor::now_ms();
+        if (!gone.empty()) g->ingest->removed("bo", gone, t);
+        if (!ins.empty()) g->ingest->typed("bo", ins, t);
     }
     after_edit(h, true);
 }
@@ -523,10 +546,18 @@ void paint(HWND h) {
     const size_t line = g->idx.line_of(g->caret);
     char sel[64] = "";
     if (has_sel()) _snprintf_s(sel, sizeof sel, _TRUNCATE, "  %llu selected", (unsigned long long)(hi - lo));
-    _snprintf_s(buf, sizeof buf, _TRUNCATE, "nib  %llu:%llu%s  %llu chars  %llu revisions%s  %s",
+    // The ingest reading. `dropped` is on the status line rather than in a log because a dropped
+    // percept is the turn reborn inside the loop (CLAUDE.md rule 7) and must be impossible to
+    // miss. It reads 0 and is expected to stay 0; when it does not, that is the finding.
+    char ing[96] = "";
+    if (g->ingest)
+        _snprintf_s(ing, sizeof ing, _TRUNCATE, "  %llu percepts%s",
+                    (unsigned long long)g->ingest->compiler().percepts(),
+                    g->ingest->dropped() ? "  DROPPED" : "");
+    _snprintf_s(buf, sizeof buf, _TRUNCATE, "nib  %llu:%llu%s  %llu chars  %llu revisions%s%s  %s",
                 (unsigned long long)(line + 1), (unsigned long long)(col_of(g->caret) + 1), sel,
                 (unsigned long long)g->doc.size(), (unsigned long long)g->doc.revisions(),
-                dirty() ? "  unsaved" : "", g->status.c_str());
+                dirty() ? "  unsaved" : "", ing, g->status.c_str());
     const std::wstring sw = widen(buf);
     TextOutW(dc, x0, rc.bottom - px(kPad) - g->ch, sw.c_str(), (int)sw.size());
 
@@ -541,6 +572,21 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             make_font(h);
             g->idx.build(g->doc.text());
             set_title(h);
+            g->ingest = std::make_unique<PadSource>();
+            g->ingest->add_seat("watcher");   // the resident's lane never re-enters (SPEC 5.1.6)
+            // The compiler's T is a quiet timeout, so something has to notice the quiet. 120 ms is
+            // well under the smallest sensible T and costs nothing when nothing has been typed.
+            SetTimer(h, 1, 120, nullptr);
+            return 0;
+
+        case WM_TIMER:
+            if (g->ingest) {
+                g->ingest->idle(auricle::fusor::now_ms());
+                // repaint only when the count actually moved; a 120 ms unconditional repaint
+                // would be a busy editor that looks idle
+                const uint64_t n = g->ingest->compiler().percepts();
+                if (n != g->last_percepts) { g->last_percepts = n; InvalidateRect(h, nullptr, FALSE); }
+            }
             return 0;
 
         case WM_DPICHANGED: {
@@ -664,6 +710,23 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     const bool ok = g->doc.replay(out, e);
                     nlog("replay	%d	%zu", ok && out == g->doc.text() ? 1 : 0, g->doc.revisions());
                     set_status(ok && out == g->doc.text() ? "replay: byte-exact" : "REPLAY DIFFERS: " + e);
+                    InvalidateRect(h, nullptr, TRUE);
+                    break;
+                }
+                case CmdIngest: {
+                    // Stage 1's falsifier, fired from inside the running window: flush whatever is
+                    // pending, then report the arithmetic. bytes-in must equal bytes-out and
+                    // dropped must be zero, or a percept was lost between a keystroke and the mind.
+                    if (!g->ingest) { nlog("ingest	0	0	0	0	0"); break; }
+                    g->ingest->flush(auricle::fusor::now_ms());
+                    const Compiler& c = g->ingest->compiler();
+                    nlog("ingest	%llu	%llu	%llu	%llu	%llu",
+                         (unsigned long long)c.percepts(), (unsigned long long)g->ingest->dropped(),
+                         (unsigned long long)c.typed_in(), (unsigned long long)c.typed_out(),
+                         (unsigned long long)g->ingest->pushed());
+                    set_status(c.typed_in() == c.typed_out() && g->ingest->dropped() == 0
+                                   ? "ingest: nothing lost"
+                                   : "INGEST LOST A PERCEPT");
                     InvalidateRect(h, nullptr, TRUE);
                     break;
                 }

@@ -25,7 +25,7 @@ u32 = ctypes.windll.user32
 WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_CLOSE = 0x0102, 0x0100, 0x0101, 0x0010
 WM_NIB_CMD = 0x8000 + 1                     # WM_APP + 1, matching edit.cpp
 CMD = dict(save=1, save_as=2, open=3, undo=4, redo=5, select_all=6,
-           replay=7, home=8, end=9, sel_to_home=10, top=11)
+           replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12)
 VK = dict(back=0x08, delete=0x2E, left=0x25, right=0x27, up=0x26, down=0x28,
           home=0x24, end=0x23)
 
@@ -235,6 +235,24 @@ def main():
     rrow = n.wait_for("replay", nrep)
     check(rrow is not None and rrow[1] == "1",
           "the window folded %s revisions and the text matched byte-exact" % (rrow[2] if rrow else "?"))
+
+    # ---- 5b · Stage 1: the pad compiled a world while all of that was happening ----------
+    # The resident does not exist yet. What must be true already is that everything typed since
+    # the window opened was compiled, in order, with nothing lost -- because a percept dropped
+    # between a keystroke and the mind is a turn reborn inside the loop.
+    print(LF + "ingest")
+    ni = n.count("ingest")
+    n.cmd("ingest")
+    irow = n.wait_for("ingest", ni)
+    check(irow is not None, "the window reports its ingest arithmetic: %s" % (irow,))
+    if irow is not None:
+        percepts, dropped, tin, tout, pushed = (int(x) for x in irow[1:6])
+        check(percepts > 0, "typing produced percepts (%d)" % percepts)
+        check(tin == tout,
+              "every byte that entered the compiler left it: in %d == out %d" % (tin, tout))
+        check(dropped == 0, "and none were dropped on the way to the ring (%d)" % dropped)
+        check(pushed == percepts,
+              "every percept reached the ring: %d pushed of %d" % (pushed, percepts))
 
     # ---- 6 · close and reopen ------------------------------------------------------------
     print(LF + "close and reopen")

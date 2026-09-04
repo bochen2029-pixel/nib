@@ -195,13 +195,31 @@ stage below Act II.
 
 ## 5 · Ingest — the compiler
 
-**[SPECIFIED]** — nothing in this section is built.
+**[BUILT 2026-09-04]** — `src/ingest.h/.cpp`, 39 checks in `--selftest` and 5 more fired from
+inside the running window by `tools/drive.py`. The resident that consumes it is §6 and does not
+exist yet; everything below is the producing half, and it runs with no model in the process.
 
 5.1.1 The resident's input MUST be the document's op stream, delivered as `Delta` records over
 `auricle::fusor::StreamingTextSource` (`C:\auricle\src\fusor\source.h`), unmodified.
 
-5.1.2 A percept MUST be emitted at whichever comes first: a word boundary, N characters, or T
-milliseconds of quiet. N and T are configuration; their defaults are **[OPEN — §14.3]**.
+5.1.2 A percept MUST be emitted at whichever comes first: a **closed thought**, N characters, or T
+milliseconds of quiet. It MUST end on a word boundary wherever the text allows one. N and T are
+configuration; their defaults are **[OPEN — §14.3]** and are to be measured, not chosen.
+
+> **CORRECTED 2026-09-04.** This clause previously named *a word boundary* as a trigger. It cannot
+> be one. The resident prepends `\n[lane] ` to each `Delta` and runs a final judge when the line
+> ends (`fusord.cpp:723-746`), so one percept per word would hand the trunk one bracketed line per
+> word and fire three probes on every one — the over-segmentation that `fusord.cpp:242-254` was
+> tightened to escape after it was measured on 2026-08-12. A word boundary is where a percept may
+> **end**, never a reason for it to end.
+
+5.1.2.1 A closed thought is `.`, `!`, `?` at a word end, or a newline. `;` and `:` are syntax and
+MUST NOT close one — fusord measured them firing 3.3×/line on a code paste, handing the probe
+fragments like `2);` at higher boundary-mass than real prose. This is the same boundary set, so
+train ≡ serve holds.
+
+5.1.2.2 A lane change MUST close the pending clause. Two authors' words are never fused into one
+bracketed line.
 
 5.1.3 Deletions MUST be delivered as percepts. A person removing a sentence is information and MUST
 NOT be reconciled away silently.
@@ -215,13 +233,48 @@ MUST count the loss loudly; a silently dropped percept is a turn reborn inside t
 input (`source.h`, spec §5.8). In a pad the resident writes into the buffer it reads, so this
 filter MUST live in `PadSource` at the source, not downstream.
 
-5.1.7 `kPayloadMax` is 496 bytes so a `Delta` is 512 bytes on the ring; the compiler MUST chunk at
-that bound.
+5.1.7 The compiler MUST chunk at **495 bytes**, and a chunk boundary MUST NOT split a UTF-8
+sequence or, where the text allows it, a word.
+
+> **CORRECTED 2026-09-04, measured on this box.** This clause previously read "`kPayloadMax` is 496
+> bytes so a `Delta` is 512 bytes on the ring; the compiler MUST chunk at that bound." Both numbers
+> were wrong, and one of them dangerously.
+>
+> - `sizeof(Delta)` is **528**, not 512: 8 (`wall_ms`) + 16 (`lane`) + 2 (`len`) + 496 (`payload`)
+>   = 522, padded to 528 by the `uint64_t`'s alignment. The claim originates in a comment in
+>   `source.h` and was repeated here without being checked. It is harmless but it is not true.
+> - `fill_delta` reserves the final payload byte for a NUL, so handing it exactly `kPayloadMax`
+>   bytes yields `len == 495` **with no signal at all**. Chunking "at that bound" would therefore
+>   have lost one byte per full chunk, silently — the precise failure 5.1.4 and CLAUDE.md rule 7
+>   exist to prevent. The safe bound is `kPayloadMax - 1`, which is what `nib::kChunkMax` is.
+> - `lane` is a `strncpy` into 16 bytes, so a lane over 15 characters is also truncated silently.
+>   `PadSource` counts those rather than letting them pass.
+
+5.1.7.1 A `PadSource` embeds the 1024-slot ring by value and is therefore ~528 KB. It MUST NOT be
+declared as a stack local: a default 1 MB thread stack overflows at construction, which presents
+as an immediate crash with no output (`0xC00000FD`) and no clue as to the cause.
 
 5.1.8 The lane string is train ≡ serve: the trunk sees `[lane] text` byte-identically to the soak
 and tune format. Lane naming is therefore not a user-interface decision.
 
-5.1.9 Silence MUST enter as world — idle ticks — and not as a question.
+5.1.9 Silence MUST enter as world — idle ticks — and not as a question. The tick's text is
+`[tick +Ns]`, byte-identical to `fusord.cpp:712`, and it is emitted **before** the percept that
+broke the silence, as fusord does it.
+
+5.1.9.1 Because the tick is produced here, at the source, the lifted resident loop MUST run with
+its own `--idle-tick-s` set to 0 or the silence is counted twice. The pad is the right place for
+it: the pad knows what a typing pause is and a generic resident does not.
+
+5.1.10 A deletion reaches the trunk as the removed text, intact, behind a marker saying it left.
+The marker is nib's and not the world's, so it is excluded from the byte-conservation arithmetic
+of 5.1.11. **[OPEN]** — the marker's wording is off-distribution for v11 and is a decision, not a
+finding; it is configuration until it has been looked at against a real trunk.
+
+5.1.11 **The falsifier, stated as arithmetic.** With nothing pending, the bytes that entered the
+compiler MUST equal the bytes that left it, and every percept MUST be either pushed to the ring or
+counted as dropped: `typed_in == typed_out`, `removed_in == removed_out`, `pushed + dropped ==
+percepts`. This is checkable after every keystroke and is fired from inside the running window by
+`drive.py`'s `ingest` command, not only in unit tests.
 
 ---
 

@@ -6,11 +6,13 @@
 // asserted by equality, because a format is not something to be nearly right about.
 #include "changeset.h"
 #include "doc.h"
+#include "ingest.h"
 
 #include <windows.h>
 
 #include <cstdarg>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -514,6 +516,303 @@ int run_selftest() {
               "an offset maps to its line, and the newline belongs to the line it ends");
         check(ix.offset_of(1, 2, t) == 6, ssprintf("line 1 column 2 is offset 6 (got %zu)", ix.offset_of(1, 2, t)));
         check(ix.offset_of(0, 99, t) == 3, "a column past the end of a line clamps to its end");
+    }
+
+    section("ingest - the seam's measured facts");
+    {
+        using namespace auricle::fusor;
+        // These are properties of auricle's header, asserted here because nib's chunking depends
+        // on them and a change upstream must break a test rather than a paste.
+        check(sizeof(Delta) == 528,
+              ssprintf("a Delta is %zu bytes (its own comment claims 512; 8+16+2+496=522 pads to 528)", sizeof(Delta)));
+        check(kChunkMax == 495,
+              ssprintf("the lossless payload bound is %zu, one less than kPayloadMax", kChunkMax));
+        Delta d{};
+        fill_delta(d, "bo", std::string(kPayloadMax, 'x'));
+        check(d.len == 495,
+              ssprintf("fill_delta silently truncates %zu bytes to %u - which is why we chunk at %zu",
+                       kPayloadMax, (unsigned)d.len, kChunkMax));
+        fill_delta(d, "bo", std::string(kChunkMax, 'x'));
+        check(d.len == kChunkMax, "and a chunk of exactly kChunkMax survives whole");
+        check(sizeof(PadSource) > 512u * 1024u,
+              ssprintf("a PadSource is %zu KB - it embeds the ring, so it can never be a stack local",
+                       sizeof(PadSource) / 1024));
+    }
+
+    section("ingest - where a percept ends");
+    {
+        Compiler c;
+        std::vector<Percept> out;
+        c.typed("bo", "The build finished green. ", 1000, out);
+        check(out.size() == 1 && out[0].text == "The build finished green. ",
+              out.empty() ? "no percept" : "a closed thought is one percept: \"" + out[0].text + "\"");
+        check(!c.has_pending(), "and nothing is left pending behind it");
+
+        out.clear();
+        Compiler c2;
+        c2.typed("bo", "for (i = 0; i < n; ++i) { f(); }", 1000, out);
+        check(out.empty(),
+              ssprintf("';' and ':' do NOT close a thought - fusord measured that on 2026-08-12 (%zu percepts)", out.size()));
+
+        out.clear();
+        Compiler c3;
+        c3.typed("bo", "pi is 3.14 and e is 2.71", 1000, out);
+        check(out.empty(), ssprintf("a decimal point is not a thought-end (%zu percepts)", out.size()));
+
+        out.clear();
+        Compiler c4;
+        c4.typed("bo", "one\ntwo", 1000, out);
+        check(out.size() == 1 && out[0].text == "one\n", "a newline closes a thought");
+
+        out.clear();
+        Compiler c5;
+        c5.typed("bo", "Really?! Yes.", 1000, out);
+        check(out.size() == 1 && out[0].text == "Really?! ",
+              out.empty() ? "no percept" : "a cluster of terminators closes once: \"" + out[0].text + "\"");
+    }
+
+    section("ingest - N characters, and T milliseconds of quiet");
+    {
+        Compiler::Config cfg;
+        cfg.chars = 20;
+        cfg.quiet_ms = 500;
+        Compiler c(cfg);
+        std::vector<Percept> out;
+        c.typed("bo", "alpha beta gamma delta epsilon", 1000, out);
+        check(!out.empty(), ssprintf("a clause past N is emitted without waiting (%zu percepts)", out.size()));
+        bool word_safe = true;
+        for (const auto& p : out)
+            if (!p.text.empty() && p.text.back() != ' ' && p.text.back() != '\n') word_safe = false;
+        check(word_safe, "and every one of them ends on a word boundary, never mid-word");
+
+        out.clear();
+        Compiler c2(cfg);
+        c2.typed("bo", "half", 1000, out);
+        check(out.empty(), "a partial word waits");
+        c2.idle(1200, out);
+        check(out.empty(), "still waits while the quiet is shorter than T");
+        c2.idle(1600, out);
+        check(out.size() == 1 && out[0].text == "half",
+              out.empty() ? "the partial word never arrived" : "T ms of quiet flushes it: \"" + out[0].text + "\"");
+    }
+
+    section("ingest - nothing is ever truncated");
+    {
+        Compiler c;
+        std::vector<Percept> out;
+        const std::string huge(4000, 'z');   // one unbroken token, far past a Delta
+        c.typed("bo", huge, 1000, out);
+        c.flush(1000, out);
+        std::string rebuilt;
+        bool bounded = true;
+        for (const auto& p : out) {
+            rebuilt += p.text;
+            if (p.text.size() > kChunkMax) bounded = false;
+        }
+        check(bounded, ssprintf("an unbroken 4000-byte run becomes %zu percepts, none over the bound", out.size()));
+        check(rebuilt == huge, "and reassembling them returns the original byte for byte");
+
+        out.clear();
+        Compiler c2;
+        std::string utf8;
+        for (int i = 0; i < 400; ++i) utf8 += "\xE2\x80\x94";   // em dashes, 3 bytes each
+        c2.typed("bo", utf8, 1000, out);
+        c2.flush(1000, out);
+        // The property is that each chunk is STANDALONE-VALID UTF-8, not that its last byte looks
+        // a certain way: the final byte of a well-formed em dash (E2 80 94) is 0x94, which IS a
+        // continuation byte. The first version of this check tested that and failed a correct
+        // chunker - the same mistake, in the same shape, as the selection check the window driver
+        // caught. Assert the property, not the appearance.
+        auto utf8_valid = [](const std::string& t) {
+            size_t i = 0;
+            while (i < t.size()) {
+                const unsigned char b = static_cast<unsigned char>(t[i]);
+                size_t need = 0;
+                if (b < 0x80) need = 0;
+                else if ((b & 0xE0) == 0xC0) need = 1;
+                else if ((b & 0xF0) == 0xE0) need = 2;
+                else if ((b & 0xF8) == 0xF0) need = 3;
+                else return false;                       // a continuation byte, or illegal lead
+                if (need > 0 && i + need >= t.size()) return false;   // sequence runs off the end
+                for (size_t k = 1; k <= need; ++k)
+                    if ((static_cast<unsigned char>(t[i + k]) & 0xC0) != 0x80) return false;
+                i += need + 1;
+            }
+            return true;
+        };
+        std::string re2;
+        bool clean = true;
+        size_t nchunks = 0;
+        for (const auto& p : out) {
+            re2 += p.text;
+            ++nchunks;
+            if (!utf8_valid(p.text)) clean = false;
+        }
+        check(clean, ssprintf("every one of %zu chunks is standalone-valid UTF-8 - no boundary split a character", nchunks));
+        check(re2 == utf8, "and the multi-byte text reassembles exactly");
+    }
+
+    section("ingest - a deletion is a percept");
+    {
+        Compiler c;
+        std::vector<Percept> out;
+        c.removed("bo", "the whole sentence", 1000, out);
+        check(out.size() == 1 && out[0].kind == 'd',
+              ssprintf("removing text produces a percept, not a silence (%zu)", out.size()));
+        check(!out.empty() && out[0].text == "(removed) the whole sentence",
+              out.empty() ? "nothing" : "the removed text arrives INTACT, marked: \"" + out[0].text + "\"");
+        check(c.removed_in() == c.removed_out(),
+              ssprintf("and the marker is counted out of band: in %llu == out %llu",
+                       (unsigned long long)c.removed_in(), (unsigned long long)c.removed_out()));
+
+        out.clear();
+        Compiler c2;
+        c2.typed("bo", "abc", 1000, out);
+        c2.removed("bo", "x", 1001, out);
+        check(out.size() == 2 && out[0].text == "abc" && out[1].kind == 'd',
+              ssprintf("a deletion flushes what was pending first - the order things happened is the world (%zu)", out.size()));
+    }
+
+    section("ingest - silence enters as world");
+    {
+        Compiler::Config cfg;
+        cfg.idle_tick_s = 30;
+        Compiler c(cfg);
+        std::vector<Percept> out;
+        c.typed("bo", "first. ", 1000, out);
+        out.clear();
+        c.typed("bo", "second. ", 1000 + 45000, out);   // 45 s later
+        bool found = false;
+        for (const auto& p : out)
+            if (p.kind == 't' && p.text == "[tick +45s]") found = true;
+        check(found, out.empty() ? "no percepts at all" : "a 45 s gap enters as \"" + out[0].text + "\", byte-identical to fusord.cpp:712");
+        check(c.ticks() == 1, ssprintf("counted once (%llu)", (unsigned long long)c.ticks()));
+
+        out.clear();
+        Compiler c3(cfg);
+        c3.typed("bo", "a. ", 1000, out);
+        out.clear();
+        c3.typed("bo", "b. ", 3000, out);   // 2 s: not silence
+        bool any = false;
+        for (const auto& p : out) if (p.kind == 't') any = true;
+        check(!any, "a two-second pause is not silence and produces no tick");
+    }
+
+    section("ingest - a lane change never fuses two hands");
+    {
+        Compiler c;
+        std::vector<Percept> out;
+        c.typed("bo", "mine", 1000, out);
+        c.typed("watcher", "theirs", 1001, out);
+        check(out.size() >= 1 && out[0].lane == "bo" && out[0].text == "mine",
+              out.empty() ? "nothing" : "the previous hand's clause is closed first: [" + out[0].lane + "] " + out[0].text);
+    }
+
+    section("ingest - the falsifier: every byte that entered leaves");
+    {
+        // Stage 1's falsifier is "a percept dropped without a loud count". Stated as arithmetic:
+        // with nothing pending, the bytes in must equal the bytes out, over a stream nobody chose
+        // by hand. Deterministic generator, so a failure names a case to re-run.
+        uint64_t z = 0x243F6A8885A308D3ull;
+        auto next = [&z]() {
+            z += 0x9E3779B97F4A7C15ull;
+            uint64_t x = z;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+            return x ^ (x >> 31);
+        };
+        auto rnd = [&next](uint64_t n) { return n ? (uint64_t)(next() % n) : 0ull; };
+
+        Compiler c;
+        std::vector<Percept> out;
+        uint64_t clock = 1000;
+        long typed_n = 0, removed_n = 0, idled = 0;
+        std::string reassembled, removed_all;
+        for (int i = 0; i < 4000; ++i) {
+            clock += rnd(900);
+            const uint64_t roll = rnd(10);
+            if (roll < 7) {
+                std::string s;
+                const size_t len = (size_t)rnd(30) + 1;
+                for (size_t k = 0; k < len; ++k) {
+                    const uint64_t r = rnd(32);
+                    if (r < 24) s += (char)('a' + r);
+                    else if (r < 28) s += ' ';
+                    else if (r < 29) s += '.';
+                    else if (r < 30) s += '\n';
+                    else s += "\xE2\x80\x94";           // an em dash, to keep UTF-8 in the stream
+                }
+                c.typed("bo", s, clock, out);
+                reassembled += s;
+                ++typed_n;
+            } else if (roll < 9) {
+                const std::string s(1 + (size_t)rnd(20), 'q');
+                c.removed("bo", s, clock, out);
+                removed_all += s;
+                ++removed_n;
+            } else {
+                c.idle(clock, out);
+                ++idled;
+            }
+        }
+        c.flush(clock, out);
+
+        std::string got_typed, got_removed;
+        for (const auto& p : out) {
+            if (p.kind == 'w') got_typed += p.text;
+            else if (p.kind == 'd') got_removed += p.text.substr(c.config().removed_mark.size());
+        }
+        check(c.typed_in() == c.typed_out(),
+              ssprintf("%ld typings, %ld removals, %ld idles: bytes in %llu == bytes out %llu",
+                       typed_n, removed_n, idled,
+                       (unsigned long long)c.typed_in(), (unsigned long long)c.typed_out()));
+        check(got_typed == reassembled,
+              ssprintf("and the percepts reassemble into exactly what was typed (%zu bytes)", got_typed.size()));
+        check(got_removed == removed_all,
+              ssprintf("and every removed byte came through intact (%zu bytes)", got_removed.size()));
+        check(!c.has_pending(), "with nothing stranded in the compiler at the end");
+    }
+
+    section("PadSource - the filter at the door, and the loud count");
+    {
+        // ~528 KB of ring: heap, never stack (see the note in ingest.h).
+        auto srcp = std::make_unique<PadSource>();
+        PadSource& src = *srcp;
+        src.add_seat("watcher");
+        src.typed("bo", "a person types. ", 1000);
+        src.typed("watcher", "the resident writes. ", 1001);
+        src.typed("WATCHER", "and again, differently cased. ", 1002);
+        check(src.echoes() == 2,
+              ssprintf("the resident's own lane never re-enters, case-insensitively (%llu filtered)",
+                       (unsigned long long)src.echoes()));
+        check(src.pushed() >= 1, ssprintf("the person's words did (%llu pushed)", (unsigned long long)src.pushed()));
+
+        auricle::fusor::Delta d{};
+        const bool got = src.poll(d);
+        check(got && std::string(d.lane) == "bo",
+              got ? "and what comes off the ring is on the person's lane: [" + std::string(d.lane) + "]"
+                  : "nothing came off the ring");
+        check(got && std::string(d.payload, d.len) == "a person types. ",
+              got ? "carrying the percept byte for byte: \"" + std::string(d.payload, d.len) + "\""
+                  : "no payload");
+    }
+
+    section("PadSource - a full ring is counted, never swallowed");
+    {
+        // CLAUDE.md rule 7: a dropped percept is the turn reborn inside the loop. The ring holds
+        // 1024; nothing polls it here, so the overflow is deliberate and must be VISIBLE.
+        auto srcp = std::make_unique<PadSource>();
+        PadSource& src = *srcp;
+        for (int i = 0; i < 3000; ++i) src.typed("bo", "word. ", 1000 + (uint64_t)i);
+        src.flush(9000);
+        const uint64_t total = src.pushed() + src.dropped();
+        check(src.dropped() > 0, ssprintf("the ring overflowed: %llu pushed, %llu DROPPED",
+                                          (unsigned long long)src.pushed(), (unsigned long long)src.dropped()));
+        check(total == src.compiler().percepts(),
+              ssprintf("and every percept is accounted for: %llu pushed + dropped == %llu compiled",
+                       (unsigned long long)total, (unsigned long long)src.compiler().percepts()));
+        check(src.pending() == auricle::fusor::DeltaRing::capacity(),
+              ssprintf("the ring is full at its capacity of %zu", src.pending()));
     }
 
     section("refusals");

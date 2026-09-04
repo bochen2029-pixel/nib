@@ -17,7 +17,8 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **I** | 0c · the editor shell | ✔ 2026-09-03 | 0.3.0 |
 | **I** | 0d · save, selection, the theme | ✔ 2026-09-03 | 0.4.0 |
 | **I** | 0e · the window driver | ✔ 2026-09-04 | 0.4.1 |
-| **I** | 1 · ingest, and a resident that only holds | ○ | |
+| **I** | 1a · ingest — the compiler and PadSource | ✔ 2026-09-04 | 0.5.0 |
+| **I** | 1b · a resident that only holds | ○ | |
 | **I** | 2 · emission, with floor control | ○ | |
 | **I** | 3 · un-saying, made visible | ○ | |
 | **I** | 4 · the two switches, and the paired record | ○ | |
@@ -27,8 +28,9 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**77 checks green in the exe, and 17 more from the window driver.** The exe is 350 KB and links
-kernel32, user32, gdi32, comdlg32 — no network DLL, enforced at build.
+**116 checks green in the exe, and 22 more from the window driver.** The exe is 391 KB and links
+kernel32, user32, gdi32, comdlg32 — no network DLL, enforced at build. Still no model in the
+process: everything above runs on a busy box with the GPU untouched.
 
 ---
 
@@ -107,13 +109,44 @@ an earlier case or the operator's own. Two runs in three failed for that reason.
 enumerates windows and binds to the pid it launched, and runs three times for three identical
 results.
 
-### ○ Stage 1 — ingest, and a resident that only holds
+### ✔ Stage 1a — ingest: the compiler and PadSource · 0.5.0
 
-`PadSource` implementing `StreamingTextSource`; the compiler (§5 of SPEC); the trunk, the
-segmenter, hold/emit computed and recorded with **emission disabled**. The margins move against
-your own typing before the thing ever writes a word.
+`src/ingest.h/.cpp`. `PadSource` implements `auricle::fusor::StreamingTextSource`; nib includes
+that header from `C:\auricle\src` **unmodified** (SPEC 5.1.1) rather than copying it, so the two
+cannot drift, and `build.bat` fails if it is missing. The compiler turns the document's edits into
+percepts: a closed thought, N characters or T ms of quiet, always ending on a word boundary,
+chunked so a `Delta` never truncates, with deletions delivered intact and silence entering as
+`[tick +Ns]`. Self-echo is filtered at the door. The editor feeds it from `edit_splice`, the one
+funnel every edit already passes through, and the status line carries the percept count.
 
-*Falsifier: a percept dropped without a loud count, or margins that do not move with content.*
+*Falsifier, first half: a percept dropped without a loud count.* — **Did not fire.** Stated as
+arithmetic (SPEC 5.1.11) so it is checkable rather than merely asserted: bytes in equal bytes out,
+and `pushed + dropped == percepts`. Fired at over 4,000 random typings, removals and idles with a
+deterministic generator, and again from **inside the running window** by `drive.py`'s `ingest`
+command. A deliberately overflowed ring counted 1,976 drops rather than swallowing one.
+
+**Four traps, all found by building it rather than by reading the header.** Each is a place where
+the obvious code loses data with no signal, and they are written up in SPEC 5.1.7 and the devlog:
+
+- `sizeof(Delta)` is **528**, not the 512 its own comment claims.
+- `fill_delta` **silently truncates at 495**, not 496 — it reserves the last byte for a NUL. The
+  spec said to chunk at 496, which would have lost one byte per full chunk, quietly.
+- a `PadSource` is ~528 KB and **cannot be a stack local**; declaring one crashed the selftest
+  instantly with no output at all.
+- and one of my own tests asserted an appearance rather than a property — it checked whether a
+  chunk's last byte was a UTF-8 continuation byte, which the last byte of a correct em dash is.
+
+### ○ Stage 1b — a resident that only holds
+
+The trunk, the segmenter, hold/emit computed and recorded with **emission disabled**. The margins
+move against your own typing before the thing ever writes a word.
+
+This is the first stage that needs the 9B on the GPU (`C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf`,
+6.6 GB) and therefore the first that cannot be run casually on this box while it is working. The
+loop is lifted from `fusord.cpp`, not re-derived (SPEC 6.2.1), with its seed hashed and its own
+`--idle-tick-s` set to 0 because the pad already supplies ticks (SPEC 5.1.9.1).
+
+*Falsifier: margins that do not move with content.*
 
 Why emission is disabled here: it is the cheapest possible way to find out whether the resident
 perceives sanely, and it cannot embarrass itself while you are finding out.
