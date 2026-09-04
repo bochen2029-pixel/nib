@@ -28,3 +28,31 @@
   identities even with one user, because Act II swaps the serializer and not the model.
 - Next: Stage 0 per BLUEPRINT section 8 - the editor with no model in the process, and an op log
   that replays byte-exact.
+
+## 2026-09-03 (later) · the assembly correction
+
+- The operator pointed out that Etherpad is on this box (C:/etherpad-develop) and that C:/auricle
+  already builds a resident that ingests a live stream and projects words on screen. Both of my
+  earlier recommendations priced work that does not need doing. docs/ASSEMBLY.md supersedes
+  BLUEPRINT sections 2 and 7 where they disagree.
+- CORRECTION ONE. Etherpad is Node/TypeScript, so "wrap it in a C++ client" is three projects, not
+  one. Bundling node.exe plus a localhost server kills the no-network-stack law on day one and
+  still leaves the client implementing changeset apply/compose. Porting Changeset.ts and its half
+  dozen companions (about 1,500 lines, stable format, golden vectors in the repo) is REUSING the
+  wheel: same algorithm, same wire format, same tests, in the language the client already speaks.
+- CORRECTION TWO. I recommended CRDT before seeing this box. That priced the wrong thing: CRDT
+  costs designing and verifying something new, and Etherpad OT is already verified and sitting on
+  the disk. Take OT with a serializer per document - free in Act I (one machine IS the server),
+  a room host in Act II, with pad handoff rather than leader election. The cost is honest and
+  recorded: a room needs its host, against my earlier claim that it would survive the host
+  leaving. If that proves intolerable in Act II, CRDT is still there, paid for by a measurement.
+- THE SEAM ALREADY EXISTS. src/fusor/source.h defines StreamingTextSource, Delta and the SPSC
+  ring, with FileTailSource as the worked example. PadSource is one more implementation, about
+  150 lines. The file also states three constraints I would have hit the hard way: self-echo
+  (spec 5.8) - a delta whose lane is one of FUSORs own seats must never be fed back, which is
+  load-bearing in a pad because the resident writes into the buffer it reads; kPayloadMax 496 so
+  a Delta stays 512 bytes on the ring; and the lane string being train-equals-serve, so lane
+  naming is not a UI decision.
+- What is actually left: the editor shell (the only large new piece), changeset.cpp with
+  Etherpad vectors as the selftest oracle, PadSource, and the emit path with floor control and
+  the forming region. fusord loop, segmenter, seat, seed, tape: lifted verbatim.
