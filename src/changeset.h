@@ -102,4 +102,35 @@ private:
     int64_t length_change_ = 0;
 };
 
+// ---- making changesets, as `opsFromText` / `makeSplice` / `Builder` ------------------------
+// Reading a changeset is half the format; an editor has to WRITE them, and every keystroke is a
+// splice. These are the write half, and they are what the buffer will call.
+
+// Split `text` into the one or two ops that represent it under `opcode`. Two, when the text
+// contains a newline: the format requires that a multiline op END on a newline, so the tail after
+// the last one becomes its own in-line op.
+void ops_from_text(char opcode, const std::string& text, const std::string& attribs, std::vector<Op>& out);
+
+// The changeset that turns `orig` into `orig[0,start) + ins + orig[start+ndel, …)`.
+// `start` and `ndel` are clamped to the document rather than rejected, as Etherpad clamps them.
+std::string make_splice(const std::string& orig, int64_t start, int64_t ndel, const std::string& ins,
+                        const std::string& attribs = std::string());
+
+// Incremental construction, for a caller that walks the document rather than splicing it once.
+// The ops must cover the base document in order; `str()` seals it.
+class Builder {
+public:
+    explicit Builder(int64_t old_len) : old_len_(old_len) {}
+    Builder& keep(int64_t chars, int64_t lines = 0, const std::string& attribs = std::string());
+    Builder& keep_text(const std::string& text, const std::string& attribs = std::string());
+    Builder& insert(const std::string& text, const std::string& attribs = std::string());
+    Builder& remove(int64_t chars, int64_t lines = 0);
+    std::string str();
+
+private:
+    int64_t old_len_;
+    SmartAssembler assem_;
+    std::string bank_;
+};
+
 }  // namespace nib

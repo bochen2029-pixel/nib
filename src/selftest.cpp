@@ -6,6 +6,7 @@
 // asserted by equality, because a format is not something to be nearly right about.
 #include "changeset.h"
 
+#include <cstdarg>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -23,6 +24,15 @@ void check(bool ok, const std::string& what) {
     fflush(stdout);
 }
 void section(const char* s) { printf("\n%s\n", s); }
+
+std::string ssprintf(const char* f, ...) {
+    va_list ap;
+    va_start(ap, f);
+    char buf[2048];
+    const int n = vsnprintf(buf, sizeof buf, f, ap);
+    va_end(ap);
+    return std::string(buf, n > 0 ? (size_t)(n < (int)sizeof buf ? n : (int)sizeof buf - 1) : 0);
+}
 
 std::string ops_summary(const std::vector<Op>& ops) {
     std::string s;
@@ -210,6 +220,136 @@ int run_selftest() {
         m2.append(a1);
         m2.append(a2);
         check(m2.str() == "|1+4+3", "xxx\\n yyy stays two ops (got " + m2.str() + ")");
+    }
+
+    section("makeSplice — the write half");
+    {
+        std::string err, out;
+        // insert, delete, replace, each hand-checkable by reading the string
+        struct Case { const char* orig; int64_t start, ndel; const char* ins; const char* want; };
+        const Case cases[] = {
+            { "abcde", 2, 0, "X",   "abXcde" },     // insert
+            { "abcde", 1, 2, "",    "ade" },        // delete
+            { "abcde", 1, 2, "YZ",  "aYZde" },      // replace
+            { "abcde", 0, 0, "X",   "Xabcde" },     // at the start
+            { "abcde", 5, 0, "X",   "abcdeX" },     // at the end
+            { "abcde", 0, 5, "",    "" },           // the whole document
+            { "",      0, 0, "hi",  "hi" },         // into an empty document
+            { "ab\n",  3, 0, "c\n", "ab\nc\n" },    // a multiline insert
+            { "a\nb\n", 0, 2, "",   "b\n" },        // deleting across a newline
+        };
+        int ok_apply = 0, ok_canon = 0;
+        std::string first_bad;
+        for (const Case& c : cases) {
+            const std::string cs = make_splice(c.orig, c.start, c.ndel, c.ins);
+            std::string e2;
+            const bool canon = check_rep(cs, e2);
+            if (canon) ++ok_canon;
+            else if (first_bad.empty()) first_bad = std::string(c.orig) + ": " + cs + " — " + e2;
+            std::string got;
+            std::string e3;
+            const bool applied = apply_to_text(cs, c.orig, got, e3);
+            if (applied && got == c.want) ++ok_apply;
+            else if (first_bad.empty()) first_bad = std::string(c.orig) + " -> " + got + ", wanted " + c.want;
+        }
+        const int n = (int)(sizeof cases / sizeof cases[0]);
+        check(ok_canon == n, ok_canon == n ? ssprintf("all %d splices are canonical", n) : first_bad);
+        check(ok_apply == n, ok_apply == n ? ssprintf("all %d splices apply to the expected text", n) : first_bad);
+
+        // the exact bytes, so a change in the encoding is caught and not merely tolerated
+        check(make_splice("abcde", 2, 0, "X") == "Z:5>1=2+1$X", "insert encodes as Z:5>1=2+1$X (got " + make_splice("abcde", 2, 0, "X") + ")");
+        check(make_splice("abcde", 1, 2, "") == "Z:5<2=1-2$", "delete encodes as Z:5<2=1-2$ (got " + make_splice("abcde", 1, 2, "") + ")");
+        check(make_splice("abcde", 1, 2, "YZ") == "Z:5>0=1-2+2$YZ", "replace puts the delete first (got " + make_splice("abcde", 1, 2, "YZ") + ")");
+
+        // clamping, as Etherpad clamps: past the end means the end, not an error
+        const std::string clamped = make_splice("abc", 99, 99, "X");
+        const bool capp = apply_to_text(clamped, "abc", out, err);
+        check(capp && out == "abcX", capp ? "a splice past the end clamps to the end: " + out : "failed: " + err);
+
+        // a no-op splice is the identity changeset, and it is still canonical
+        const std::string noop = make_splice("abcde", 2, 0, "");
+        std::string e4;
+        const bool noop_ok = check_rep(noop, e4);
+        check(noop_ok && noop == "Z:5>0$", noop_ok ? "an empty splice is the identity Z:5>0$ (got " + noop + ")" : "not canonical: " + e4);
+    }
+
+    section("the Builder");
+    {
+        // the Builder must reach the same bytes as makeSplice for the same edit — two roads, one
+        // encoding, because a document built op by op and one spliced in place are the same change
+        Builder b(5);
+        b.keep(2).insert("X");
+        const std::string built = b.str();
+        const std::string spliced = make_splice("abcde", 2, 0, "X");
+        check(built == spliced, "keep(2).insert(X) equals makeSplice: " + built + " vs " + spliced);
+
+        Builder b2(5);
+        b2.keep(1).remove(2);
+        check(b2.str() == make_splice("abcde", 1, 2, ""), "keep(1).remove(2) equals the delete splice (" + b2.str() + ")");
+
+        // a multiline insert through the Builder carries its line count
+        Builder b3(3);
+        b3.keep_text("ab\n").insert("c\n");
+        std::string out3, err3;
+        const std::string cs3 = b3.str();
+        const bool ok3 = apply_to_text(cs3, "ab\n", out3, err3);
+        check(ok3 && out3 == "ab\nc\n", ok3 ? "the Builder's multiline insert applies (" + cs3 + ")" : "failed: " + err3);
+        std::string e5;
+        const bool canon3 = check_rep(cs3, e5);
+        check(canon3, canon3 ? "and it is canonical" : "not canonical: " + e5);
+    }
+
+    section("makeSplice — ten thousand random splices");
+    {
+        // The property that matters, checked by construction rather than by example: for a random
+        // document and a random splice, the changeset must be CANONICAL and must apply to exactly
+        // the string ordinary surgery produces. A deterministic generator, so a failure names a
+        // seed somebody can re-run.
+        uint64_t z = 0x9E3779B97F4A7C15ull;
+        auto next = [&z]() {
+            z += 0x9E3779B97F4A7C15ull;
+            uint64_t x = z;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+            return x ^ (x >> 31);
+        };
+        auto rnd = [&next](uint64_t n) { return n ? (uint64_t)(next() % n) : 0ull; };
+        auto text = [&rnd](size_t len) {
+            std::string s;
+            for (size_t i = 0; i < len; ++i) {
+                const uint64_t r = rnd(28);
+                s += r < 26 ? (char)('a' + r) : '\n';   // newlines at roughly one in fourteen
+            }
+            return s;
+        };
+
+        int tried = 0, canon_fail = 0, apply_fail = 0;
+        std::string first_bad;
+        for (int i = 0; i < 10000; ++i) {
+            const std::string orig = text((size_t)rnd(40));
+            const int64_t start = (int64_t)rnd(orig.size() + 1);
+            const int64_t ndel = (int64_t)rnd((uint64_t)((int64_t)orig.size() - start) + 1);
+            const std::string ins = text((size_t)rnd(8));
+            ++tried;
+
+            const std::string cs = make_splice(orig, start, ndel, ins);
+            std::string e;
+            if (!check_rep(cs, e)) {
+                ++canon_fail;
+                if (first_bad.empty()) first_bad = ssprintf("i=%d %s [%lld,%lld) + %s -> %s: %s", i, orig.c_str(),
+                                                            (long long)start, (long long)ndel, ins.c_str(), cs.c_str(), e.c_str());
+                continue;
+            }
+            const std::string want = orig.substr(0, (size_t)start) + ins + orig.substr((size_t)(start + ndel));
+            std::string got, e2;
+            if (!apply_to_text(cs, orig, got, e2) || got != want) {
+                ++apply_fail;
+                if (first_bad.empty()) first_bad = ssprintf("i=%d %s [%lld,%lld) + %s -> got %s, wanted %s (%s)", i, orig.c_str(),
+                                                            (long long)start, (long long)ndel, ins.c_str(), got.c_str(), want.c_str(), e2.c_str());
+            }
+        }
+        check(canon_fail == 0, canon_fail == 0 ? ssprintf("%d random splices are all canonical", tried) : ssprintf("%d not canonical, first: %s", canon_fail, first_bad.c_str()));
+        check(apply_fail == 0, apply_fail == 0 ? ssprintf("%d random splices all apply to the expected text", tried) : ssprintf("%d wrong, first: %s", apply_fail, first_bad.c_str()));
     }
 
     section("refusals");

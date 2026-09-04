@@ -86,3 +86,32 @@
   Changeset.ts on the same random inputs, comparing byte for byte. Etherpads compose tests are
   already randomised over 30 seeds - a differential harness against the reference is worth more
   than any vector I can hand-pick.
+
+## 2026-09-03 (evening) · Stage 0b - the write half, and ten thousand random splices
+
+- 54 checks, 0 failed. ops_from_text, make_splice and the Builder ported from Changeset.ts and
+  Builder.ts. The editor can now CREATE changesets, which is the half Act I actually needs.
+- THE TEST THAT MATTERS is not the hand-written cases, it is the property: for ten thousand random
+  documents and random splices, the changeset must be canonical AND must apply to exactly the
+  string ordinary surgery produces (orig[0,start) + ins + orig[start+ndel,)). Both hold for all
+  ten thousand. A deterministic splitmix64 generator, so any failure would name an index somebody
+  can re-run. That is Etherpad own randomised-test discipline, not an invention here.
+- Exact bytes are asserted too, so a change in the encoding is caught rather than tolerated:
+  an insert is Z:5>1=2+1$X, a delete is Z:5<2=1-2$, and a replace puts the delete FIRST
+  (Z:5>0=1-2+2$YZ) because that ordering is canonical form, not a preference.
+- The Builder and make_splice must agree byte for byte on the same edit - two roads, one encoding.
+  Checked both for a plain insert and a delete.
+- The multiline rule shows up plainly in the CLI now: splicing "\nline two" onto "line one" gives
+  |1+1+8 - one op for the run ending at the newline, a second for the in-line tail - because the
+  format requires a multiline op to END on a newline.
+- Clamping follows Etherpad: a splice past the end means the end, not an error. An empty splice is
+  the identity Z:5>0$ and is still canonical.
+- TRAP, twice in one session and both times mine: writing C++ through a python heredoc turns
+  a backslash-n inside a string literal into a REAL newline, and MSVC says "newline in constant".
+  It is the machine-wide rule I was already told (content never travels through a shell literal);
+  the Write tool or a targeted Edit is the answer, and I reached for the shortcut anyway.
+- Still NOT ported, and deliberately: compose (an optimisation for folding consecutive edits) and
+  follow (Act II concurrency only). Act I needs neither. The differential harness against the real
+  Changeset.ts is the right oracle for those, when they arrive.
+- Next is the editor shell: buffer, view, cursor, selection, undo, files, DPI, status line. It is
+  the only large unknown left before a resident can be wired in.

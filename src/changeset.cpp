@@ -307,4 +307,87 @@ bool check_rep(const std::string& cs, std::string& err) {
     return true;
 }
 
+// ---- the write half -----------------------------------------------------------------------
+void ops_from_text(char opcode, const std::string& text, const std::string& attribs, std::vector<Op>& out) {
+    Op op;
+    op.opcode = opcode;
+    op.attribs = attribs;
+    const size_t last_nl = text.rfind('\n');
+    if (last_nl == std::string::npos) {
+        op.chars = (int64_t)text.size();
+        op.lines = 0;
+        if (op.chars) out.push_back(op);
+        return;
+    }
+    // a multiline op must END on a newline, so the run up to and including the last one is one op
+    op.chars = (int64_t)last_nl + 1;
+    op.lines = count_nl(text, 0, text.size());
+    out.push_back(op);
+    // and whatever trails the last newline is its own in-line op
+    Op tail = op;
+    tail.chars = (int64_t)text.size() - ((int64_t)last_nl + 1);
+    tail.lines = 0;
+    if (tail.chars) out.push_back(tail);
+}
+
+std::string make_splice(const std::string& orig, int64_t start, int64_t ndel, const std::string& ins,
+                        const std::string& attribs) {
+    // Etherpad clamps rather than rejects, and a caller that asks to delete past the end means the
+    // end. Negative indices are a caller bug and are clamped to zero rather than wrapping.
+    if (start < 0) start = 0;
+    if (ndel < 0) ndel = 0;
+    if (start > (int64_t)orig.size()) start = (int64_t)orig.size();
+    if (ndel > (int64_t)orig.size() - start) ndel = (int64_t)orig.size() - start;
+
+    std::vector<Op> ops;
+    ops_from_text('=', orig.substr(0, (size_t)start), std::string(), ops);
+    ops_from_text('-', orig.substr((size_t)start, (size_t)ndel), std::string(), ops);
+    ops_from_text('+', ins, attribs, ops);
+
+    SmartAssembler assem;
+    for (const Op& o : ops) assem.append(o);
+    assem.end_document();
+    return pack((int64_t)orig.size(), (int64_t)orig.size() + (int64_t)ins.size() - ndel, assem.str(), ins);
+}
+
+Builder& Builder::keep(int64_t chars, int64_t lines, const std::string& attribs) {
+    Op o;
+    o.opcode = '=';
+    o.chars = chars;
+    o.lines = lines;
+    o.attribs = attribs;
+    assem_.append(o);
+    return *this;
+}
+
+Builder& Builder::keep_text(const std::string& text, const std::string& attribs) {
+    std::vector<Op> ops;
+    ops_from_text('=', text, attribs, ops);
+    for (const Op& o : ops) assem_.append(o);
+    return *this;
+}
+
+Builder& Builder::insert(const std::string& text, const std::string& attribs) {
+    std::vector<Op> ops;
+    ops_from_text('+', text, attribs, ops);
+    for (const Op& o : ops) assem_.append(o);
+    bank_ += text;   // the bank is the inserted characters, in the order the ops draw them
+    return *this;
+}
+
+Builder& Builder::remove(int64_t chars, int64_t lines) {
+    Op o;
+    o.opcode = '-';
+    o.chars = chars;
+    o.lines = lines;
+    assem_.append(o);
+    return *this;
+}
+
+std::string Builder::str() {
+    assem_.end_document();
+    const int64_t new_len = old_len_ + assem_.length_change();
+    return pack(old_len_, new_len, assem_.str(), bank_);
+}
+
 }  // namespace nib

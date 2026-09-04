@@ -58,6 +58,17 @@ int main(int argc, char** argv) {
         printf("canonical\n");
         return 0;
     }
+    if (a == "--splice" && argc > 5) {
+        const std::string orig = argv[2], ins = argv[5];
+        const long long start = atoll(argv[3]), ndel = atoll(argv[4]);
+        const std::string cs = make_splice(orig, start, ndel, ins);
+        std::string err;
+        if (!check_rep(cs, err)) { fprintf(stderr, "nib: the splice is not canonical: %s\n", err.c_str()); return 2; }
+        std::string out;
+        if (!apply_to_text(cs, orig, out, err)) { fprintf(stderr, "nib: %s\n", err.c_str()); return 2; }
+        printf("%s\n%s\n", cs.c_str(), out.c_str());
+        return 0;
+    }
     if (a == "--apply" && argc > 3) {
         std::string out, err;
         if (!apply_to_text(argv[2], argv[3], out, err)) { fprintf(stderr, "nib: %s\n", err.c_str()); return 2; }
