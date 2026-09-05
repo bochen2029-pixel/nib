@@ -11,6 +11,23 @@ the twin · the resume tick · the hash cache · free VRAM on every judgment row
 torn-row recovery · a crash that names itself. The ROADMAP's Stage 1d entry has the numbers. What
 follows is what is still open.
 
+## Still open from Stage 2 (2026-09-05)
+
+- **The manners do not survive the switch, though the trunk does.** A restored resident has its own
+  lines on its trunk (the self-echo commit) but an empty suppression ladder, so a seat can repeat
+  itself once after the AI switch is flipped. Seen in the driver's own tape: the SKEPTIC said its
+  Pacific line in two lives, in two phrasings. The fix is `last_say`, `last_clause` and the
+  resolved flags in the checkpoint's sidecar, and a wire accessor to read them out of the resident.
+  Cheap, and it should land before the week of real work.
+- **`emit` has no key.** It is a theme setting; the AI switch has `Ctrl+Shift+A` and wrap has
+  `Alt+Z`. Stage 4 gives it one, because a toggle that is flipped during real work is a paired
+  sample and belongs on the status line and the tape like the others.
+- **The floor is global, not per block.** The wire refuses to compose while the hand has moved
+  anywhere in the document, where the spec says "a block that has received a human keystroke".
+  Stricter than required and therefore safe, but it means writing in one paragraph silences a seat
+  that wanted to speak about another. The commit-time gate already tests the span precisely; the
+  compose-time gate should use the paragraph once Stage 3's dep test exists.
+
 ## Still open from Stage 1d
 
 - **The driver's windows sit on the operator's screen** (no-activate, but shown; the screenshot of

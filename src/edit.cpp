@@ -19,6 +19,7 @@
 // And the wire (CLAUDE.md rule 11): this thread owns the document, the view, the pad and the
 // tape. The resident lives on its own thread inside `Wire`, meets this one only at two rings, and
 // is never called from here. The AI switch is the wire's start and stop; off unloads the model.
+#include "changeset.h"   // make_splice: a seat's block is a changeset like any other
 #include "doc.h"
 #include "ingest.h"
 #include "resident.h"   // seats(): the lanes the self-echo filter must know, from one source
@@ -68,6 +69,8 @@ struct Theme {
     int n_ctx = 16384;   // 272 MiB of q8_0 KV on this model, measured 2026-09-04; 8192 was 136
     int gpu_layers = 99;
     bool ai = false;   // the switch's position at startup; off is the safe default on a shared card
+    bool emit = true;  // Stage 2: may the resident WRITE. Nothing happens until the AI switch is on
+    int floor_ms = 2000;   // the hand yields the floor by pausing this long (SPEC 6.3.2)
 };
 
 enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop,
@@ -131,7 +134,7 @@ struct View {
     uint64_t t0 = 0;              // the session's origin on the steady clock; the tape's `at` is ms since it
     size_t tape_rev = 0;          // log entries already on the tape
     bool tape_dirty = false;
-    uint64_t percept_rows = 0, judgment_rows = 0;
+    uint64_t percept_rows = 0, judgment_rows = 0, emit_rows = 0, refused_rows = 0;
 
     // Stage 1d — the trunk as an asset (SPEC 6.2.11)
     std::vector<std::string> rev_digest;   // the tape digest of each revision's changeset row (index rev-1): a checkpoint binds to one
@@ -204,6 +207,8 @@ void load_theme(Theme& t) {
         else if (k == "n_ctx") { const int n = atoi(v.c_str()); if (n >= Resident::kMinCtx) t.n_ctx = n; }
         else if (k == "gpu_layers") t.gpu_layers = atoi(v.c_str());
         else if (k == "ai") t.ai = v == "on" || v == "1" || v == "true";
+        else if (k == "emit") t.emit = !(v == "off" || v == "0" || v == "false");
+        else if (k == "floor_ms") { const int n = atoi(v.c_str()); if (n >= 0) t.floor_ms = n; }
         else if (k == "wrap") t.wrap = !(v == "off" || v == "0" || v == "false");
     }
     fclose(f);
@@ -439,8 +444,13 @@ void after_edit(HWND h, bool caret_from_doc) {
 // An edit region moves every mark after it and retires every mark it touches — the judged text
 // was edited, so the judgment is stale — and is remembered with its revision so a judgment that
 // arrives later can be carried forward to the text as it stands now.
-void note_edit(size_t start, size_t ndel, size_t ins) {
-    g->last_key_ms = mono_ms();
+void note_edit(size_t start, size_t ndel, size_t ins, bool human = true) {
+    if (human) {
+        g->last_key_ms = mono_ms();
+        // the floor: the hand has the floor while it is moving, and yields it by pausing (6.3.2).
+        // A seat's own block is not a hand and does not take the floor from anyone.
+        g->wire.note_human_edit(g->last_key_ms);
+    }
     g->edits.push_back(EditRec{ g->doc.revisions(), start, ndel, ins });
     if (g->edits.size() > 4096) g->edits.erase(g->edits.begin(), g->edits.begin() + 2048);
     for (size_t i = 0; i < g->marks.size();) {
@@ -937,6 +947,81 @@ void flush_pending_judgment() {
     g->pend.n = 0;
 }
 
+// ---- what a seat said, arriving --------------------------------------------------------------
+// The resident writes in its OWN block and never inside a human's paragraph (SPEC 6.3.1): the
+// block goes after the line that holds the end of the clause it is about, prefixed with the seat's
+// name, so the file on disk is a valid lane stream and it is never ambiguous who wrote a line
+// (rule 6, and the review's §5.7).
+void refuse_emission(const EmitRow& r, const char* why) {
+    tape_row_at("refused", r.wall_ms, canon::obj({
+        { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },
+        { "m", canon::flt(r.margin) }, { "why", canon::str(why) },
+        { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
+        { "say", canon::str(r.say) },
+    }), true);
+    ++g->refused_rows;
+    nlog("refused	%u	%s	%.2f	%s	%s", r.boundary, seats()[r.seat].name, (double)r.margin, why, r.say);
+}
+
+void commit_emission(HWND h, const EmitRow& r) {
+    // the clause it depends on, carried forward to the text as it stands now
+    size_t a = r.a, b = r.b;
+    if (!transform_span(r.rev, a, b)) { refuse_emission(r, "span-edited"); return; }
+    // THE FLOOR, checked again at the moment of writing. The thread refused to compose while the
+    // hand was moving; between composing and arriving there is half a second in which the hand may
+    // have started again, and a block written into that is exactly what 6.3.2 forbids.
+    if (g->last_key_ms && (int64_t)(mono_ms() - g->last_key_ms) < g->th.floor_ms) { refuse_emission(r, "floor"); return; }
+
+    const std::string& t = g->doc.text();
+    if (b > t.size()) b = t.size();
+    const size_t nl = t.find('\n', b);
+    size_t at = nl == std::string::npos ? t.size() : nl + 1;
+    std::string ins = std::string("[") + seats()[r.seat].name + "] " + r.say + "\n";
+    if (at > 0 && t[at - 1] != '\n') ins = "\n" + ins;   // never joined onto the end of a human's line
+
+    const std::string cs = make_splice(t, (int64_t)at, 0, ins);
+    std::string err;
+    if (!g->doc.apply(cs, seats()[r.seat].name, err)) { refuse_emission(r, "apply-failed"); return; }
+    note_edit(at, 0, ins.size(), false);
+    if (g->caret >= at) g->caret += ins.size();
+    if (g->anchor >= at) g->anchor += ins.size();
+    // The seat's own words go to the pad, where the self-echo filter drops them at the door: the
+    // mind already committed this line to its trunk itself (SPEC 5.1.6, both halves), and a second
+    // arrival would have it deliberate about interrupting itself.
+    if (g->ingest) g->ingest->typed(seats()[r.seat].name, ins, mono_ms(), at, g->doc.revisions());
+    ++g->emit_rows;
+    tape_row_at("emit", r.wall_ms, canon::obj({
+        { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },
+        { "m", canon::flt(r.margin) }, { "rev", canon::num((int64_t)r.rev) },
+        { "a", canon::num((int64_t)a) }, { "b", canon::num((int64_t)b) },
+        { "at", canon::num((int64_t)at) }, { "bytes", canon::num((int64_t)ins.size()) },
+        { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
+        { "stop", canon::str(std::string(1, r.stop)) }, { "say", canon::str(r.say) },
+    }), true);
+    nlog("emit	%u	%s	%.2f	%zu	%s", r.boundary, seats()[r.seat].name, (double)r.margin, at, r.say);
+    // the document changed under the caret without passing through edit_splice
+    g->idx.build(g->doc.text());
+    relayout(h);
+    if (g->caret > g->doc.size()) g->caret = g->doc.size();
+    if (g->anchor > g->doc.size()) g->anchor = g->doc.size();
+    scroll_to_caret(h);
+    set_title(h);
+    sync_tape_changesets();
+    set_status(std::string(seats()[r.seat].name) + " wrote a line");
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+void poll_emissions(HWND h) {
+    EmitRow r;
+    while (g->wire.poll_emit(r)) {
+        if (r.why[0]) {   // the manners would not let it say this twice; the record says why
+            refuse_emission(r, r.why);
+            continue;
+        }
+        commit_emission(h, r);
+    }
+}
+
 void poll_wire(HWND h) {
     const WireState s = g->wire.state();
     if (s != g->last_state) {
@@ -978,6 +1063,7 @@ void poll_wire(HWND h) {
         if (g->wire.take_checkpoint(cr)) write_sidecar(cr);
     }
 
+    poll_emissions(h);
     JudgmentRow r;
     bool any = false;
     while (g->wire.poll(r)) {
@@ -1199,6 +1285,9 @@ std::string resident_line() {
                                      (double)g->wire.last_margin(0), (double)g->wire.last_margin(1), (double)g->wire.last_margin(2),
                                      (unsigned long long)g->wire.boundaries(), g->wire.context_used(), g->rcfg.n_ctx);
             if (g->last_mib_free) l += ssprintf("  ·  %llu MiB free", (unsigned long long)g->last_mib_free);
+            if (g->rcfg.emit) l += ssprintf("  ·  said %llu, held %llu", (unsigned long long)g->emit_rows,
+                                            (unsigned long long)g->refused_rows);
+            else l += "  ·  silent";
             if (g->ingest) {
                 if (g->ingest->spooled()) l += ssprintf("  ·  spool %zu", g->ingest->spooled());
                 if (g->ingest->fold_skipped()) l += ssprintf("  ·  joined late: %llu percepts before me", (unsigned long long)g->ingest->fold_skipped());
@@ -1563,8 +1652,9 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case CmdTape: {
                     flush_pending_judgment();
                     if (g->tape.is_open()) { g->tape.flush(); g->tape_dirty = false; }
-                    nlog("tape	%llu	%s	%llu	%llu", (unsigned long long)g->tape.rows(), g->tape.path().c_str(),
-                         (unsigned long long)g->percept_rows, (unsigned long long)g->judgment_rows);
+                    nlog("tape	%llu	%s	%llu	%llu	%llu	%llu", (unsigned long long)g->tape.rows(), g->tape.path().c_str(),
+                         (unsigned long long)g->percept_rows, (unsigned long long)g->judgment_rows,
+                         (unsigned long long)g->emit_rows, (unsigned long long)g->refused_rows);
                     break;
                 }
                 default: break;
@@ -1657,6 +1747,8 @@ int run_editor(const std::string& path_utf8) {
     g->rcfg.n_ctx = g->th.n_ctx;
     g->rcfg.n_gpu_layers = g->th.gpu_layers;
     g->rcfg.hash_cache = narrow(exe_dir()) + "\\runs\\model-hashes.txt";   // the model's SHA-256, remembered on size and mtime
+    g->rcfg.emit = g->th.emit;
+    g->wire.set_floor_ms(g->th.floor_ms);
 
     // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow
     // answers 96, WM_DPICHANGED is never delivered, and on a 225 % box the window is a bitmap

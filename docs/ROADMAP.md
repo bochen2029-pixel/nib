@@ -24,7 +24,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **I** | the QC pass — two criticals, the runtime gate, six Stage 2 breakers | ✔ 2026-09-04 | 0.6.1 |
 | **I** | 1c · the wire — the resident in the window, the gutter, the AI switch, the tape | ✔ 2026-09-05 | 0.7.0 |
 | **I** | 1d · the trunk as an asset — the checkpoint beside the document, word wrap | ✔ 2026-09-05 | 0.8.0 |
-| **I** | 2 · emission, with floor control — on K5's seam | ○ | |
+| **I** | 2 · emission, with floor control | ✔ 2026-09-05 | 0.9.0 |
 | **I** | 3 · un-saying, made visible | ○ | |
 | **I** | 4 · the two switches, and the paired record | ○ | |
 | **I** | 5 · **a week of real work** — the falsifier for the whole idea | ○ | |
@@ -33,7 +33,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**201 checks green in the exe, 30 more from the window driver, and 51 with the resident switched on
+**213 checks green in the exe, 30 more from the window driver, and 55 with the resident switched on
 inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
 gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
 llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
@@ -375,29 +375,80 @@ Refused: K5 queues the hand's keystrokes while the model loads and compiles them
 nib does not need to — every one of them is already in the document's log with its own clock, and
 the fold replays the log. Queueing them would perceive them twice.
 
-### ○ Stage 2 — emission, with floor control
+### ✔ Stage 2 — emission, with floor control · 0.9.0
 
-The resident writes in its own blocks. An emission targeting a block a human has touched within the
-floor window is refused before it is composed.
-
-**Lifts K5's seam, not the 08-12 blind window** (SPEC 6.3.4): intake drained after every generated
-token, the speaking seat re-probed on a fresh fork when a whole percept lands, the line killed on a
-flipped margin or an acceptance, the killed remainder and the aired prefix on the tape, own speech
-committed after the world's line closes. The lift map's line ranges are refreshed against K5 first.
+**It speaks.** Every seat whose margin clears zero composes one sentence on a fork of the trunk,
+and writes it as its own block, prefixed with its name, after the line holding the clause it is
+about — never joined onto the end of a human's line, so the file on disk is a valid lane stream and
+it is never ambiguous who wrote what. The lift map was refreshed against K5 first
+(`docs/review/LIFT_MAP_K5_2026-09-05.md`), as SPEC 6.3.4 required.
 
 *Falsifier: one emission lands inside a block a human touched inside the floor window; or forming
-text survives a save or a crash.*
+text survives a save or a crash.* — **Did not fire.** The driver types a sentence and asserts that
+**nothing at all is written while the hand is still moving**, then pauses and asserts that a seat
+writes its line, that the line is in the document in the seat's own block, and that no resident
+block is joined onto a human's. Forming text cannot survive a save because there is none: Stage 2
+composes and then writes, and the forming plane arrives in Stage 3 with the mechanism that takes a
+sentence back (SPEC 6.4).
 
-**This stage contains the genuinely unsolved problem.** The emit gate decides *whether* to speak;
-nothing yet decides *where the words land and when*, in a buffer somebody else is typing into. Two
-humans negotiate that continuously and unconsciously, and nobody has had to solve it for an entity
-with no turns sharing a surface with humans who also have no turns. Act I's rule is deliberately
-crude and enforced by the serialiser rather than by manners.
+**The clause needed a correction to be satisfiable at all,** and it is the finding of the stage. A
+judgment fires *while the hand is typing* — a percept arrives, a clause closes, the seats are
+probed — so an emission refused at that instant for being inside the floor window is refused at
+every instant there ever is, and the resident is mute by arithmetic rather than by judgment. So a
+margin above zero records a **want** and composes nothing; the wants are composed when the hand has
+been still for the floor window. **Pausing is how a person yields the floor**, and the refusal costs
+nothing because it never runs the model. The floor is checked again at the moment of writing,
+because between composing and arriving there is half a second in which the hand may start again —
+and that second gate fires in an ordinary run: two `refused {why: floor}` rows in the driver's tape.
+
+**The first things it wrote, measured 2026-09-05.** In the CLI, on `tests/margins.txt`:
+
+| seat | margin | the line |
+|---|---|---|
+| SKEPTIC | +5.32 | "The Pacific is actually the largest ocean, not the smallest — that contradicts what we know." |
+| SPEAKER | +4.82 | "Friday works — ship it once the final check passes." |
+| SENTINEL | +5.06 | "Dropping the users table is irreversible without a tested backup; do not proceed." |
+
+Three seats, three mandates, three correct catches on prose none was tuned on; 9 of 36 probes
+wanted to speak, 3 said something, 6 were held by the manners; 11–19 tokens a line and 369–581 ms
+of generation. And in the window, the document after a driver run:
+
+```
+… Actually, the Pacific is the smallest ocean on Earth. … And the users table can go …
+[SKEPTIC] The Pacific is actually the largest ocean on Earth, not the smallest.
+[SENTINEL] Deleting the users table is irreversible without a backup; don't.
+```
+
+**Two findings kept.** The SPEAKER answered "Watcher, should we ship this on Friday" *before* the
+sentence finished, because the boundary fired at b=0.67 on "Friday" — half a question is enough to
+answer, which is the segmenter's measured law working, and whether it should be is a Stage 5
+question. And a line is judged at a timeout boundary after a seat speaks, because generation takes
+half a second and the flush law is wall-clock: **speaking slows perceiving, and the record says so.**
+
+**One gap, found by the run and not yet closed:** the manners' memory dies with the resident while
+the trunk survives. A restored resident has its own lines on its trunk (the self-echo commit) but
+an empty suppression ladder, so a seat can repeat itself once after a switch. Visible in the
+driver's own tape, where the SKEPTIC said the Pacific line in two lives in two phrasings.
+`docs/BACKLOG.md` carries it; the fix is three strings in the checkpoint's sidecar.
+
+**The stage contained the genuinely unsolved problem, and here is the answer it gives.** The emit
+gate decides *whether* to speak; nothing decided *where the words land and when*, in a buffer
+somebody else is typing into. Two humans negotiate that continuously and unconsciously, and nobody
+has had to solve it for an entity with no turns sharing a surface with humans who also have no
+turns. Act I's answer is deliberately crude and enforced by the serialiser rather than by manners:
+**where** is a block of the seat's own, after the line it is about, never inside a human's
+paragraph; **when** is the pause. It is not negotiation — the human never announces and the
+resident never asks — and the review's §5.1 says what a negotiated version would look like (the
+gutter as an announcement, the human disposing by typing, pausing, editing or deleting). Stage 5
+is where a week of real work says whether the crude rule is enough.
 
 ### ○ Stage 3 — un-saying, made visible
 
-The provisional region: rendered, distinct, never committed, never saved. On abort the characters
-are withdrawn and the abort goes on the tape.
+The seam (`LIFT_MAP_K5_2026-09-05.md` §3): intake drained after every generated token, the speaking
+seat re-probed on a fresh fork when a whole percept lands, the line killed mid-word on a flipped
+margin or on the world settling the point, and the killed remainder generated silently so the tape
+holds the counterfactual. The provisional region: rendered, distinct, never committed, never saved.
+On abort the characters are withdrawn and the abort goes on the tape.
 
 *Falsifier: a killed sentence that is not on the tape, or that leaves residue in the buffer, or a
 saved file that ever contained a word that was un-said.*

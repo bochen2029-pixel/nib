@@ -19,6 +19,15 @@ to resume.**
 > review's §8 P1, then Stage 2. And by operator ruling the shipped product autodiscovers on the
 > LAN by default (CLAUDE.md rule 2, SPEC 9.1.1).
 >
+> **Addendum, 2026-09-05 (late morning).** **Stage 2 landed as 0.9.0: IT SPEAKS.** A seat whose
+> margin clears zero composes one sentence and writes it as its own `[SEAT] ` block, after the line
+> it is about, and never while the hand is moving. Oracles: **`--selftest` 213, `drive.py` 30,
+> `drive.py --ai` 55.** The finding was in the spec, not the code: 6.3.2 as written ("refused
+> before it is composed") could never be satisfied, because judgments fire *while* you type — so a
+> margin above zero records a **want**, and the wants are composed when the hand has been still.
+> **Pausing is how a person yields the floor**, and that is now the mechanism. §5's "resume here"
+> means **Stage 3**, the un-say, whose ranges are in `docs/review/LIFT_MAP_K5_2026-09-05.md` §3.
+>
 > **Addendum, 2026-09-05 (dawn).** **Stage 1d landed as 0.8.0** — word wrap (`Alt+Z`), the trunk
 > as an asset (off saves the mind's state beside the document, on restores it or says it is the
 > twin), free VRAM on every judgment, torn-row recovery, the model's hash remembered. Oracles:
@@ -130,7 +139,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.8.0 · the active work · Stages 0a–1d · 201 + 30 + 51 checks · the mind holds, inside the window, and survives being switched off** |
+| **nib** | `C:\nib` | **0.9.0 · the active work · Stages 0a–2 · 213 + 30 + 55 checks · it speaks, in its own blocks, and not while you type** |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.

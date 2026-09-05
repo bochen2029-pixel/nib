@@ -688,3 +688,55 @@
   touched inside the floor window is refused BEFORE it is composed), the block placement, the
   forming plane that is rendered and never saved, the commit through Doc::apply, and the emit/
   refused rows on the tape.
+
+## 2026-09-05 (late morning) · Stage 2b - the mouth in the window, and the clause that could not be satisfied as written
+
+- THE FINDING OF THE STAGE, and it was in the spec rather than the code. SPEC 6.3.2 said an
+  emission targeting a block a human has touched within the floor window must be refused BEFORE it
+  is composed. But a judgment fires WHILE THE HAND IS TYPING - a percept arrives, a clause closes,
+  the seats are probed - so an emission refused at the instant of judgment for being inside the
+  floor window would be refused at every instant there ever is. Written literally, the clause makes
+  the resident mute by arithmetic rather than by judgment. The correction: a margin above zero
+  records a WANT and composes nothing; the wants are composed when the hand has been still for the
+  floor window. Pausing is how a person yields the floor, and that sentence is now the mechanism
+  and not a metaphor. A want is one per seat, superseded by a newer boundary, and dropped after
+  30 s as stale, because the instant it was about has gone.
+- The refusal is free: while the hand moves, nothing is composed, so the model is never run. That is
+  a better shape than composing and discarding, and it is what "refused before it is composed"
+  should have meant all along.
+- THE FLOOR IS CHECKED TWICE. Between composing and arriving there is half a second in which the
+  hand may start again, and a block written into that window is exactly what the clause forbids. The
+  second gate is in the editor, where the document is, and it fires in an ordinary driver run: two
+  `refused {why: floor}` rows in the tape of the very first run. A third refusal exists for an
+  emission whose clause was edited while it was being composed (`span-edited`) - a dependency test
+  over the op log, and the same test Stage 3's mid-sentence kill will use.
+- PLACEMENT. A seat's line goes after the line holding the end of the clause it is about, as a line
+  of its own, prefixed `[SEAT] `, and a newline is inserted first if the insertion point is not at a
+  line start - so a resident block is never joined onto the end of a human's line. The file on disk
+  is then a valid lane stream in the tune's own format (the review's 5.7), rule 6 holds in the file,
+  and a reader can always tell who wrote a line. The commit goes through Doc::apply with the seat as
+  author, which ends the human's undo history - a cost SPEC 2.3.5 priced a day ago and which is now
+  actually paid.
+- The seat's own words then go to the pad, where the self-echo filter drops them at the door,
+  because the mind already committed that line to its own trunk. Both halves of SPEC 5.1.6 are now
+  exercised by one line of text.
+- WHAT IT WROTE, in the window, 2026-09-05:
+    [SKEPTIC] The Pacific is actually the largest ocean on Earth, not the smallest.
+    [SENTINEL] Deleting the users table is irreversible without a backup; don't.
+  and the driver asserts the shape of it: nothing at all written while the hand was still moving,
+  a line written once the hand paused, the line present in the document in the seat's own block,
+  and no resident block joined onto a human's.
+- A GAP THE RUN FOUND AND I HAVE NOT CLOSED: the manners' memory dies with the resident while the
+  trunk survives. A restored resident has its own lines on its trunk but an empty suppression
+  ladder, so a seat can repeat itself once after the switch - visible in the driver's own tape,
+  where the SKEPTIC said the Pacific line in two lives in two phrasings. Three strings in the
+  checkpoint's sidecar would fix it. On the backlog, and it should land before the week.
+- The forming plane is NOT here, deliberately. Stage 2 composes and then writes. A rendering that
+  cannot be taken back is an animation, and rule 5 forbids animations; the forming plane arrives in
+  Stage 3 with the mechanism that withdraws it, which is what makes it a real internal state.
+- Green: --selftest 213 passed 0 failed; tools/drive.py 30 passed 0 failed, three runs;
+  tools/drive.py --ai 55 passed 0 failed, and the tape carries emit and refused rows.
+- NEXT is Stage 3, the un-say: the seam (intake drained after every generated token, the seat
+  re-probed on a fresh fork when a percept lands, the line killed mid-word on a flipped margin or
+  on the world settling the point, the killed remainder generated silently for the tape) and the
+  forming plane that makes the withdrawal visible.

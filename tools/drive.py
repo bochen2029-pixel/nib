@@ -464,6 +464,26 @@ def main():
             check(prow is not None and pacific and max(pacific) > 0,
                   "and the SKEPTIC wanted to speak about the Pacific (margins on that sentence: %s; on the others: %s)"
                   % ([round(m, 2) for m in pacific], [round(m, 2) for m, c in skeptic if m not in pacific]))
+            # ---- Stage 2: the floor. The resident wanted to speak about the Pacific; it must NOT
+            # write while the hand is moving, and it must write once the hand has paused.
+            ne = n6.count("emit")
+            n6.cmd("bottom")
+            n6.type_paced("And the users table can go, we do not need it any more. ")
+            early = [l for l in n6.lines()[ne:] if l and l[0] == "emit"]
+            check(not early, "nothing was written into the document while the hand was still typing: %s" % (early,))
+            erow = n6.wait_for("emit", ne, timeout=45)   # the floor opens 2 s after the last keystroke
+            check(erow is not None and len(erow) > 5,
+                  "and once the hand paused, a seat wrote its line: %s" % ((erow[2:] if erow else "nothing in 45 s"),))
+            if erow is not None:
+                seat, said = erow[2], erow[5]
+                n6.save()
+                doc = read_bytes(doc6).decode("utf-8", "replace")
+                check(("[" + seat + "] ") in doc and said[:24] in doc,
+                      "the line is in the document, in the seat's own block: %r" % (doc[doc.find("[" + seat + "]"):][:90],))
+                lines = doc.split(LF)
+                own = [x for x in lines if x.startswith("[" + seat + "] ")]
+                check(len(own) >= 1 and all(x.startswith("[") for x in own),
+                      "a resident block is a line of its own and never joined onto a human's: %d such lines" % len(own))
             lrow2 = n6.ask("latency", "latency")
             n_on, p50_on, p95_on = (int(lrow2[1]), int(lrow2[2]), int(lrow2[3])) if lrow2 else (0, -1, -1)
             check(p95_on >= 0 and p95_on < 20000,

@@ -21,3 +21,9 @@ llama_dir  C:/llama.cpp
 n_ctx      16384
 gpu_layers 99
 ai         off
+# May it WRITE (Stage 2). Nothing happens until the AI switch is on; then a seat whose margin
+# clears zero composes one sentence and writes it as its own block, prefixed with its name.
+emit       on
+# The floor: the hand holds it while it is moving and yields it by pausing this long. A seat that
+# wants to speak waits for the pause; nothing is composed while you type (SPEC 6.3.2).
+floor_ms   2000

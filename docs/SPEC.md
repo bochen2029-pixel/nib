@@ -1,11 +1,13 @@
 # nib — SPECIFICATION
 
-*Rev 0.7 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
+*Rev 0.8 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
 governs the built artefact and the blueprint governs the intent. Where either disagrees with
 `docs/ASSEMBLY.md` on Etherpad or on the sync model, ASSEMBLY governs. Revs 0.1–0.4 were headed
 2026-09-03; git says they were written 2026-09-04, and this file dates by git. Rev 0.5 is the QC
 pass of that day (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, §3 and §8): every clause it
-touches carries the date. Rev 0.7 is Stage 1d (2026-09-05): word wrap (§4.7), the trunk as an
+touches carries the date. Rev 0.8 is **Stage 2 (2026-09-05): the resident has a mouth** — §6.3
+throughout, and the correction §6.3.2 needed to be satisfiable at all. Rev 0.7 is Stage 1d
+(2026-09-05): word wrap (§4.7), the trunk as an
 asset (§6.2.11), the batch cap the second life forced (§6.2.12), and the tape's torn-row recovery
 (§8.1.4). Rev 0.6 was Stage 1c, the wire (2026-09-05), and the first clauses that
 cite **K5**, the converged fusord kernel (`C:\fusor1\converge\src\fusord.cpp`, 2026-09-04, in flux
@@ -231,6 +233,8 @@ or unparsable entries fall back to compiled defaults. **Since 1c the same file n
 the mind** (2026-09-04): `lane` (the trunk sees this person's words on it; v11 was tuned on `[bo]`,
 so a second person on the same binary is a different file), `model`, `llama_dir`, `n_ctx`,
 `gpu_layers`, and `ai`, the switch's position at startup — `off` by default on a shared card.
+Since Stage 2: `wrap`, `emit` (may it write, on by default — and nothing happens until the AI
+switch is on), and `floor_ms` (§6.3.2).
 
 4.5.2 `tools/theme_detect.py <image>` derives a palette from a screenshot and writes that file.
 
@@ -589,14 +593,65 @@ the same trunk the existing sidecar describes, and that sidecar is left alone.
 
 ### 6.3 Emission
 
-6.3.1 The resident MUST write into its own blocks, never inside a human's paragraph.
+**[BUILT 2026-09-05]** — the resident has a mouth. `Config::emit` off means ABSENT, not disabled:
+no sampler is constructed, so no path in the process can produce a token, which is the property
+Stage 1b was a whole stage for and which survives for every build that does not ask.
+
+6.3.1 The resident MUST write into its own blocks, never inside a human's paragraph. **[BUILT]** —
+a seat's line is inserted after the line holding the end of the clause it is about, as a line of
+its own, prefixed `[SEAT] `; it is never joined onto the end of a human's line (a newline is
+inserted first if the insertion point is not at a line start). The file on disk is therefore a
+valid lane stream in the tune's own format (the review's §5.7), and rule 6 holds in the file.
 
 6.3.2 An emission targeting a block that has received a human keystroke within the floor window
-MUST be refused before it is composed. The default floor window is 2 s.
+MUST be refused before it is composed. The default floor window is 2 s. **[BUILT 2026-09-05, and
+the clause needed a correction to be satisfiable.]** A judgment fires *while the hand is typing* —
+a percept arrives, a clause closes, the seats are probed — so an emission refused at the instant of
+judgment for being inside the floor window would be refused at every instant there ever is, and the
+resident would be mute by arithmetic rather than by judgment. Therefore:
+
+6.3.2.1 A margin above zero at a boundary records a **want**, and composes nothing. One want per
+seat; a newer boundary supersedes an older one, because what is worth saying is about the world as
+it stands. A want that the floor never opened for within `want_ttl_ms` (30 s) is dropped and
+recorded as `stale`: the instant it was about has gone.
+
+6.3.2.2 The wants are composed when the hand has been still for the floor window — **pausing is how
+a person yields the floor** — and while it is moving nothing is composed at all. That is the
+refusal of 6.3.2, and it costs nothing, because it never runs the model.
+
+6.3.2.3 The floor is checked **a second time at the moment of writing**, because between composing
+and arriving there is half a second in which the hand may have started again. A block written into
+that window is exactly what this clause forbids. Both refusals are `refused` rows with their
+reason; measured 2026-09-05, the second gate fires in an ordinary driver run.
+
+6.3.2.4 An emission whose clause has been **edited since it was judged** is refused (`span-edited`):
+it depends on text that no longer says what it said. The transform is over the op log — a
+dependency test in op-space (the review's §5.1), and the same test Stage 3's mid-sentence kill uses.
 
 6.3.3 Emission rate MUST express a real internal state. Simulating a human tell that does not
 correspond to an internal event — invented hesitation, fake typos, a "thinking…" indicator that
-is not thinking — is forbidden.
+is not thinking — is forbidden. **Nothing in Stage 2 paces anything:** the line is composed at the
+sampler's own speed and written when it is finished. Watching it form is Stage 3's, where the
+forming plane exists so that a sentence can be *withdrawn*; a rendering that could not be taken
+back would be an animation, which is what this clause forbids.
+
+6.3.5 **The manners [BUILT 2026-09-05].** A composed line is said only if it clears a ladder, and
+every refusal is a record with its reason, never a silence: `resolved` (the world settled what this
+seat raised — acceptance is targeted, at least one content word from the seat's own last line, and
+matched on WHOLE words so that "that is incorrect" is not read as "correct"), `repeat` (the seat's
+own last line, by six words in ten or by shared content words, inside the window, unless the topic
+genuinely came back up in a later clause), `repeat_other` (another seat already said it), and
+`refractory` (one line per seat per window, applied to a RESTATEMENT only, never to a new
+condition). Say-it-once remains a fine-tune target; the harness does the honest minimum and logs
+the rest.
+
+6.3.6 **Own speech is a percept, with no self-exception, and it lands at the line's end.** A seat's
+line is committed to the trunk on the seat's own lane (SPEC 5.1.6, the trunk half) — but *queued*
+until the world's current line closes, because a boundary can fire in the middle of a percept's
+words and a line spliced in there would leave the rest of that percept running on with no lane
+prefix, a serve-format drift the tune never saw. In the document the same line reaches the pad and
+is dropped by the self-echo filter at the door (5.1.6, the gate half), because the mind has already
+heard itself once.
 
 6.3.4 **[SPECIFIED, from K5's seam, 2026-09-05]** Stage 2 lifts the seam and not the 08-12 blind
 window: intake is drained after every generated token; a percept that lands mid-sentence is
@@ -609,6 +664,10 @@ this (`docs/review/LIFT_MAP_AURICLE.md`) point at the 08-12 kernel and MUST be r
 K5 before a line of Stage 2 is written.
 
 ### 6.4 Un-saying
+
+**[SPECIFIED]** — Stage 3. Stage 2 composes a line and writes it when it is finished; the forming
+plane exists so that a sentence can be *taken back*, and it arrives with the mechanism that takes
+it back, not before.
 
 6.4.1 A forming sentence occupies a provisional region: rendered, visually distinct, never
 committed, never saved, never present in the file.
@@ -656,6 +715,10 @@ constants, **`boot` — seed, restored or twin — and its reason**, `mode`, `eg
 id, reason, boundary mass, **free VRAM**, clause, the three margins), `fold` (what the trunk was
 brought up from, how many revisions or rows, the resume tick, what did not fit the budget),
 **`ckpt`** (why, bytes, tokens, the revision and the tape row it binds to, how long it took),
+**`emit`** (the boundary, the seat, the margin, the clause's revision and span, where the block was
+written and how many bytes, the generation's cost in tokens and milliseconds, which of the four
+stops ended it, and the line itself) and **`refused`** (the same, with the reason it was not
+said: `floor`, `span-edited`, `resolved`, `repeat`, `repeat_other`, `refractory`, `stale`),
 `end`, `save`, `resume`, `warn`, `error`, `session_close`. A
 hold is a judgment row whose margins are all below zero; there is no separate row because there is
 no emit path yet. `abort` and `emit` arrive with Stages 2 and 3.

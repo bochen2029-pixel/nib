@@ -140,6 +140,7 @@ public:
                                         // was coupled to emission length)
         int   gen_min = 6;              // below this a sentence close is not a sentence
         int64_t refractory_ms = 20000;  // one surfaced line per seat per window, RESTATEMENTS only
+        int64_t want_ttl_ms = 30000;    // a want the floor never opened for goes stale: the moment passed
         int   dup_overlap = 3;          // content words shared with the seat's own last line
         int   cross_overlap = 4;        // ... with another seat's, which is a higher bar
     };
@@ -166,6 +167,16 @@ public:
 
     // Whatever clause is still open is a real final when the stream stops.
     void finish(std::vector<Judgment>& out);
+
+    // THE FLOOR, and why a want outlives its boundary. A judgment fires while the hand is typing —
+    // a percept arrives, the clause closes, the seats are probed — so an emission refused at that
+    // instant for being inside the floor window would be refused at every instant there ever is,
+    // and the resident would be mute by arithmetic rather than by judgment. So `judge` records
+    // what each seat WANTS and composes nothing; the caller, which is the only party that knows
+    // whether the hand has paused, calls this when the floor is open. Pausing is how a person
+    // yields the floor, and this is the line that makes that true.
+    void speak_wants();
+    bool wants_pending() const;
 
     // What was said, and what the manners would not say twice, since the last call. Drained by the
     // caller after `feed`; empty unless Config::emit.
@@ -249,6 +260,14 @@ private:
     // rest of that percept running on with no lane prefix — a serve-format drift the tune never
     // saw (K5 fixed the same hazard the same way; LIFT_MAP_K5 §1).
     std::vector<std::string> pending_commits_;
+    // what a seat wanted to say, waiting for the floor. One per seat: a newer boundary supersedes
+    // an older want, because the thing worth saying is about the world as it stands.
+    struct Want {
+        bool live = false;
+        float margin = 0.0f;
+        uint64_t boundary = 0, at_ms = 0;
+        std::string clause;
+    } want_[3];
     // the manners' memory, per seat
     std::string last_say_[3], last_clause_[3];
     uint64_t last_say_i_[3]{}, last_say_ms_[3]{};

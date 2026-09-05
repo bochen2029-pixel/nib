@@ -45,6 +45,24 @@ struct JudgmentRow {
 };
 using JudgmentRing = ::auricle::SpscRing<JudgmentRow, 256>;
 
+// What a seat said, crossing back to the editor — or what the manners would not let it say twice,
+// which is the same row with `why` filled in. One ring, so the order the mind produced them in is
+// the order the record shows.
+struct EmitRow {
+    uint64_t wall_ms;
+    uint64_t rev;          // the revision the span it depends on is in
+    uint32_t a, b;         // the span of the clause it is about: the emission's dep
+    uint32_t boundary;
+    int      seat;
+    float    margin;
+    uint64_t gen_ms;
+    int      toks;
+    char     stop;         // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
+    char     why[24];      // "" said it · resolved · repeat · repeat_other · refractory · stale
+    char     say[512];
+};
+using EmitRing = ::auricle::SpscRing<EmitRow, 64>;
+
 enum class WireState : int { Off = 0, Loading, Ready, Stopping, Error };
 
 // What the thread reports after a checkpoint; the editor writes the sidecar from it.
@@ -99,6 +117,13 @@ public:
     bool hash_cached() const { return hash_cached_.load(std::memory_order_relaxed); }
 
     bool poll(JudgmentRow& out) { return out_.try_pop(out); }
+    bool poll_emit(EmitRow& out) { return emit_.try_pop(out); }
+
+    // THE FLOOR (SPEC 6.3.2). The editor stamps every human edit here; the thread composes a
+    // seat's want only once the hand has been still for `floor_ms`. Pausing is how a person yields
+    // the floor, and an emission is refused BEFORE it is composed simply by not composing it.
+    void note_human_edit(uint64_t ms) { human_ms_.store(ms, std::memory_order_release); }
+    void set_floor_ms(int64_t ms) { floor_ms_.store(ms, std::memory_order_relaxed); }
 
     // counters, published by the thread, read by the editor (relaxed: they are a reading, not a fence)
     uint64_t boundaries() const { return boundaries_.load(std::memory_order_relaxed); }
@@ -124,6 +149,9 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<int> state_{(int)WireState::Off};
     JudgmentRing out_;
+    EmitRing emit_;
+    std::atomic<uint64_t> human_ms_{0};
+    std::atomic<int64_t> floor_ms_{0};
     mutable std::mutex mu_;
     std::string detail_;
     std::string session_;

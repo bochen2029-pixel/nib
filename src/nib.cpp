@@ -280,6 +280,9 @@ int do_resident(int argc, char** argv) {
             printf("  %-8s %+7.2f  b=%.2f %c  %s\n", seats()[j.seat].name, (double)j.margin,
                    (double)j.bscore, j.reason, j.clause.c_str());
         }
+        // The CLI has no hand to yield the floor: nobody is typing, so the floor is always open and
+        // a want is composed the moment it exists. In the window the wire waits for the pause.
+        res.speak_wants();
         // what it said, and what the manners would not let it say twice
         for (const Emission& e : res.take_emissions())
             printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
@@ -290,6 +293,7 @@ int do_resident(int argc, char** argv) {
         if (res.failed() || res.window_full()) break;
     }
     res.finish(js);
+    res.speak_wants();
     for (const Emission& e : res.take_emissions())
         printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
                (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);

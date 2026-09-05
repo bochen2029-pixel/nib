@@ -817,12 +817,51 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
     // the whole point of making 1b a stage. It ends here, deliberately and with a date: with
     // `emit` set, every seat whose margin cleared zero composes one sentence, and the manners
     // decide whether it is said. With `emit` unset nothing below runs and no sampler exists.
+    // Nothing is composed here. A margin above zero is a WANT, recorded with what it is about and
+    // when it arose; the caller composes it when the hand has yielded the floor (speak_wants).
+    // Stage 1b's property survives in a second form: at the moment of judgment, still nothing can
+    // be said, and the thing that decides otherwise is not the model.
     if (!cfg_.emit) return;
     for (int m = 0; m < 3; ++m) {
         if (margins[m] <= 0.0f) continue;
+        want_[m].live = true;
+        want_[m].margin = margins[m];
+        want_[m].boundary = boundaries_;
+        want_[m].at_ms = wall_ms();
+        want_[m].clause = judged;
+    }
+}
+
+bool Resident::wants_pending() const {
+    for (const Want& w : want_) if (w.live) return true;
+    return false;
+}
+
+// The floor has opened: compose what each seat still wants to say, oldest seat first, and let the
+// manners decide whether it is said. A want the floor never opened for inside its time to live is
+// dropped, because the instant it was about has gone.
+void Resident::speak_wants() {
+    if (!cfg_.emit || !ctx_ || failed() || window_full_) return;
+    for (int m = 0; m < 3; ++m) {
+        Want& w = want_[m];
+        if (!w.live) continue;
+        if (cfg_.want_ttl_ms > 0 && (int64_t)(wall_ms() - w.at_ms) > cfg_.want_ttl_ms) {
+            w.live = false;
+            Suppressed s;
+            s.wall_ms = wall_ms();
+            s.boundary = w.boundary;
+            s.seat = m;
+            s.margin = w.margin;
+            s.clause = w.clause;
+            s.why = "stale";
+            supp_.push_back(std::move(s));
+            ++suppressed_;
+            continue;
+        }
+        w.live = false;
         Emission e;
-        if (!speak(m, margins[m], judged, e)) continue;
-        if (!allowed_to_say(m, margins[m], e.say, judged)) continue;
+        if (!speak(m, w.margin, w.clause, e)) continue;
+        if (!allowed_to_say(m, w.margin, e.say, w.clause)) continue;
         emissions_.push_back(e);
         ++emitted_;
         // and because it REALLY said it, it is part of the world: the line joins the trunk on the

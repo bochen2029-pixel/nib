@@ -3,6 +3,7 @@
 
 #include "changeset.h"
 #include "doc.h"
+#include "util.h"
 
 #include <chrono>
 #include <cstddef>
@@ -29,6 +30,7 @@ void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string&
     join();   // a previous Off or Error thread is collected first
     stop_.store(false, std::memory_order_release);
     ckpt_req_.store(false, std::memory_order_release);
+    human_ms_.store(0, std::memory_order_release);
     boundaries_ = 0; probes_ = 0; wanted_ = 0; ticks_ = 0; deltas_ = 0; dropped_words_ = 0;
     window_full_ = false; context_used_ = 0; load_ms_ = 0; hash_ms_ = 0; probe_ms_ = 0; cursor_rev_ = 0;
     hash_cached_ = false;
@@ -205,6 +207,59 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         context_used_.store(res.context_used(), std::memory_order_relaxed);
         probe_ms_.store(res.probe_ms_total(), std::memory_order_relaxed);
     };
+    // The span each boundary judged, so that an emission composed later can say which bytes of the
+    // document it depends on. A want waits for the floor, so the span cannot be read off "the
+    // current clause" by the time it is spoken; a few boundaries of history is all it takes.
+    struct Span { uint32_t boundary, a, b; uint64_t rev; };
+    Span spans[16]{};
+    size_t span_at = 0;
+    auto remember_span = [&](uint32_t boundary, uint64_t rev) {
+        spans[span_at++ % 16] = Span{ boundary, span_a, span_b, rev };
+    };
+    auto span_of = [&](uint32_t boundary, uint64_t& rev, uint32_t& a, uint32_t& b) {
+        for (const Span& s : spans)
+            if (s.boundary == boundary) { rev = s.rev; a = s.a; b = s.b; return; }
+        rev = 0; a = 0; b = 0;
+    };
+    // what a seat said, or what the manners refused to say twice, on its way to the editor
+    auto ship_emissions = [&] {
+        for (const Emission& e : res.take_emissions()) {
+            EmitRow r{};
+            r.wall_ms = e.wall_ms;
+            r.boundary = (uint32_t)e.boundary;
+            span_of(r.boundary, r.rev, r.a, r.b);
+            r.seat = e.seat;
+            r.margin = e.margin;
+            r.gen_ms = e.gen_ms;
+            r.toks = e.toks;
+            r.stop = e.stop;
+            r.why[0] = 0;
+            const size_t n = e.say.size() < sizeof r.say - 1 ? e.say.size() : sizeof r.say - 1;
+            memcpy(r.say, e.say.data(), n);
+            r.say[n] = 0;
+            while (!emit_.try_push(r) && !stop_.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        for (const Suppressed& s : res.take_suppressed()) {
+            EmitRow r{};
+            r.wall_ms = s.wall_ms;
+            r.boundary = (uint32_t)s.boundary;
+            span_of(r.boundary, r.rev, r.a, r.b);
+            r.seat = s.seat;
+            r.margin = s.margin;
+            r.stop = 0;
+            const std::string why = s.by.empty() ? s.why : s.why + ":" + s.by;
+            const size_t wn = why.size() < sizeof r.why - 1 ? why.size() : sizeof r.why - 1;
+            memcpy(r.why, why.data(), wn);
+            r.why[wn] = 0;
+            const size_t n = s.say.size() < sizeof r.say - 1 ? s.say.size() : sizeof r.say - 1;
+            memcpy(r.say, s.say.data(), n);
+            r.say[n] = 0;
+            while (!emit_.try_push(r) && !stop_.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
     // one percept off the ring and onto the trunk; false when the ring is empty
     auto step = [&]() -> bool {
         auricle::fusor::Delta d;
@@ -220,7 +275,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         js.clear();
         res.feed(lane, text, m.wall_ms, backlog, js);
         if (lane.empty()) ticks_.store(res.ticks(), std::memory_order_relaxed);
-        for (const Judgment& j : js) ship(j, m.rev);
+        for (const Judgment& j : js) { ship(j, m.rev); remember_span((uint32_t)j.boundary, m.rev); }
         if (!js.empty()) clause_open = false;   // the judged clause closed; the next percept opens a new span
         // the cursor: the document revision the trunk has perceived through
         if (m.rev > cursor_rev_.load(std::memory_order_relaxed)) cursor_rev_.store(m.rev, std::memory_order_release);
@@ -229,8 +284,18 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     };
     while (!stop_.load(std::memory_order_acquire)) {
         if (!step()) {
-            // idle: the ring sleeps, never the GPU — and a checkpoint asked for is taken now, when
-            // nothing is half-perceived
+            // THE FLOOR. The ring is empty, so nothing is half-perceived; if the hand has been
+            // still for the floor window, the seats compose what they still want to say. While it
+            // is typing, nothing is composed at all — that is the refusal, and it costs nothing
+            // because it never runs the model.
+            if (res.wants_pending()) {
+                const int64_t floor = floor_ms_.load(std::memory_order_relaxed);
+                const uint64_t human = human_ms_.load(std::memory_order_acquire);
+                const bool open = floor <= 0 || human == 0 ||
+                                  (int64_t)(mono_ms() - human) >= floor;
+                if (open) { res.speak_wants(); ship_emissions(); publish(); }
+            }
+            // a checkpoint asked for is taken now, when nothing is half-perceived
             if (ckpt_req_.exchange(false, std::memory_order_acq_rel)) {
                 std::string p, w;
                 { std::lock_guard<std::mutex> g(mu_); p = ckpt_path_; w = ckpt_why_; }
@@ -254,6 +319,10 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     }
     js.clear();
     res.finish(js);
+    // whatever a seat still wanted to say when the switch went off: the floor is moot now, and a
+    // want that is never composed is a want the record would not explain
+    if (res.wants_pending()) res.speak_wants();
+    ship_emissions();
     for (const Judgment& j : js) {
         JudgmentRow r{};
         r.wall_ms = j.wall_ms;
