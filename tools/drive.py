@@ -589,6 +589,18 @@ def main():
         fold = [r.get("body", {}) for r in rows[1:] if r.get("kind") == "fold"]
         check(bool(fold) and fold[0].get("skipped") == 0 and int(fold[0].get("shipped", 0)) >= 2,
               "the fold at switch-on shipped the paragraph typed before it and skipped nothing: %s" % (fold[0] if fold else "no fold row",))
+        # Own speech through the document (0.10.2): the mind hears its line as a percept of its
+        # own kind once the block is really written, and a fold - the restore's, from the tape -
+        # attributes a seat's block to the seat. Through 0.10.1 a restore replayed the emissions
+        # committed at stop as the HAND saying them, "[bo] [SKEPTIC] ...", and the trunk heard lines
+        # the editor had refused.
+        percepts = [r.get("body", {}) for r in rows[1:] if r.get("kind") == "percept"]
+        own_rows = [p for p in percepts if p.get("kind") == "s"]
+        check(len(own_rows) >= 1, "the mind heard its own line through the document: %d own-speech percept rows, first on %s"
+              % (len(own_rows), own_rows[0].get("lane") if own_rows else "-"))
+        seat_tags = tuple("[" + s + "]" for s in ("SPEAKER", "SKEPTIC", "SENTINEL"))
+        hand_said_seat = [p for p in percepts if p.get("lane") == "bo" and str(p.get("text", "")).lstrip().startswith(seat_tags)]
+        check(not hand_said_seat, "and never as the hand saying a seat's line, live or folded: %d such rows" % len(hand_said_seat))
         # ---- 12 · THE UN-SAY (Stage 3), in a window of its own -----------------------------
         # A seat begins a sentence; the world contradicts it while the words are still forming;
         # the sentence is taken back mid-word and not one character of it was ever in the file.

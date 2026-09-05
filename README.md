@@ -27,7 +27,7 @@ window used, and `0 B egress`, which is structurally true and not a promise.*
 > off and the mind's held state is saved; switch it on and the same mind comes back, told how long
 > it was away and shown what happened meanwhile, or else labelled the twin.
 >
-> **219 checks in the exe, 30 from the window driver and 65 more with the resident on**, run before
+> **229 checks in the exe, 30 from the window driver and 67 more with the resident on**, run before
 > every commit. Stage 4 (the two switches, and the paired record) is next. The normative spec is
 > `docs/SPEC.md`; the stages and their falsifiers are `docs/ROADMAP.md`; the open items are
 > `docs/BACKLOG.md`; the rules are `CLAUDE.md`; the review that set the work order is
@@ -115,7 +115,7 @@ the whole test battery build and run **without a model and without a GPU** — l
 only when you switch the resident on.
 
 ```
-nib.exe --selftest      219 checks: the changeset port against Etherpad's own vectors, the op log,
+nib.exe --selftest      229 checks: the changeset port against Etherpad's own vectors, the op log,
                         the compiler's byte conservation, word wrap, the tape's hash chain
 python tools/drive.py   30 more, by driving a real window through its message seam
 nib.exe --edit FILE     the editor

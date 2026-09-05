@@ -69,8 +69,9 @@ void Compiler::emit(const std::string& lane, std::string text, uint64_t now_ms, 
         p.kind = kind;
         p.rev = rev;
         p.a = a;
-        p.b = kind == 'w' ? a + take : a;            // a deletion's span is empty at the point it left
+        p.b = (kind == 'w' || kind == 's') ? a + take : a;   // a deletion's span is empty at the point it left
         if (kind == 'w') { typed_out_ += p.text.size(); a += take; }
+        else if (kind == 's') a += take;                       // the resident's bytes: counted in no identity
         else if (kind == 'd') removed_out_ += p.text.size();
         out.push_back(std::move(p));
         ++percepts_;
@@ -213,6 +214,15 @@ void Compiler::tick(uint64_t gap_s, uint64_t now_ms, std::vector<Percept>& out) 
     last_percept_ms_ = now_ms;
 }
 
+void Compiler::own(const std::string& seat_lane, const std::string& text, uint64_t now_ms,
+                   size_t pos, uint64_t rev, std::vector<Percept>& out) {
+    if (text.empty()) return;
+    if (!pending_.empty()) push_pending(now_ms, out);   // the order things happened is the world
+    maybe_tick(now_ms, out);
+    last_rev_ = rev;
+    emit(seat_lane, text, now_ms, 's', pos, rev, out);
+}
+
 void Compiler::idle(uint64_t now_ms, std::vector<Percept>& out) {
     if (pending_.empty()) return;
     if (cfg_.quiet_ms <= 0) { push_pending(now_ms, out); return; }
@@ -335,6 +345,12 @@ void PadSource::removed(const std::string& lane, const std::string& text, uint64
     if (mode_ == Mode::Wait) return;
     if (pos == Compiler::kContinue) comp_.removed(lane, text, now_ms, scratch_);
     else comp_.removed(lane, text, now_ms, pos, rev, scratch_);
+    ship(scratch_);
+}
+
+void PadSource::own(const std::string& seat_lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev) {
+    if (mode_ == Mode::Wait) return;   // in the log with its revision; the fold replays it by author
+    comp_.own(seat_lane, text, now_ms, pos, rev, scratch_);
     ship(scratch_);
 }
 

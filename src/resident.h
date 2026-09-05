@@ -197,6 +197,16 @@ public:
     // Whatever clause is still open is a real final when the stream stops.
     void finish(std::vector<Judgment>& out);
 
+    // The resident's own line, once the document holds it (SPEC 5.1.6 as amended, 6.3.6): decoded
+    // raw on the seat's lane — "\n[SEAT] text", the bytes fusord's own commit makes — the frontier
+    // read and NOTHING judged (the gate half of the law: own words are never judged), and the
+    // manners told what this seat has said, so a resident folded from a document full of its
+    // predecessor's blocks arrives knowing not to repeat them. `lane` is matched to a seat by name,
+    // case-insensitively; an unknown lane is decoded as given and remembered by no seat. The
+    // editor reaches this through the pad (an own-speech percept); the CLI calls it itself.
+    void own_line(const std::string& lane, const std::string& text, uint64_t wall_ms);
+    uint64_t own_lines() const { return own_lines_; }
+
     // THE FLOOR, and why a want outlives its boundary. A judgment fires while the hand is typing —
     // a percept arrives, the clause closes, the seats are probed — so an emission refused at that
     // instant for being inside the floor window would be refused at every instant there ever is,
@@ -293,12 +303,16 @@ private:
     std::vector<Suppressed> supp_;
     std::vector<Abort> aborts_;
     uint64_t emitted_ = 0, suppressed_ = 0, gen_ms_ = 0, aborted_ = 0, deferred_ = 0, seam_probes_ = 0;
+    uint64_t own_lines_ = 0;
     int gen_depth_ = 0;              // inside a generation: judgment is delayed, ingest never is
     std::string last_world_line_;    // the newest thing the world said, for the acceptance test
-    // Own speech waits for the world's line to close before it joins the trunk: a boundary can
-    // fire in the MIDDLE of a percept's words, and a seat's line spliced in there would leave the
-    // rest of that percept running on with no lane prefix — a serve-format drift the tune never
-    // saw (K5 fixed the same hazard the same way; LIFT_MAP_K5 §1).
+    // What the thread still commits to the trunk on its own: the aired prefix of an abort, which
+    // is never a document revision and which no fold could bring back (SPEC 6.4.2.3). It waits for
+    // the world's line to close — a boundary can fire in the MIDDLE of a percept's words, and a
+    // line spliced in there would leave the rest of that percept running on with no lane prefix, a
+    // serve-format drift the tune never saw (K5 fixed the same hazard the same way) — and it is
+    // flushed before every checkpoint. A said line does NOT pass through here since 0.10.2: it
+    // reaches the trunk through the document (own_line), once the editor has really written it.
     std::vector<std::string> pending_commits_;
     // what a seat wanted to say, waiting for the floor. One per seat: a newer boundary supersedes
     // an older want, because the thing worth saying is about the world as it stands.

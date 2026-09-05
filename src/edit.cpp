@@ -1006,10 +1006,14 @@ void commit_emission(HWND h, const EmitRow& r) {
     note_edit(at, 0, ins.size(), false);
     if (g->caret >= at) g->caret += ins.size();
     if (g->anchor >= at) g->anchor += ins.size();
-    // The seat's own words go to the pad, where the self-echo filter drops them at the door: the
-    // mind already committed this line to its trunk itself (SPEC 5.1.6, both halves), and a second
-    // arrival would have it deliberate about interrupting itself.
-    if (g->ingest) g->ingest->typed(seats()[r.seat].name, ins, mono_ms(), at, g->doc.revisions());
+    // The seat's own words go back to the pad through the sanctioned door (kind 's'): the mind
+    // hears its line only now, once the document really holds it, decoded raw on its lane and
+    // judged never (SPEC 5.1.6 as amended, 6.3.6). A line refused above never reaches this point,
+    // so the trunk never hears a line nobody saw. The span is the line's own bytes in the block.
+    if (g->ingest) {
+        const std::string say(r.say);
+        g->ingest->own(seats()[r.seat].name, say, mono_ms(), at + ins.size() - 1 - say.size(), g->doc.revisions());
+    }
     ++g->emit_rows;
     tape_row_at("emit", r.wall_ms, canon::obj({
         { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },

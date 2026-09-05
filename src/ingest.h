@@ -46,7 +46,9 @@ struct Percept {
     std::string lane;
     std::string text;
     uint64_t    wall_ms = 0;
-    char        kind = 'w';   // 'w' typed world · 'd' a deletion · 't' an idle tick
+    char        kind = 'w';   // 'w' typed world · 'd' a deletion · 't' an idle tick · 's' a seat's own
+                              // line, once the document holds it (SPEC 5.1.6 as amended) — never
+                              // compiled live from a seat's lane, which the echo filter drops
     // Where in the document it came from: the byte span [a, b) in the coordinates of revision
     // `rev` (the revision the edit produced). A deletion's span is empty at the point it left;
     // a tick's is the point the pad was at. Judgments inherit these, and the floor rule of
@@ -134,6 +136,13 @@ public:
     // A tick the caller has measured itself — the resume tick (SPEC 5.1.9.2): how long the world
     // went on while the resident was away, told to it before anything that happened meanwhile.
     void tick(uint64_t gap_s, uint64_t now_ms, std::vector<Percept>& out);
+    // A seat's own line, once the document really holds it (SPEC 5.1.6 as amended, 6.3.6): one
+    // percept of kind 's' on the seat's lane carrying the bare line — no `[SEAT] ` prefix, no
+    // newline — with the line's own bytes as its span and the block's revision. The pending
+    // clause is pushed first, so the order things happened is the order the trunk sees them. It
+    // counts in no conservation identity: the bytes are the resident's, not the world's.
+    void own(const std::string& seat_lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev,
+             std::vector<Percept>& out);
     // After a replay whose clock was not this one's: the next gap is measured from now, so the
     // first live percept does not read as a silence the length of the replay's whole history.
     void resync_clock(uint64_t now_ms) { last_percept_ms_ = now_ms; last_input_ms_ = now_ms; }
@@ -228,6 +237,12 @@ public:
     void fold_history_end();
     void fold_end(size_t budget_bytes);
     void tick(uint64_t gap_s, uint64_t now_ms);          // compiled at once (into the fold while folding)
+    // The sanctioned door for the resident's own line (kind 's'), and NOT the echo filter's: that
+    // door drops anything typed on a seat's lane, which is what keeps a spoof out. The editor
+    // calls this once a block has really been written; the fold calls it for a seat-authored
+    // revision (SPEC 6.2.11.3.1). Ignored while the model loads, like everything else: the block
+    // is in the log with its revision, and the fold replays it by author.
+    void own(const std::string& seat_lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev);
     void resync_clock(uint64_t now_ms) { comp_.resync_clock(now_ms); }
     uint64_t fold_shipped() const { return fold_shipped_; }
     uint64_t fold_skipped() const { return fold_skipped_; }

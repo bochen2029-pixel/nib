@@ -38,15 +38,15 @@ rescues that, and the finding gets published beside the laws it bought.
 
 | | |
 |---|---|
-| version | **0.10.1** (the read of 0.10.0's first remediation; see `docs/BACKLOG.md`, first section), branch `main` |
+| version | **0.10.2** (the read of 0.10.0's remediation, in progress; see `docs/BACKLOG.md`, first section), branch `main` |
 | public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 22 commits through this handoff |
 | stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3 — **all green, every falsifier fired at** |
 | next | **Stage 4** — the two switches and the paired record |
-| oracles | `--selftest` **219** · `tools/drive.py` **30** · `tools/drive.py --ai` **65** |
+| oracles | `--selftest` **229** · `tools/drive.py` **30** · `tools/drive.py --ai` **67** |
 
 ```bash
 build.bat                          # /W4 /WX, zero warnings, two gates
-nib.exe --selftest                 # 219 passed, 0 failed        (no model, no GPU)
+nib.exe --selftest                 # 229 passed, 0 failed        (no model, no GPU)
 python tools/drive.py              # 30 passed, 0 failed         (no model, no GPU)
 python tools/drive.py --ai         # 65 passed, 0 failed         (needs the card, ~6 min)
 nib.exe --about                    # the serve pin, the backends by name, the module gate
@@ -154,7 +154,7 @@ model and no card.
 | `src/wire.h/.cpp` | The resident on its own thread inside the window. Two rings out (judgments, emissions), a forming *state*, the floor gate, the checkpoint, `fold_log` and `fold_tape`. |
 | `src/tape.h/.cpp` | The family's append-only hash-chained record: BLAKE2b-256, canonical JSON, six keys a row. Ported from fray, which is glance's, which is REGISTRAR's. Torn-row recovery. Also SHA-256 (the model's hash) and the atomic file helpers. |
 | `src/edit.cpp` | The Win32/GDI window. Every edit goes through `Doc::splice`. Per-monitor DPI, word wrap, the gutter, two status rows, the forming plane, the floor's second gate, block placement, the driver seam. |
-| `src/selftest.cpp` | The oracle: 219 checks, none of which need a model. |
+| `src/selftest.cpp` | The oracle: 229 checks, none of which need a model. |
 | `src/nib.cpp` | The console verbs. |
 | `tools/drive.py` | The window battery: posts messages, reads artefacts, never synthesises input and never looks at the screen. |
 | `tools/snap.py` | Gitignored snapshots with an MD5 manifest (§10). |
@@ -176,9 +176,15 @@ never persisted, the save is atomic, and the tape is durable as it goes.
   establish this property and it survives for every build that does not ask for a mouth.
 - **Percepts are never dropped; judgment may be delayed.** The ring spools rather than drops; the
   spool's own cap is counted loudly. Inside a generation, judgment is delayed and ingest is not.
-- **Own speech is a percept, with no self-exception** — the trunk half (a seat's line is committed
-  on its own lane, or say-it-once is structurally unlearnable) and the gate half (the same line is
-  dropped at the pad's door). Both halves are exercised by one line of text.
+- **Own speech is a percept, with no self-exception, and it reaches the trunk through the
+  document** (0.10.2). A seat's line is committed to the trunk on its own lane, or say-it-once is
+  structurally unlearnable — but only once the editor has really written the block, and never
+  when it refused it: the block comes back through the pad as an own-speech percept (kind `s`),
+  decoded raw on the seat's lane and judged never. The fold attributes by author, so a seat's
+  block folded from the log or the tape is the seat's, not the hand's; the percept carries the
+  block's revision, so a checkpoint never binds before a line the trunk holds. Anything *typed* on
+  a seat's lane is still dropped at the pad's door. The one line the thread commits on its own is
+  an abort's aired prefix, flushed before every checkpoint.
 - **A seat's line waits for the world's line to close** before joining the trunk, because a
   boundary can fire mid-percept and a line spliced in there is a serve-format drift the tune never
   saw.

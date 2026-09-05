@@ -18,31 +18,24 @@ boundaries of memory — and the emission, the abort, the suppression and the fo
 carried the *newest* boundary rather than the want's, so the emit row's dep span was the newest
 clause and not the one the line was about, and the `span-edited` refusal tested the wrong bytes.
 
-- **The fold does not know who wrote what.** `fold_log` ignores `Rev.author` and `fold_tape` never
-  reads the row's `author`; both replay every revision on the hand's lane. A seed or twin fold over
-  a document that already holds `[SKEPTIC] …` blocks feeds the trunk `[bo] [SKEPTIC] …` — the human
-  saying the seat's line — and a restore hits it too, because the rows after the checkpoint include
-  the emissions committed at stop. A serve-format drift the tune never saw, and an authorship error
-  in what the mind perceives. **Design (decided this evening, below): own speech reaches the trunk
-  through the document, as a percept of its own kind, exactly once, live or folded.**
-- **Emissions composed at stop never reach the trunk before the checkpoint** (`Wire::run`'s stop
-  path composes the remaining wants after `finish()` has flushed own speech, then checkpoints), and,
-  worse, **the trunk hears a line the editor refused**: `speak_wants` queues every allowed line for
-  the trunk before the editor's second floor gate has ruled, so a `refused {why: floor}` line — two
-  in the very first driver run — is on the trunk and in the manners' memory while the document
-  never received it. The mind believes it said something nobody saw. Both are the same defect as
-  the one above, and the same design closes all three: the resident's line joins the trunk only
-  when the document has it, carried back through the pad on the seat's lane as an own-speech
-  percept that is decoded raw and never judged; the fold replays seat-authored revisions the same
-  way; a checkpoint's cursor then advances past the block's revision because the percept carries
-  it, so a restore can never replay a line the trunk already holds. What the thread still commits
-  on its own is the aired prefix of an abort, which is never a document revision, flushed before
-  every checkpoint.
-- **A block inserted above the caret is not seen by the compiler's pending span**, so the next
-  keystroke reads as a jump and closes the clause early. Cannot happen while `floor_ms` (2000)
-  exceeds `quiet_ms` (500), because the pending clause was flushed by the quiet before any seat may
-  compose; the own-speech percept above pushes the pending clause first anyway, which closes it for
-  any configuration.
+**Landed in 0.10.2 — own speech through the document** (SPEC 5.1.6 and 6.3.6 as amended,
+6.2.11.3.1). Three findings, one design. The fold did not know who wrote what: `fold_log` ignored
+`Rev.author` and `fold_tape` never read the row's `author`, so a seed or twin fold over a document
+holding `[SKEPTIC] …` blocks fed the trunk `[bo] [SKEPTIC] …`, the human saying the seat's line,
+and a restore did the same for the emissions committed at stop. The trunk heard lines the editor
+refused: `speak_wants` queued every allowed line for the trunk before the second floor gate had
+ruled, so a `refused {why: floor}` line was on the trunk and in the manners' memory while the
+document never received it. And the lines composed at stop never reached the trunk before the
+checkpoint. Now the resident's line joins the trunk only when the document has it, carried back
+through the pad on the seat's lane as an own-speech percept (kind `s`) that is decoded raw and
+never judged; both folds attribute by author and replay a seat's block the same way, prefix and
+newlines off; the percept carries the block's revision, so a checkpoint's cursor is never before
+a line the trunk holds and a restore cannot replay one twice; the CLI feeds its own lines back
+itself; the one line the thread still commits on its own is an abort's aired prefix, flushed
+before every checkpoint. The compiler pushes the pending clause before a seat's line, which also
+closes the "block inserted above the caret" case for any `floor_ms`/`quiet_ms`. Ten checks in
+`--selftest` with no model; the driver asserts an own-speech row on the tape and no percept on
+the hand's lane beginning with a seat's tag, live or folded.
 - **SPEC 6.2.11.3 promises a refusal when the checkpoint's tape row is in no tape;** `fold_on_ready`
   degrades to a diff-only fold with an `err` field on the `fold` row instead. `decide_restore`
   should walk the tapes before the model loads and refuse into the twin, as the clause says.

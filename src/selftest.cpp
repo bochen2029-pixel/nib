@@ -1384,6 +1384,102 @@ int run_selftest() {
         check(one.held() == 1 && one.find(7, rev, a, b) && a == 40 && b == 60, "three seats of one boundary occupy one slot");
     }
 
+    section("own speech through the document - the sanctioned door, and the fold attributing by author");
+    {
+        // Through 0.10.1 the thread committed its own line to the trunk before the editor had
+        // ruled, and the fold replayed every revision on the hand's lane, so a seat's block came
+        // back as "[bo] [SKEPTIC] ...". Now a seat's line is a percept of its own kind, made only
+        // when the document holds it, and the fold attributes by author (SPEC 5.1.6 amended,
+        // 6.2.11.3.1). None of this needs a model: the resident's half is one raw decode.
+        {
+            Compiler c;
+            std::vector<Percept> out;
+            c.typed("bo", "The Pacific is", 1000, 0, 1, out);
+            c.own("SKEPTIC", "The Pacific is the largest ocean.", 1500, 20, 2, out);
+            check(out.size() == 2 && out[0].kind == 'w' && out[0].text == "The Pacific is" && out[1].kind == 's' && out[1].lane == "SKEPTIC",
+                  ssprintf("a seat's line follows the pending clause as a percept of kind s (%zu percepts)", out.size()));
+            check(out.size() == 2 && out[1].a == 20 && out[1].b == 20 + out[1].text.size() && out[1].rev == 2,
+                  "carrying the block's revision and the span of the line's own bytes");
+            check(c.typed_in() == c.typed_out() && c.typed_in() == 14, "and the world's arithmetic does not count the resident's bytes");
+        }
+        {
+            auto srcp = std::make_unique<PadSource>();
+            register_seats(*srcp);
+            srcp->typed("SKEPTIC", "typed on a seat's lane", 1000);
+            srcp->own("SKEPTIC", "said through the door", 1001, 0, 1);
+            check(srcp->echoes() == 1 && srcp->pushed() == 1,
+                  ssprintf("typed on a seat's lane is still an echo (%llu); own is a percept (%llu pushed)",
+                           (unsigned long long)srcp->echoes(), (unsigned long long)srcp->pushed()));
+            auricle::fusor::Delta d{};
+            PerceptMeta m{};
+            const bool got = srcp->poll(d);
+            srcp->poll_meta(m);
+            check(got && std::string(d.lane) == "SKEPTIC" && m.kind == 's' && std::string(d.payload, d.len) == "said through the door",
+                  "and off the ring it rides the seat's lane with kind s in lockstep");
+        }
+        {
+            // the fold from the log: a seat-authored revision comes back as own speech with its
+            // prefix and newline stripped; a literal prefix typed by the hand stays the hand's
+            Doc doc;
+            std::string err;
+            doc.splice(0, 0, "The Pacific is the smallest ocean.\n", "bo", err);
+            const std::string block = "[SKEPTIC] The Pacific is the largest ocean, not the smallest.\n";
+            const bool applied = doc.apply(make_splice(doc.text(), (int64_t)doc.size(), 0, block), "SKEPTIC", err);
+            doc.splice((int64_t)doc.size(), 0, "[SKEPTIC] a spoof, typed by the hand.\n", "bo", err);
+            auto srcf = std::make_unique<PadSource>();
+            register_seats(*srcf);
+            const size_t revs = fold_log(doc, *srcf, "bo");
+            srcf->flush(mono_ms());
+            int own = 0, spoof_w = 0, seat_w = 0;
+            std::string own_text;
+            size_t own_a = 0, own_b = 0;
+            for (const auto& p : srcf->take_shipped()) {
+                if (p.kind == 's') { ++own; own_text = p.text; own_a = p.a; own_b = p.b; }
+                if (p.kind == 'w' && p.text.find("a spoof") != std::string::npos) ++spoof_w;
+                if (p.kind == 'w' && p.text.find("largest ocean") != std::string::npos) ++seat_w;
+            }
+            check(applied && revs == 3 && own == 1 && own_text == "The Pacific is the largest ocean, not the smallest.",
+                  ssprintf("the fold replays the seat's block as its own speech, prefix and newline off (%d): \"%s\"", own, own_text.c_str()));
+            check(own_a == 35 + 10 && own_b == own_a + own_text.size(), ssprintf("on the line's own bytes in the document [%zu,%zu)", own_a, own_b));
+            check(seat_w == 0, "and never as the hand's words");
+            check(spoof_w == 1, "while a literal [SKEPTIC] typed by the hand stays the hand's");
+        }
+        {
+            // the same through the tape's rows, which carry the author
+            const std::string path = scratch_path("fold-own.jsonl");
+            DeleteFileA(path.c_str());
+            Tape t;
+            std::string e;
+            t.open(path, "nib:fold-own", {}, e);
+            t.append("session_open", 0, canon::obj({ { "doc", canon::str("x") } }));
+            const std::string bound = t.head();
+            const std::string cs1 = make_splice("", 0, 0, "Hello world.\n");
+            t.append("changeset", 10, canon::obj({ { "rev", "1" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str(cs1) } }));
+            const std::string cs2 = make_splice("Hello world.\n", 13, 0, "[SPEAKER] Hello yourself.\n");
+            t.append("changeset", 900, canon::obj({ { "rev", "2" }, { "author", canon::str("SPEAKER") }, { "kind", canon::str("a") }, { "cs", canon::str(cs2) } }));
+            t.close();
+            std::vector<TapeRow> rows;
+            const bool found = rows_after(path, bound, rows, e);
+            auto src = std::make_unique<PadSource>();
+            register_seats(*src);
+            src->fold_history_begin();
+            std::string text;
+            uint64_t clock = 1000;
+            const size_t n = fold_tape(rows, text, *src, "bo", clock);
+            src->fold_history_end();
+            src->fold_end(1u << 20);
+            src->flush(clock + 1000);
+            int own = 0, hand_said_seat = 0;
+            std::string own_lane, own_text;
+            for (const auto& p : src->take_shipped()) {
+                if (p.kind == 's') { ++own; own_lane = p.lane; own_text = p.text; }
+                if (p.kind == 'w' && p.text.find("[SPEAKER]") != std::string::npos) ++hand_said_seat;
+            }
+            check(found && n == 2 && own == 1 && own_lane == "SPEAKER" && own_text == "Hello yourself." && hand_said_seat == 0,
+                  ssprintf("the tape's fold attributes by author too: %d own line on %s, %d on the hand's lane", own, own_lane.c_str(), hand_said_seat));
+        }
+    }
+
     section("refusals");
     {
         std::string err;

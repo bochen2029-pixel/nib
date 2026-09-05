@@ -934,3 +934,33 @@
   is the same law at the wrong grain. The fix is to start the clock at the percept, so a `t` means
   the decode itself stalled; it changes the boundary population and not a margin, and the CLI's
   margins run is the measurement to take before and after.
+
+## 2026-09-05 (evening) · 0.10.2 - own speech reaches the trunk through the document
+
+- The design of the "read of 0.10.0" entry, built. A seat's line is a percept of its own kind
+  (`s`) on the seat's lane, made by the pad's sanctioned door (`PadSource::own`) only when the
+  editor has really written the block; the resident decodes it raw - "\n[SEAT] line", the bytes
+  fusord's own commit makes - reads the frontier, judges nothing, and tells the manners what the
+  seat said. Both folds attribute by author: a seat-authored revision is replayed through the same
+  door with its `[SEAT] ` prefix and newlines stripped, and a literal prefix typed by the hand
+  stays the hand's. The percept carries the block's revision, so the cursor a checkpoint binds to
+  is never before a line the trunk holds. `speak_wants` no longer queues the line for the trunk;
+  the CLI feeds each emission back itself; `pending_commits_` holds only an abort's aired prefix
+  now, and `checkpoint` flushes it first.
+- Ten checks with no model, and two in the driver on the main case's tape: at least one
+  own-speech percept row, and no percept on the hand's lane beginning with a seat's tag - the
+  falsifier for "the human saying the seat's line", fired at across a seed, a restore whose fold
+  replays the lines committed at stop, and a twin.
+- Green: --selftest 229/0; drive.py 30/0, three runs; drive.py --ai 67/0 on the first run, the
+  card going 8463 -> 15536 -> 8694 MiB with llama-server resident; five own-speech rows on the
+  tape, the first on SKEPTIC; zero rows of the hand saying a seat's line; the un-say on the first
+  attempt, +5.06 -> -1.76 margin_flipped at boundary 5, the want's own.
+- The CLI on tests/margins.txt with --emit: SKEPTIC +5.73 "The Pacific is actually the largest
+  ocean, not the smallest - that contradicts what we established."; SPEAKER +4.32 "Hold off until
+  Monday - shipping Friday risks catching the weekend bugs."; SENTINEL +5.26 "Hold on - dropping
+  the users table is irreversible without a tested backup; don't."; two repeats held by the
+  manners; 3 own lines heard on the trunk; 11 boundaries and 33 probes, as before the change. The
+  SPEAKER's line is not the one 2a recorded, and the SENTINEL's margin moved from +5.06 to +5.26:
+  the CLI's boundary population is timing-dependent through the flush clock above, so the boundary
+  a want arises at, and therefore the fork the line is sampled from, moves between runs. The next
+  commit takes that clock, and the CLI's run should become reproducible with it.

@@ -347,6 +347,16 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         ++deltas_;
         const std::string lane(d.lane);
         const std::string text(d.payload, d.len);
+        if (m.kind == 's') {
+            // The resident's own line, confirmed by the document: decoded raw on its lane and
+            // judged never (SPEC 5.1.6 as amended). No span opens — a seat's block is not a clause
+            // of the world's — and the cursor advances past the block's revision, so a checkpoint
+            // can never bind before a line the trunk holds (6.2.11.3.1).
+            res.own_line(lane, text, m.wall_ms);
+            if (m.rev > cursor_rev_.load(std::memory_order_relaxed)) cursor_rev_.store(m.rev, std::memory_order_release);
+            publish();
+            return true;
+        }
         if (!clause_open && !lane.empty()) { first_id = m.id; span_a = m.a; clause_open = true; }
         if (!lane.empty()) { last_id = m.id; span_b = m.b; }
         js.clear();
@@ -454,22 +464,56 @@ DiffSpan diff_texts(const std::string& before, const std::string& after) {
 }
 
 // ---- the fold -------------------------------------------------------------------------------
+static bool ieq(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return false;
+    }
+    return true;
+}
+
+// A seat-authored insertion is that seat's own speech (SPEC 6.2.11.3.1): the block's leading
+// newline (the one that keeps it off the end of a human's line), its `[SEAT] ` prefix and its
+// trailing newline come off, so what the trunk receives is the bytes the live commit made, on the
+// seat's lane and never the hand's. The span handed on is the line's own bytes in the document.
+static void replay_own(PadSource& src, const std::string& author, const std::string& text, uint64_t ms, size_t at, uint64_t rev) {
+    size_t s = 0, e = text.size();
+    while (s < e && text[s] == '\n') ++s;
+    while (e > s && text[e - 1] == '\n') --e;
+    if (s < e && text[s] == '[') {
+        const size_t close = text.find("] ", s);
+        if (close != std::string::npos && close + 2 <= e && ieq(text.substr(s + 1, close - s - 1), author)) s = close + 2;
+    }
+    if (s >= e) return;
+    src.own(author, text.substr(s, e - s), ms, at + s, rev);
+}
+
 // Walk one changeset against the text it was applied to, telling the pad what left and what
 // arrived, at which positions, in order. A splice is one removal and one insertion; a general
-// changeset is several, and each is reported where it happened.
+// changeset is several, and each is reported where it happened. The fold attributes by author:
+// a revision a seat made is that seat's own speech; every other author is the hand's lane.
 static void replay_changeset(const std::string& cs, const std::string& before, const std::string& lane,
-                             uint64_t ms, uint64_t rev, PadSource& src) {
+                             const std::string& author, uint64_t ms, uint64_t rev, PadSource& src) {
     Unpacked u;
     std::string err;
     if (!unpack(cs, u, err)) return;
     std::vector<Op> ops;
     if (!deserialize_ops(u.ops, ops, err)) return;
+    const bool own = src.is_seat(author);
     size_t old_at = 0, new_at = 0, bank = 0;
     for (const Op& op : ops) {
         const size_t n = (size_t)op.chars;
         if (op.opcode == '=') { old_at += n; new_at += n; }
         else if (op.opcode == '-') { src.removed(lane, before.substr(old_at, n), ms, new_at, rev); old_at += n; }
-        else if (op.opcode == '+') { src.typed(lane, u.char_bank.substr(bank, n), ms, new_at, rev); bank += n; new_at += n; }
+        else if (op.opcode == '+') {
+            if (own) replay_own(src, author, u.char_bank.substr(bank, n), ms, new_at, rev);
+            else src.typed(lane, u.char_bank.substr(bank, n), ms, new_at, rev);
+            bank += n;
+            new_at += n;
+        }
     }
 }
 
@@ -478,7 +522,7 @@ size_t fold_log(const Doc& doc, PadSource& src, const std::string& lane) {
     size_t n = 0;
     for (const Rev& r : doc.log()) {
         src.idle(r.ms);   // the quiet before this edit, exactly as the timer would have noticed it
-        replay_changeset(r.cs, text, lane, r.ms, n + 1, src);
+        replay_changeset(r.cs, text, lane, r.author, r.ms, n + 1, src);
         std::string next, err;
         if (!apply_to_text(r.cs, text, next, err)) break;
         text = std::move(next);
@@ -500,6 +544,7 @@ size_t fold_tape(const std::vector<TapeRow>& rows, std::string& text, PadSource&
         if (r.kind != "changeset") continue;
         const std::string cs = canon::unstr(canon::field(r.body, "cs"));
         const std::string kind = canon::unstr(canon::field(r.body, "kind"));
+        const std::string author = canon::unstr(canon::field(r.body, "author"));
         const uint64_t rev = strtoull(canon::field(r.body, "rev").c_str(), nullptr, 10);
         if (cs.empty()) continue;
         if (kind == "o") {
@@ -517,7 +562,7 @@ size_t fold_tape(const std::vector<TapeRow>& rows, std::string& text, PadSource&
             text = std::move(opened);
         } else {
             src.idle(t);   // the quiet before this edit, from the row's own clock
-            replay_changeset(cs, text, lane, t, rev, src);
+            replay_changeset(cs, text, lane, author, t, rev, src);
             std::string next, err;
             if (!apply_to_text(cs, text, next, err)) break;   // a row that does not fit: the rest cannot follow
             text = std::move(next);

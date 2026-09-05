@@ -283,10 +283,13 @@ int do_resident(int argc, char** argv) {
         // The CLI has no hand to yield the floor: nobody is typing, so the floor is always open and
         // a want is composed the moment it exists. In the window the wire waits for the pause.
         res.speak_wants();
-        // what it said, and what the manners would not let it say twice
-        for (const Emission& e : res.take_emissions())
+        // what it said, and what the manners would not let it say twice. The CLI has no document
+        // for a line to come back through, so it feeds each line back itself (SPEC 6.3.6).
+        for (const Emission& e : res.take_emissions()) {
             printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
                    (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);
+            res.own_line(seats()[e.seat].name, e.say, e.wall_ms);
+        }
         for (const Suppressed& s : res.take_suppressed())
             printf("  %-8s %+7.2f  --  suppressed (%s%s%s): \"%s\"\n", seats()[s.seat].name,
                    (double)s.margin, s.why.c_str(), s.by.empty() ? "" : " by ", s.by.c_str(), s.say.c_str());
@@ -294,9 +297,11 @@ int do_resident(int argc, char** argv) {
     }
     res.finish(js);
     res.speak_wants();
-    for (const Emission& e : res.take_emissions())
+    for (const Emission& e : res.take_emissions()) {
         printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
                (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);
+        res.own_line(seats()[e.seat].name, e.say, e.wall_ms);
+    }
     for (const Suppressed& s : res.take_suppressed())
         printf("  %-8s %+7.2f  --  suppressed (%s%s%s): \"%s\"\n", seats()[s.seat].name,
                (double)s.margin, s.why.c_str(), s.by.empty() ? "" : " by ", s.by.c_str(), s.say.c_str());
@@ -307,9 +312,11 @@ int do_resident(int argc, char** argv) {
            (unsigned long long)res.boundaries(), (unsigned long long)res.coarsened(),
            (unsigned long long)res.probes());
     if (rc.emit)
-        printf("%llu of %llu probes wanted to speak; %llu said something, %llu were held by the manners\n",
+        printf("%llu of %llu probes wanted to speak; %llu said something, %llu were held by the manners; "
+               "%llu own lines heard on the trunk\n",
                (unsigned long long)res.wanted(), (unsigned long long)res.probes(),
-               (unsigned long long)res.emitted(), (unsigned long long)res.suppressed());
+               (unsigned long long)res.emitted(), (unsigned long long)res.suppressed(),
+               (unsigned long long)res.own_lines());
     else
         printf("%llu of %llu probes wanted to speak; none could - no sampler exists without --emit\n",
                (unsigned long long)res.wanted(), (unsigned long long)res.probes());

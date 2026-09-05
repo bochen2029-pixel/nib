@@ -594,6 +594,9 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
 bool Resident::checkpoint(const std::string& path, std::string& err, uint64_t& bytes) {
     bytes = 0;
     if (!p_ || !p_->ctx) { err = "no resident to checkpoint"; return false; }
+    // An aired prefix still waiting for the world's line to close lands first, or the saved trunk
+    // would not hold what the seat really said and no fold could bring it back (SPEC 6.4.2.3).
+    if (!failed() && !window_full_) flush_own_speech();
     const std::string tmp = path + ".tmp", prev = path + ".prev";
     DeleteFileA(tmp.c_str());
     bytes = llama_state_seq_save_file(p_->ctx, tmp.c_str(), TRUNK, trunk_toks_.data(), trunk_toks_.size());
@@ -944,10 +947,51 @@ void Resident::speak_wants(Seam* seam) {
         if (!allowed_to_say(m, w.boundary, w.margin, e.say, w.clause)) continue;
         emissions_.push_back(e);
         ++emitted_;
-        // and because it REALLY said it, it is part of the world: the line joins the trunk on the
-        // seat's own lane once the world's current line has closed (SPEC 5.1.6, the trunk half).
-        pending_commits_.push_back(std::string("\n[") + kSeats[m].name + "] " + e.say);
+        // The line is NOT committed to the trunk here (it was, through 0.10.1). It is said only
+        // when the editor has really written it, and the editor may still refuse it at the second
+        // floor gate; so it comes back through the document as an own-speech percept, and the
+        // trunk hears it then, once, live or folded (SPEC 5.1.6 as amended; own_line). The CLI,
+        // which has no editor, calls own_line itself after each emission.
     }
+}
+
+static bool ieq(const std::string& a, const char* b) {
+    size_t i = 0;
+    for (; i < a.size() && b[i]; ++i) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return false;
+    }
+    return i == a.size() && b[i] == 0;
+}
+
+static uint64_t count_words(const std::string& text);
+
+void Resident::own_line(const std::string& lane, const std::string& text, uint64_t) {
+    if (!ctx_) return;
+    if (failed() || window_full_) { dropped_words_ += count_words(text); return; }
+    flush_own_speech();   // an aired prefix waiting for the line to close lands first, in order
+    std::string line = text;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    if (line.empty()) return;
+    int m = -1;
+    for (int i = 0; i < 3; ++i) if (ieq(lane, kSeats[i].name)) m = i;
+    const std::string name = m >= 0 ? std::string(kSeats[m].name) : lane;
+    // the bytes fusord's own commit makes: "\n[SEAT] line", raw, on the trunk, judged never
+    const auto t = tk(p_->vocab, std::string("\n[") + name + "] " + line, false);
+    if (!room_for(t.size())) { dropped_words_ += count_words(line); return; }
+    if (!decode(t, TRUNK, npast_, true)) return;
+    npast_ += (long long)t.size();
+    read_frontier();
+    ++own_lines_;
+    if (m < 0) return;
+    // The manners' memory. Live, allowed_to_say already knows this line and the clause it
+    // answered, so only the clock moves; folded, the seat learns the line here and the clause is
+    // unknown, and a later world line that accepts it resolves it in judge() as it would live.
+    if (last_say_[m] != line) { last_say_[m] = line; last_clause_[m].clear(); cond_open_[m] = true; resolved_[m] = false; }
+    last_say_i_[m] = boundaries_;
+    last_say_ms_[m] = wall_ms();
 }
 
 bool Resident::ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out) {
@@ -985,10 +1029,11 @@ static uint64_t count_words(const std::string& text) {
     return n;
 }
 
-// The seats' own lines onto the trunk, once the world's line has closed. A seat's words are part
-// of the world it perceives — without this, say-it-once is structurally unlearnable and one catch
-// re-fires at every boundary (measured in the estate before nib existed). The self-echo filter at
-// the pad's door (SPEC 5.1.6, the gate half) is what keeps the same line from arriving twice.
+// What the thread commits to the trunk on its own, once the world's line has closed: since 0.10.2
+// only the aired prefix of an abort (SPEC 6.4.2.3), which is never a revision. A said line reaches
+// the trunk through the document instead (own_line) — a seat's words are part of the world it
+// perceives, and without them say-it-once is structurally unlearnable and one catch re-fires at
+// every boundary (measured in the estate before nib existed).
 void Resident::flush_own_speech() {
     while (!pending_commits_.empty()) {
         const std::string line = pending_commits_.front();

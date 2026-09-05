@@ -322,6 +322,19 @@ half (2026-09-04): the resident's own emission MUST be committed to the trunk on
 at ten consecutive boundaries, and say-it-once is structurally unlearnable ("L-GATE has no self
 exception"). nib is a room, not `--pure`; the tape says so.
 
+> **AMENDED 2026-09-05 (0.10.2): one percept satisfies both halves.** Through 0.10.1 the thread
+> committed its own line to the trunk itself, before the editor had ruled at the second floor gate
+> (6.3.2.3) — so the trunk heard lines the document never received (`floor`, twice in the first
+> driver run), never heard the lines composed at stop, and the fold, which attributed nothing,
+> replayed a seat's block on the hand's lane as `[bo] [SKEPTIC] …`. Now **the resident's line
+> reaches its trunk the way everything else does, through the document**: once the editor has
+> really written the block, the pad compiles an own-speech percept (kind `s`) on the seat's lane,
+> the resident decodes it raw on that lane — the bytes fusord's own commit makes — and judges
+> nothing. The GATE half is "own words are never judged", and it holds; the TRUNK half is
+> satisfied by the same percept. Exactly once, live or folded, because a block is one revision and
+> the fold attributes by author (6.2.11.3.1). Anything fed on a seat's lane through the ordinary
+> door (`typed`) is still dropped as an echo.
+
 5.1.7 The compiler MUST chunk at **495 bytes**, and a chunk boundary MUST NOT split a UTF-8
 sequence or, where the text allows it, a word.
 
@@ -587,6 +600,16 @@ and not as a new document. Whatever still differs from the document as it stands
 last. A digest in none of the tapes is a refusal: the tape was replaced, and a checkpoint bound to
 it cannot be trusted.
 
+6.2.11.3.1 **The fold attributes by author [BUILT 2026-09-05, 0.10.2].** Both folds — the log's and
+the tape's — replay a revision on the lane of the hand that made it. A revision whose author is a
+seat is replayed as that seat's own speech (5.1.6, amended): the `[SEAT] ` prefix and the block's
+newlines are stripped, so the trunk receives the bytes the live commit would have made, and it is
+never on the hand's lane. A human who types a literal `[SKEPTIC] ` is still the human (the revision's
+author is the hand), which is the spoof the review's §5.7 accepted. Because an own-speech percept
+carries the block's revision, the cursor a checkpoint binds to is never before a line the trunk
+holds, so a restore cannot replay one twice; and the aired prefix of an abort, which the thread
+commits itself and which is never a revision, is flushed before every checkpoint.
+
 6.2.11.4 **When it is taken.** At switch-off and at close, on the way out, after the thread has
 drained the ring and judged the open clause; and while running, at most every five minutes and
 only when the world is quiet — two seconds since the last keystroke, nothing on the ring, nothing
@@ -656,6 +679,16 @@ prefix, a serve-format drift the tune never saw. In the document the same line r
 is dropped by the self-echo filter at the door (5.1.6, the gate half), because the mind has already
 heard itself once.
 
+> **AMENDED 2026-09-05 (0.10.2): the line reaches the trunk through the document.** The thread no
+> longer commits its own line. When the editor has written the block — and not when it refused it
+> with `floor`, `span-edited` or `span-unknown` — the pad compiles an own-speech percept (kind `s`)
+> on the seat's lane, pushing the hand's pending clause first so the order things happened is the
+> order the trunk sees them, and the resident decodes it raw and judges nothing. The world's line
+> has closed by construction: the floor opens only after `floor_ms` of stillness, `quiet_ms` is
+> shorter, and in the fold `idle` runs on each revision's own clock before it. What the thread
+> still commits on its own is the aired prefix of an abort (6.4.2.3), which is never a revision.
+> The CLI, which has no editor, feeds each emission back itself (`--resident --emit`).
+
 6.3.4 **[SPECIFIED, from K5's seam, 2026-09-05]** Stage 2 lifts the seam and not the 08-12 blind
 window: intake is drained after every generated token; a percept that lands mid-sentence is
 ingested at once and its judgment deferred, never dropped; when a whole percept has landed the
@@ -699,7 +732,10 @@ timer.
 6.4.2.3 **What reached the surface reaches the trunk, with a marker.** A seat that was cut off
 really did say the part that was rendered, so that much is committed on its lane followed by ` —`,
 or a truncated line would read as a whole short one and be repeated as one. **[BET]** if seats are
-observed re-firing *because of* the marker, drop the marker and keep only the record.
+observed re-firing *because of* the marker, drop the marker and keep only the record. Since 0.10.2
+this is the one line the thread commits to the trunk on its own, because an aired prefix is never
+a document revision and no fold could bring it back; it waits for the world's line to close, and it
+is flushed before every checkpoint so the saved trunk holds it.
 
 6.4.3 `Ctrl+S` during formation MUST write the committed document only. Reflex partials never
 persist, enforced by the file format and not by a code path. **[BUILT, and stronger than the
