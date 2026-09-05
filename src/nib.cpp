@@ -40,9 +40,10 @@ const char* kUsage =
     "  nib --resident FILE [opts]      run the mind over it; print what each seat wanted\n"
     "        --model P --ctx N --gpu-layers N --all --verbose --allow-cpu   (needs the GPU)\n"
     "        --script   FILE is a script: a line is typed; '- text' is removed; '# N' is N s of quiet\n"
+    "        --emit     LET IT SPEAK: every seat whose margin clears zero composes one sentence\n"
     "\n"
-    "The resident computes hold/emit and records it. It cannot speak. In the window, Ctrl+Shift+A\n"
-    "switches it on and off; off unloads the model.\n";
+    "Without --emit the resident computes hold/emit and records it, and no sampler exists in the\n"
+    "process. In the window, Ctrl+Shift+A switches it on and off; off unloads the model.\n";
 
 int do_unpack(const std::string& cs) {
     Unpacked u;
@@ -203,6 +204,7 @@ int do_resident(int argc, char** argv) {
         else if (f == "--allow-cpu") rc.allow_cpu = true;
         else if (f == "--all") show_all = true;
         else if (f == "--script") script = true;
+        else if (f == "--emit") rc.emit = true;
         else if (path.empty()) path = f;
     }
     if (path.empty()) { fprintf(stderr, "nib: --resident needs a file\n"); return 2; }
@@ -278,17 +280,35 @@ int do_resident(int argc, char** argv) {
             printf("  %-8s %+7.2f  b=%.2f %c  %s\n", seats()[j.seat].name, (double)j.margin,
                    (double)j.bscore, j.reason, j.clause.c_str());
         }
+        // what it said, and what the manners would not let it say twice
+        for (const Emission& e : res.take_emissions())
+            printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
+                   (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);
+        for (const Suppressed& s : res.take_suppressed())
+            printf("  %-8s %+7.2f  --  suppressed (%s%s%s): \"%s\"\n", seats()[s.seat].name,
+                   (double)s.margin, s.why.c_str(), s.by.empty() ? "" : " by ", s.by.c_str(), s.say.c_str());
         if (res.failed() || res.window_full()) break;
     }
     res.finish(js);
+    for (const Emission& e : res.take_emissions())
+        printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
+               (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);
+    for (const Suppressed& s : res.take_suppressed())
+        printf("  %-8s %+7.2f  --  suppressed (%s%s%s): \"%s\"\n", seats()[s.seat].name,
+               (double)s.margin, s.why.c_str(), s.by.empty() ? "" : " by ", s.by.c_str(), s.say.c_str());
     const uint64_t elapsed = auricle::fusor::now_ms() - r0;
 
     printf("\n%zu percepts · %llu words · %llu ticks · %llu boundaries (%llu coarsened) · %llu probes\n",
            ps.size(), (unsigned long long)res.words(), (unsigned long long)res.ticks(),
            (unsigned long long)res.boundaries(), (unsigned long long)res.coarsened(),
            (unsigned long long)res.probes());
-    printf("%llu of %llu probes wanted to speak; none could - Stage 1b has no emit path\n",
-           (unsigned long long)res.wanted(), (unsigned long long)res.probes());
+    if (rc.emit)
+        printf("%llu of %llu probes wanted to speak; %llu said something, %llu were held by the manners\n",
+               (unsigned long long)res.wanted(), (unsigned long long)res.probes(),
+               (unsigned long long)res.emitted(), (unsigned long long)res.suppressed());
+    else
+        printf("%llu of %llu probes wanted to speak; none could - no sampler exists without --emit\n",
+               (unsigned long long)res.wanted(), (unsigned long long)res.probes());
     if (res.boundaries())
         printf("probe %.0f ms per boundary (3 seats) · %llu ms probing of %llu ms wall · "
                "%d tokens of context used\n",

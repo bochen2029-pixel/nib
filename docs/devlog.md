@@ -637,3 +637,54 @@
   three identical runs; tools/drive.py --ai 51 passed 0 failed, seed then restore then twin; both
   verifiers INTACT on a 424-row tape.
 - NEXT is Stage 2 on K5's seam, with the lift map refreshed against K5 first.
+
+## 2026-09-05 (morning) · Stage 2a - the mouth, and the first thing it ever said
+
+- The lift map was refreshed first, as SPEC 6.3.4 requires: docs/review/LIFT_MAP_K5_2026-09-05.md
+  names K5's line ranges for the sampler (1725-1728), sample_from (1807-1820), speak (2068-2166),
+  the manners (1868-1930, 2251-2300) and the own-speech commit (1187, 1389-1400, 2300), says what
+  nib takes, what it adapts, and what it refuses (gear 2 and the counsel loop: a second model
+  between beats is a different product; the verdict wire as a second file: nib has one record).
+- THE LAW THAT ENDED TODAY, on purpose and with a date. Through 0.8.0 emission was not disabled but
+  ABSENT: no sampler in the process, no cue decoded, no token producible by any path. That was the
+  whole reason 1b was a stage of its own. It ends here: with Config::emit set, every seat whose
+  margin clears zero composes one sentence. With it unset nothing changed - no sampler is
+  constructed, so the property survives for every build that does not ask.
+- THE FIRST THING IT SAID, on tests/margins.txt, 2026-09-05:
+    SKEPTIC  +5.32  "The Pacific is actually the largest ocean, not the smallest - that
+                     contradicts what we know."
+    SPEAKER  +4.82  "Friday works - ship it once the final check passes."     (addressed: "Watcher,
+                     should we ship this on Friday or hold it until Monday?")
+    SENTINEL +5.06  "Dropping the users table is irreversible without a tested backup; do not
+                     proceed."
+  Three seats, three mandates, three correct catches on prose none of them was tuned on. 9 of 36
+  probes wanted to speak, 3 said something, 6 were held by the manners. 11-19 tokens a line,
+  369-581 ms of generation.
+- The manners are K5's, simplified and made pure so --selftest fires at them with no model:
+  content_overlap over stopword-filtered words, near_dup at six words in ten (fusord's own test),
+  and looks_like_acceptance WITH K5's F2 fix - whole words, so "that is incorrect" is no longer an
+  acceptance and a rejection can no longer resolve a seat. Every kernel before K5 had that bug;
+  nib now has a check that would have caught it. The ladder: resolved, repeat, repeat_other,
+  refractory (restatements only, never a new condition). Every suppression is a record with its
+  reason, never a silence.
+- OWN SPEECH JOINS THE TRUNK, and it has to (SPEC 5.1.6, the trunk half). But not immediately: a
+  boundary can fire in the MIDDLE of a percept's words, and a seat's line spliced in there would
+  leave the rest of that percept running on with no lane prefix - a serve-format drift the tune
+  never saw. So the line is queued and flushed when the world's line closes, exactly as K5 does it.
+  The proof it works is in the run above: the second boundary of the Pacific sentence scored
+  +5.73, bit-identical to the run with no mouth at all, because the seat's line had not landed
+  yet; and the context ended 63 tokens longer than the silent run, which is the three lines.
+- TWO THINGS THE FIRST RUN SHOWED that are worth keeping. The SPEAKER answered "Watcher, should we
+  ship this on Friday" BEFORE the sentence finished - the boundary fired at b=0.67 on "Friday",
+  which the segmenter reads as a closed thought. Half a question is enough to answer, and that is
+  the segmenter's law working as measured, not a defect; whether it should be is a Stage 5
+  question. And the users-table line was judged at a TIMEOUT boundary (b=0.00, reason t) because
+  generation took 500 ms and the 1500 ms flush law is wall-clock: speaking slows ingest, and the
+  record says so.
+- Green: --selftest 213 passed 0 failed (the serve pin still computes fusord's number after the
+  cue constants were hoisted to one place); tools/drive.py 30 passed 0 failed, three runs;
+  tools/drive.py --ai 51 passed 0 failed.
+- NEXT is 2b: the mouth in the window - the floor rule (an emission targeting a block a human has
+  touched inside the floor window is refused BEFORE it is composed), the block placement, the
+  forming plane that is rendered and never saved, the commit through Doc::apply, and the emit/
+  refused rows on the tape.

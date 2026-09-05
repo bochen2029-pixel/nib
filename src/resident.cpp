@@ -47,6 +47,19 @@ static const Seat kSeats[3] = {
                  "missed"},
 };
 
+// The probe frame and the speak-cue frame, hoisted to constants so that the hash, the probe and
+// (since Stage 2) the mouth all read the same bytes from one place. Hoisting changes the source
+// and not one byte of what is hashed or decoded; `serve_hash()` still computes fusord's pin, and
+// `--selftest` fails if it ever does not.
+static const char* PROBE_A = "\n[";
+static const char* PROBE_B = " — ";
+static const char* PROBE_C = "]\nwatcher:";
+static const char* CUE_A   = "<|im_end|>\n<|im_start|>user\nYou are the ";
+static const char* CUE_B   = ". ";
+static const char* CUE_C   = ". You chose to speak about what you just perceived in the stream. "
+                             "Give your one-sentence line now — no preamble."
+                             "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+
 const Seat* seats() { return kSeats; }
 size_t seat_count() { return 3; }
 
@@ -66,13 +79,112 @@ uint64_t serve_hash() {
     uint64_t h = 1469598103934665603ull;
     h = fnv1a(h, SEED_SYS); h = fnv1a(h, SEED_EXAMPLES); h = fnv1a(h, SEED_OPEN);
     for (const auto& m : kSeats) { h = fnv1a(h, m.name); h = fnv1a(h, m.mandate); }
-    h = fnv1a(h, "\n[");  h = fnv1a(h, " — ");  h = fnv1a(h, "]\nwatcher:");   // the probe frame
-    h = fnv1a(h, "<|im_end|>\n<|im_start|>user\nYou are the ");                // the cue frame
-    h = fnv1a(h, ". ");
-    h = fnv1a(h, ". You chose to speak about what you just perceived in the stream. "
-                 "Give your one-sentence line now — no preamble."
-                 "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
+    h = fnv1a(h, PROBE_A); h = fnv1a(h, PROBE_B); h = fnv1a(h, PROBE_C);   // the probe frame
+    h = fnv1a(h, CUE_A);   h = fnv1a(h, CUE_B);   h = fnv1a(h, CUE_C);     // the cue frame
     return h;
+}
+
+// ---- the manners, pure ------------------------------------------------------------------------
+// Lowercase, letters and digits only, one space between words and one at each end, so a phrase can
+// be found on WHOLE WORD boundaries by an ordinary substring search.
+static std::string normalize_words(const std::string& s) {
+    std::string o = " ";
+    for (unsigned char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) o += (char)c;
+        else if (c >= 'A' && c <= 'Z') o += (char)(c - 'A' + 'a');
+        else if (o.back() != ' ') o += ' ';
+    }
+    if (o.back() != ' ') o += ' ';
+    return o;
+}
+
+static bool is_stopword(const std::string& w) {
+    static const char* kStop[] = { "the", "a", "an", "and", "or", "but", "so", "we", "is", "are", "was",
+                                   "were", "it", "its", "to", "of", "in", "on", "for", "with", "that",
+                                   "this", "let", "lets", "before", "after", "just", "also", "ok",
+                                   "okay", "right", "i", "you", "he", "she", "they", "me", "us",
+                                   "them", "my", "our", "your", "be", "been", "do", "does", "did" };
+    for (const char* s : kStop) if (w == s) return true;
+    return false;
+}
+
+static std::vector<std::string> content_words(const std::string& s) {
+    const std::string n = normalize_words(s);
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (i < n.size()) {
+        const size_t b = n.find_first_not_of(' ', i);
+        if (b == std::string::npos) break;
+        const size_t e = n.find(' ', b);
+        const std::string w = n.substr(b, (e == std::string::npos ? n.size() : e) - b);
+        if (w.size() > 1 && !is_stopword(w)) out.push_back(w);
+        i = e == std::string::npos ? n.size() : e + 1;
+    }
+    return out;
+}
+
+int content_overlap(const std::string& a, const std::string& b) {
+    const auto A = content_words(a), B = content_words(b);
+    int hit = 0;
+    for (const auto& w : A)
+        for (const auto& x : B)
+            if (w == x) { ++hit; break; }
+    return hit;
+}
+
+bool near_dup(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    auto split = [](const std::string& s) {
+        std::vector<std::string> v;
+        const std::string n = normalize_words(s);
+        size_t i = 0;
+        while (i < n.size()) {
+            const size_t x = n.find_first_not_of(' ', i);
+            if (x == std::string::npos) break;
+            const size_t e = n.find(' ', x);
+            v.push_back(n.substr(x, (e == std::string::npos ? n.size() : e) - x));
+            i = e == std::string::npos ? n.size() : e + 1;
+        }
+        return v;
+    };
+    const auto A = split(a), B = split(b);
+    if (A.empty() || B.empty()) return false;
+    size_t hit = 0;
+    for (const auto& w : A)
+        for (const auto& x : B)
+            if (w == x) { ++hit; break; }
+    return (double)hit / (double)A.size() >= 0.6;   // six words in ten already said
+}
+
+bool looks_like_acceptance(const std::string& s) {
+    const std::string t = normalize_words(s);
+    // normalized: apostrophes are word breaks, so "you're" is "you re"
+    static const char* kPhrases[] = { "you re right", "you are right", "good catch", "fair point",
+                                      "correct", "my mistake", "agreed", "fixed", "my bad" };
+    auto negated_before = [&t](size_t at) {
+        size_t i = at;
+        for (int k = 0; k < 2 && i > 0; ++k) {
+            const size_t e = t.find_last_not_of(' ', i - 1);
+            if (e == std::string::npos) break;
+            size_t b = t.find_last_of(' ', e);
+            b = b == std::string::npos ? 0 : b + 1;
+            const std::string w = t.substr(b, e - b + 1);
+            for (const char* n : { "not", "no", "never", "isn", "wasn", "aren", "don", "doesn", "didn", "hardly" })
+                if (w == n) return true;
+            if (b == 0) break;
+            i = b;
+        }
+        return false;
+    };
+    for (const char* p : kPhrases) {
+        const std::string pat = std::string(" ") + p + " ";
+        size_t at = t.find(pat);
+        while (at != std::string::npos) {
+            if (!negated_before(at)) return true;   // "that is not correct" is not an acceptance
+            at = t.find(pat, at + 1);
+        }
+    }
+    return false;
 }
 
 // ---- the DLLs and the gate --------------------------------------------------------------------
@@ -205,9 +317,31 @@ struct Resident::Impl {
     int n_vocab = 0;
     int hold_tok = 0, emit_tok = 0;
     std::vector<char> is_bnd;
+    // Stage 2: the mouth. Null unless Config::emit — with emission off there is no sampler in the
+    // process and no token can be produced, which is the property Stage 1b was a whole stage for.
+    llama_sampler* smp = nullptr;
 };
 
-static const llama_seq_id TRUNK = 0, DECIDE = 7;
+static const llama_seq_id TRUNK = 0, DECIDE = 7, GEN = 6;
+
+// Sample from a SAVED copy of a sequence's logits rather than from the context's last ones. Stage 2
+// does not need it — generation is uninterrupted — but Stage 3 lands percepts on the trunk between
+// generated tokens, and then "the last logits" may belong to the trunk or to a probe by the time
+// the speaking seat wants its next token. The chain is applied exactly as it would be either way.
+static llama_token sample_from(llama_sampler* smp, const float* logits, int n_vocab,
+                               std::vector<llama_token_data>& cands) {
+    cands.resize((size_t)n_vocab);
+    for (int t = 0; t < n_vocab; ++t) {
+        cands[(size_t)t].id = t;
+        cands[(size_t)t].logit = logits[t];
+        cands[(size_t)t].p = 0.0f;
+    }
+    llama_token_data_array arr = { cands.data(), cands.size(), -1, false };
+    llama_sampler_apply(smp, &arr);
+    const llama_token tok = arr.selected >= 0 ? arr.data[arr.selected].id : arr.data[0].id;
+    llama_sampler_accept(smp, tok);
+    return tok;
+}
 
 // A breadcrumb to stderr when NIB_TRACE is set. The window's stderr is the driver's file, so a
 // crash inside llama or ggml — which kills the process without unwinding — still says which step
@@ -277,6 +411,7 @@ static std::string g_backends_loaded;
 
 Resident::~Resident() {
     if (p_) {
+        if (p_->smp) llama_sampler_free(p_->smp);
         if (p_->ctx) llama_free(p_->ctx);
         if (p_->mdl) llama_model_free(p_->mdl);
         delete p_;
@@ -409,7 +544,18 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
     }
     p_->mem = llama_get_memory(p_->ctx);
 
-    // No sampler is created. Stage 1b cannot produce a token even by accident.
+    // THE MOUTH (Stage 2), and only if it was asked for. With `emit` false no sampler exists in
+    // the process, so no token can be produced by any path — the property Stage 1b was a whole
+    // stage for, kept as a construction and not as a boolean guarding a code path that exists.
+    // The chain is fusord's, verbatim (LIFT_MAP_K5 §1): min-p, then temperature, then the seeded
+    // distribution. It is not covered by the serve hash, but v11's dial-0 calibration was measured
+    // through it, and a different chain is a different instrument.
+    if (cfg_.emit) {
+        p_->smp = llama_sampler_chain_init(llama_sampler_chain_default_params());
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_min_p(0.05f, 1));
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_temp(0.7f));
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_dist(11));
+    }
 
     mib_free_ = vram_free_mib();
 
@@ -492,18 +638,152 @@ bool Resident::decode(const std::vector<int>& toks, int seq, long long pos, bool
     return true;
 }
 
+std::vector<Emission> Resident::take_emissions() {
+    std::vector<Emission> o;
+    o.swap(emissions_);
+    return o;
+}
+
+std::vector<Suppressed> Resident::take_suppressed() {
+    std::vector<Suppressed> o;
+    o.swap(supp_);
+    return o;
+}
+
+// ---- the mouth ---------------------------------------------------------------------------------
+// One sentence, on a fork of the trunk as it stands, with a hard cap. The fork is dropped before
+// this returns: nothing a seat says reaches the trunk here — that happens at the end of the line
+// (flush_own_speech), so a seat's words are never spliced into the middle of somebody else's.
+bool Resident::speak(int m, float margin, const std::string& about, Emission& out) {
+    if (!p_ || !p_->smp || !ctx_) return false;
+    const uint64_t t0 = wall_ms();
+    llama_memory_seq_rm(p_->mem, GEN, -1, -1);
+    llama_memory_seq_cp(p_->mem, TRUNK, GEN, -1, -1);
+    const auto ct = tk(p_->vocab, std::string(CUE_A) + kSeats[m].name + CUE_B + kSeats[m].mandate + CUE_C, false);
+    if (!decode(ct, GEN, npast_, true)) { llama_memory_seq_rm(p_->mem, GEN, -1, -1); return false; }
+    long long gpos = npast_ + (long long)ct.size();
+    std::vector<float> gl((size_t)p_->n_vocab);
+    std::vector<llama_token_data> cands;
+    {
+        const float* l = llama_get_logits_ith(p_->ctx, -1);
+        memcpy(gl.data(), l, sizeof(float) * (size_t)p_->n_vocab);
+    }
+    std::string say;
+    int toks = 0;
+    char stop = 'c';
+    for (int t = 0; t < cfg_.gen_cap; ++t) {
+        const llama_token tok = sample_from(p_->smp, gl.data(), p_->n_vocab, cands);
+        if (llama_vocab_is_eog(p_->vocab, tok)) { stop = 'e'; break; }
+        char pc[256];
+        const int pn = llama_token_to_piece(p_->vocab, tok, pc, sizeof pc, 0, true);
+        const std::string piece(pc, pn > 0 ? (size_t)pn : 0);
+        if (piece.find('\n') != std::string::npos) { stop = 'n'; break; }   // a second line is a second thought
+        say += piece;
+        ++toks;
+        const std::vector<int> one{ tok };
+        if (!decode(one, GEN, gpos, true)) break;
+        ++gpos;
+        {
+            const float* l = llama_get_logits_ith(p_->ctx, -1);
+            memcpy(gl.data(), l, sizeof(float) * (size_t)p_->n_vocab);
+        }
+        if (t >= cfg_.gen_min) {   // one sentence: the first close once there is enough to be a line
+            const char lc = say.empty() ? 0 : say[say.size() - 1];
+            if (lc == '.' || lc == '!' || lc == '?') { stop = 's'; break; }
+        }
+    }
+    llama_memory_seq_rm(p_->mem, GEN, -1, -1);   // the fork is dropped; the trunk never saw it
+    while (!say.empty() && (say.front() == ' ' || say.front() == '\t')) say.erase(0, 1);
+    gen_ms_ += wall_ms() - t0;
+    if (say.empty()) return false;
+    out.wall_ms = wall_ms();
+    out.boundary = boundaries_;
+    out.seat = m;
+    out.margin = margin;
+    out.say = say;
+    out.clause = about;
+    out.gen_ms = wall_ms() - t0;
+    out.toks = toks;
+    out.stop = stop;
+    return true;
+}
+
+// The manners ladder. A line that clears it is said and remembered; a line that does not is
+// RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
+// that held its tongue and a harness that lost a sentence has to stay visible on the tape.
+bool Resident::allowed_to_say(int m, float margin, const std::string& say, const std::string& about) {
+    auto deny = [&](const char* why, const std::string& by) {
+        Suppressed s;
+        s.wall_ms = wall_ms();
+        s.boundary = boundaries_;
+        s.seat = m;
+        s.margin = margin;
+        s.say = say;
+        s.clause = about;
+        s.why = why;
+        s.by = by;
+        supp_.push_back(std::move(s));
+        ++suppressed_;
+        return false;
+    };
+    const bool dup = !last_say_[m].empty() &&
+                     (near_dup(say, last_say_[m]) || content_overlap(say, last_say_[m]) >= cfg_.dup_overlap);
+    const bool in_win = (boundaries_ - last_say_i_[m]) <= kSuppBoundaries &&
+                        (wall_ms() - last_say_ms_[m]) <= kSuppTtlMs;
+    // Re-armed: the topic genuinely came back up — a LATER clause than the one that produced the
+    // seat's line, sharing at least two content words with it, on a condition nobody settled.
+    const bool re_armed = dup && !resolved_[m] && about != last_clause_[m] &&
+                          content_overlap(about, last_say_[m]) >= 2;
+
+    if (dup && resolved_[m]) return deny("resolved", "");
+    if (dup && in_win && !re_armed) return deny("repeat", "");
+    for (int o = 0; o < 3; ++o) {
+        if (o == m || last_say_[o].empty()) continue;
+        const bool o_win = (boundaries_ - last_say_i_[o]) <= kSuppBoundaries &&
+                           (wall_ms() - last_say_ms_[o]) <= kSuppTtlMs;
+        if (!(resolved_[o] || o_win)) continue;
+        if (near_dup(say, last_say_[o]) || content_overlap(say, last_say_[o]) >= cfg_.cross_overlap)
+            return deny("repeat_other", kSeats[o].name);
+    }
+    // The interruption budget, and it applies to a RESTATEMENT only: an unconditioned window
+    // silences a legitimate new catch that happens to arrive soon after the last one, which is
+    // what K5's own calibration found.
+    if (cfg_.refractory_ms > 0 && last_say_ms_[m] && !re_armed &&
+        (int64_t)(wall_ms() - last_say_ms_[m]) < cfg_.refractory_ms &&
+        (content_overlap(say, last_say_[m]) >= 1 || content_overlap(about, last_clause_[m]) >= 1))
+        return deny("refractory", "");
+
+    if (!dup || !cond_open_[m]) { cond_open_[m] = true; resolved_[m] = false; }
+    last_say_[m] = say;
+    last_clause_[m] = about;
+    last_say_i_[m] = boundaries_;
+    last_say_ms_[m] = wall_ms();
+    return true;
+}
+
 void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& out) {
     if (clause_.empty()) return;
     ++boundaries_;
     if (reason[0] == 'c') ++coarsened_;   // degradation must be COUNTED, not inferred
 
+    // Did the world just settle something a seat raised? Acceptance is TARGETED — at least one
+    // content word from that seat's own last line — so "you're right" about one thing does not
+    // resolve every open condition. A settled condition never fires again; an unaddressed one may.
+    if (cfg_.emit && looks_like_acceptance(clause_))
+        for (int m = 0; m < 3; ++m)
+            if (!last_say_[m].empty() && !resolved_[m] && content_overlap(clause_, last_say_[m]) >= 1) {
+                resolved_[m] = true;
+                cond_open_[m] = false;
+            }
+
     const uint64_t t0 = wall_ms();
     const uint64_t mf = vram_free_mib();   // the co-tenancy dial, read beside the cost it explains
+    float margins[3] = { -1e9f, -1e9f, -1e9f };
     for (int m = 0; m < 3; ++m) {
         llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
         llama_memory_seq_cp(p_->mem, TRUNK, DECIDE, -1, -1);
-        const auto pr = tk(p_->vocab, std::string("\n[") + kSeats[m].name + " — " +
-                                          kSeats[m].mandate + "]\nwatcher:", false);
+        const auto pr = tk(p_->vocab, std::string(PROBE_A) + kSeats[m].name + PROBE_B +
+                                          kSeats[m].mandate + PROBE_C, false);
         if (!decode(pr, DECIDE, npast_, true)) { llama_memory_seq_rm(p_->mem, DECIDE, -1, -1); break; }
         const float* l = llama_get_logits_ith(p_->ctx, -1);
         Judgment j;
@@ -515,6 +795,7 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
         j.reason = reason[0];
         j.mib_free = mf;
         j.clause = clause_;
+        margins[m] = j.margin;
         if (j.margin > 0.0f) ++wanted_;
         out.push_back(std::move(j));
         ++probes_;
@@ -522,13 +803,32 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
     }
     probe_ms_ += wall_ms() - t0;
 
-    // ---- and here the lifted loop STOPS. fusord's next block composes a line for every seat
-    // whose margin cleared zero. It is not copied, not commented out, and not behind a flag.
-    // Stage 1b is the stage where wanting to speak leaves a number and nothing else.
-
+    // The judged clause is snapshotted and the accumulator cleared BEFORE any seat speaks, so that
+    // words arriving during a generation begin a fresh clause instead of joining the one under
+    // judgment. Stage 2 generates uninterrupted and cannot see one arrive; Stage 3 opens that
+    // window, and this is the line that makes it safe.
+    const std::string judged = clause_;
     clause_.clear();
     clause_toks_ = 0;
     last_flush_ms_ = wall_ms();
+
+    // ---- STAGE 2: THE MOUTH. Through 0.8.0 the lifted loop stopped here, and emission was not
+    // disabled but ABSENT — no sampler, no cue decoded, no token producible by any path. That was
+    // the whole point of making 1b a stage. It ends here, deliberately and with a date: with
+    // `emit` set, every seat whose margin cleared zero composes one sentence, and the manners
+    // decide whether it is said. With `emit` unset nothing below runs and no sampler exists.
+    if (!cfg_.emit) return;
+    for (int m = 0; m < 3; ++m) {
+        if (margins[m] <= 0.0f) continue;
+        Emission e;
+        if (!speak(m, margins[m], judged, e)) continue;
+        if (!allowed_to_say(m, margins[m], e.say, judged)) continue;
+        emissions_.push_back(e);
+        ++emitted_;
+        // and because it REALLY said it, it is part of the world: the line joins the trunk on the
+        // seat's own lane once the world's current line has closed (SPEC 5.1.6, the trunk half).
+        pending_commits_.push_back(std::string("\n[") + kSeats[m].name + "] " + e.say);
+    }
 }
 
 bool Resident::ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out) {
@@ -566,10 +866,27 @@ static uint64_t count_words(const std::string& text) {
     return n;
 }
 
+// The seats' own lines onto the trunk, once the world's line has closed. A seat's words are part
+// of the world it perceives — without this, say-it-once is structurally unlearnable and one catch
+// re-fires at every boundary (measured in the estate before nib existed). The self-echo filter at
+// the pad's door (SPEC 5.1.6, the gate half) is what keeps the same line from arriving twice.
+void Resident::flush_own_speech() {
+    while (!pending_commits_.empty()) {
+        const std::string line = pending_commits_.front();
+        pending_commits_.erase(pending_commits_.begin());
+        const auto t = tk(p_->vocab, line, false);
+        if (!room_for(t.size())) { dropped_words_ += count_words(line); pending_commits_.clear(); return; }
+        if (!decode(t, TRUNK, npast_, true)) { pending_commits_.clear(); return; }
+        npast_ += (long long)t.size();
+        read_frontier();
+    }
+}
+
 void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
                     size_t backlog, std::vector<Judgment>& out) {
     if (!ctx_) return;
     if (failed() || window_full_) { dropped_words_ += count_words(text); return; }
+    flush_own_speech();   // anything a seat said at the last boundary lands before the next line
 
     // The empty lane is a raw line: a tick. It is decoded onto the trunk exactly as fusord.cpp:712
     // decodes its own — "\n[tick +Ns]", no speaker's prefix — the frontier is read, and NOTHING is
@@ -632,10 +949,12 @@ void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
     }
     if (!whole) { clause_.clear(); clause_toks_ = 0; return; }
     if (!clause_.empty()) judge("f", 0.0f, out);   // the line ended: a real final
+    flush_own_speech();                            // and what a seat said about it joins the trunk
 }
 
 void Resident::finish(std::vector<Judgment>& out) {
     if (ctx_ && !clause_.empty() && !failed() && !window_full_) judge("f", 0.0f, out);
+    if (ctx_ && !failed() && !window_full_) flush_own_speech();
 }
 
 }  // namespace nib

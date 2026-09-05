@@ -1197,6 +1197,30 @@ int run_selftest() {
         }
     }
 
+    section("Stage 2 - the manners, which decide whether a line is said twice");
+    {
+        // content overlap drops stopwords, so two lines about the same thing show it
+        check(content_overlap("the retry limit is three", "we set the retry limit to twelve") == 2,
+              ssprintf("content overlap counts the words that carry the topic (%d)",
+                       content_overlap("the retry limit is three", "we set the retry limit to twelve")));
+        check(content_overlap("lunch is at noon", "the deploy is on Friday") == 0, "and nothing when the topics differ");
+        // near-dup is fusord's own six-in-ten test, over whole words
+        check(near_dup("that contradicts what we established it is postgres not mysql",
+                       "that contradicts what we established it is postgres 16 not mysql 5"),
+              "a line that repeats itself with two numbers added is a near-duplicate");
+        check(!near_dup("the staging database is postgres", "lunch is at noon in the small room"),
+              "and two different lines are not");
+        // THE ACCEPTANCE BUG, in every kernel before K5's F2: "correct" inside "incorrect"
+        check(looks_like_acceptance("You're right, it is postgres 16."), "\"you're right\" is an acceptance");
+        check(looks_like_acceptance("good catch, my mistake"), "so is \"good catch\"");
+        check(!looks_like_acceptance("that is incorrect"), "\"incorrect\" is NOT \"correct\" — whole words only");
+        check(!looks_like_acceptance("the correction landed"), "nor is \"correction\"");
+        check(!looks_like_acceptance("that is not correct"), "and a negation two words back cancels it");
+        check(!looks_like_acceptance("no, you are right about nothing"), "\"no, you are right\" is not an acceptance");
+        check(looks_like_acceptance("agreed"), "a bare \"agreed\" is one");
+        check(!looks_like_acceptance("we disagreed about the schema"), "and \"disagreed\" is not, because it is one word");
+    }
+
     section("Stage 1d - the tape read back, the torn row, the hash cache, the tick, the fold");
     {
         // canonical strings survive the round trip, and a field comes back as its raw fragment
