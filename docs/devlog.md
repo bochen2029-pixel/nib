@@ -1097,3 +1097,24 @@
   untouched by this commit; run for the record); the twin on both tapes, and --exact on one.
 - STAGE 4 IS COMPLETE. NEXT, by the operator's ruling that the LAN lands before the week: Act II,
   Stage 6, discovery - the end of the build-phase network gate and the start of SPEC 9.2's.
+
+## 2026-09-05 (night) · the first release with a binary - v0.11.1 on GitHub
+
+- The operator asked for a release: an exe that actually works on Windows. nib.exe rebuilt from
+  c88a8a5's clean tree with both gates (875,520 bytes, SHA-256 9ccaff70b173ece6870c7d4658474baf
+  c39b5f8d2b5ac9b8c7f0c2648ea222ec), verified on this box - --selftest 243/0, drive.py 30/0
+  three times - and then in a BARE FOLDER with the theme's DLL directory pointed at a path that
+  does not exist: the selftest passes, --about refuses cleanly, the window types, saves and
+  replays through its seam, the AI switch refuses naming the DLL it could not load and the
+  directory it looked in, the editor goes on editing after the refusal, and the session's tape
+  verifies INTACT. That is what "works without a mind" means, and it was checked rather than
+  assumed. One thing the check taught: --about takes its DLL directory from the command line and
+  not from nib.theme, so on this machine it found the real llama.cpp until told otherwise; the
+  window reads the theme. Harmless, noted.
+- Published as v0.11.1 (github.com/bochen2029-pixel/nib/releases): nib.exe, nib-0.11.1-win64.zip
+  (the exe, nib.theme, README, LICENSE, the two pictures; SHA-256 8ad34f92a010f8dda37215867c11edf
+  c3f0847a6481ddb1c62e492f3b3c12e17), and notes carrying both checksums, what works with nothing
+  else installed, and what the mind needs. The llama.cpp DLLs and the model are NOT in the release:
+  the DLLs are half a gigabyte of CUDA and belong to llama.cpp, and the tune the seed is frozen for
+  is the operator's. The README gained a "Downloading it" section; the repository's description
+  now says it takes a sentence back.

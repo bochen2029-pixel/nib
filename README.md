@@ -108,6 +108,15 @@ resident never writes into a paragraph you are touching. Nothing simulates a hum
 not correspond to a real internal event — no fake hesitation, no invented typos, no "thinking…"
 that is not thinking. It is never ambiguous who is on the other end.
 
+## Downloading it
+
+[Releases](https://github.com/bochen2029-pixel/nib/releases) carry `nib.exe` — Windows 10 1809 or
+later, x64, no installer, no runtime, the C runtime linked in — and a zip with `nib.theme` beside
+it. The editor, the selftest, the tape verifier and the window's driver seam work on any machine;
+each release's notes carry the SHA-256 sums. To give it a mind you need llama.cpp built with CUDA
+at `C:/llama.cpp` and a GGUF, as described under *Building it*; without them the AI switch refuses
+with the reason and the path it looked in, and the editor goes on editing.
+
 ## Building it
 
 Windows, Visual Studio 2022 (or any MSVC with `cl` on the path), C++20. One command:
