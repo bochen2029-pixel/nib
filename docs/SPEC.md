@@ -580,7 +580,10 @@ generation kept as `.bin.prev`; the text next; **the sidecar last**, so a sideca
 state that is not on disk. The sidecar carries the model's path and SHA-256, the serve hash, the
 window, the KV type, the token count, the document revision, **the digest of the tape row that
 revision's changeset produced**, the wall time, and the text's BLAKE2b. A rename moves all four
-beside the tape.
+beside the tape. **Since 0.10.3** the sidecar also carries the manners' memory (6.3.5): for each
+seat that has said something, its last line, the clause it answered, how long ago, how many
+boundaries ago, whether the world settled it and whether its condition is open — `m<seat>.<field>`
+lines in the sidecar's own `key<TAB>value` shape.
 
 6.2.11.2 **What the restore checks, and who checks it.** The editor, before the model loads: the
 sidecar exists and names this model, this serve format, this window and this KV type; the state
@@ -589,7 +592,9 @@ model's SHA-256 equals the sidecar's, and the state holds exactly the token coun
 claims. **Any disagreement is a refusal with its reason, and a refused restore is the twin**
 (SPEC 5.1.14) — seeded, folded from the log, and labelled `twin` with the reason on the session
 row and the status line. Measured 2026-09-05: a text sidecar with one byte appended is refused,
-and the resident that follows is the twin.
+and the resident that follows is the twin. A restored resident also gets the manners' memory back
+(6.3.5, since 0.10.3); a twin rebuilds its own from the fold, which replays the seats' lines as
+their own speech (6.2.11.3.1).
 
 6.2.11.3 **The world since the checkpoint.** A restored trunk has perceived through one document
 revision, whose tape row the sidecar names. `rows_after` walks that tape — and, through `resume`
@@ -598,7 +603,9 @@ rows, the tapes it continued from — for every row after that one; `fold_tape` 
 a diff against what the rows so far produce, so a file edited outside nib is perceived as an edit
 and not as a new document. Whatever still differs from the document as it stands now is perceived
 last. A digest in none of the tapes is a refusal: the tape was replaced, and a checkpoint bound to
-it cannot be trusted.
+it cannot be trusted. **[BUILT 2026-09-05, 0.10.3]** — decided by the editor before the model
+loads, with everything else it checks (6.2.11.2), so the refusal is a refusal into the twin and
+not a fold with an error on its row, which is what it was through 0.10.2.
 
 6.2.11.3.1 **The fold attributes by author [BUILT 2026-09-05, 0.10.2].** Both folds — the log's and
 the tape's — replay a revision on the lane of the hand that made it. A revision whose author is a
@@ -616,6 +623,19 @@ only when the world is quiet — two seconds since the last keystroke, nothing o
 in the spool, nothing pending in the compiler — so the trunk and the revision the sidecar names
 agree about what it saw. A checkpoint of a restored trunk that has not yet been folded forward is
 the same trunk the existing sidecar describes, and that sidecar is left alone.
+
+6.2.13 **The flush clock starts at the percept [BUILT 2026-09-05, 0.10.3].** The pre-registered
+flush law is boundary OR 24 tokens OR 1500 ms, verbatim (6.2.3's lift). fusord measured the
+1500 ms from the last judgment, on a stream whose words arrive one at a time with real time
+between them, where it is a stall timeout. A pad's percept arrives whole and is decoded in one
+burst, so measured that way the clock had always already expired when a percept began after any
+pause, and the `t` path fired on the first six tokens of every sentence after every pause and
+never on a stalled clause: three boundaries and nine probes for one typed sentence, in the un-say
+window's log of 2026-09-05. The clock is started when a percept begins, so a `t` means the decode
+of that percept itself stalled — the only stall a pad can have, since the compiler's `quiet_ms`
+(5.1.2) is the stall timeout for the hand. The trunk's bytes and the probe frame are untouched;
+only the boundary population moves, and toward the one the tune saw. It is nib's second departure
+from the lifted loop (6.2.9 is the first), for the same measured kind of reason.
 
 ### 6.3 Emission
 
@@ -669,7 +689,12 @@ own last line, by six words in ten or by shared content words, inside the window
 genuinely came back up in a later clause), `repeat_other` (another seat already said it), and
 `refractory` (one line per seat per window, applied to a RESTATEMENT only, never to a new
 condition). Say-it-once remains a fine-tune target; the harness does the honest minimum and logs
-the rest.
+the rest. **The ladder survives the switch [BUILT 2026-09-05, 0.10.3]:** its memory is written
+into the checkpoint's sidecar (6.2.11.1) and restored with the trunk, or the same mind came back
+with its own lines on its trunk and no memory of having said them, and said them again (measured
+2026-09-05, the SKEPTIC's Pacific line in two lives). A line said more boundaries ago than the
+suppression window holds comes back outside the window. The ladder is a pure check
+(`manners_allows`), fired at in `--selftest` with no model on an imported memory.
 
 6.3.6 **Own speech is a percept, with no self-exception, and it lands at the line's end.** A seat's
 line is committed to the trunk on the seat's own lane (SPEC 5.1.6, the trunk half) — but *queued*

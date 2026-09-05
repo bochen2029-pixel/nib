@@ -964,3 +964,39 @@
   the CLI's boundary population is timing-dependent through the flush clock above, so the boundary
   a want arises at, and therefore the fork the line is sampled from, moves between runs. The next
   commit takes that clock, and the CLI's run should become reproducible with it.
+
+## 2026-09-05 (evening) · 0.10.3 - the manners across the switch, the refusal, and the flush clock
+
+- THE MANNERS SURVIVE THE SWITCH (SPEC 6.3.5, 6.2.11.1). The sidecar carries, for each seat that
+  has said something, its last line, the clause it answered, its age in milliseconds and in
+  boundaries, and whether the world settled it - `m<seat>.<field>` lines in the sidecar's own
+  key-tab-value shape, written by the editor from what the thread exports at every checkpoint. A
+  restored resident imports them before its first judgment; a twin rebuilds its own from the
+  fold's own-speech percepts, which is why the twin life of the driver's battery refuses to repeat
+  the SKEPTIC's block it found in the document. The ladder is a pure check now (`manners_allows`),
+  and seven checks fire at it on an unstarted resident with an imported memory: a line five
+  seconds old is `repeat`, a settled one is `resolved`, another seat may not say what the SENTINEL
+  said (`repeat_other`), a new topic passes, a line more boundaries ago than the window holds
+  passes, export round-trips import, and a fresh resident allows anything.
+- THE REFUSAL SPEC 6.2.11.3 PROMISES is decided before the model loads: decide_restore walks the
+  tapes for the checkpoint's bound row and refuses into the twin when it is in none of them.
+  Through 0.10.2 the fold ran anyway, with an error on its row.
+- THE FLUSH CLOCK STARTS AT THE PERCEPT (SPEC 6.2.13), and the measurement is the un-say window's
+  own log on the same typed claim. Before: `t` on "Actually the staging database is mysql", `b`
+  on "5", `b` on "and always has been." - three boundaries, nine probes. After: `b` on "Actually
+  the staging database is mysql 5", `b` on "and always has been." - two boundaries, six probes,
+  and zero `t` rows in the whole log; the main case's log reads 57 `b` and 3 `f` and no `t`. The
+  abort moved from boundary 5 to boundary 4 with the same margins, +5.06 -> -1.77.
+- AND THE CLI IS REPRODUCIBLE NOW. `--resident tests/margins.txt --emit`, twice: byte-identical
+  lines and margins (SKEPTIC +5.73, SPEAKER +4.32, SENTINEL +5.26; two repeats held by the manners;
+  3 own lines heard; 11 boundaries, 33 probes). Before the clock change the SPEAKER's line moved
+  between runs because generation time decided whether the `t` path fired on the percept after a
+  line was composed, which moved the boundary a want arose at and the fork it was sampled from.
+  The boundary population is a function of the text now, and the sampler's seed does the rest.
+- Green: --selftest 236/0; drive.py 30/0, three runs; drive.py --ai 68/0 on the first run, the
+  card going 8463 -> 15536 -> 8694 MiB, the sidecar carrying m1.say and m2.say, the restored
+  SKEPTIC catching a new false claim at +4.61, the un-say on the first attempt.
+- The read of 0.10.0 is remediated: 0.10.1, 0.10.2, 0.10.3, each green, each pushed. NEXT is
+  Stage 4: the two switches and the paired record - RESIDENT / TURN-BASED with the seat, the
+  seed and the sampler pinned identical across the toggle, the judgments running in shadow
+  during TURN-BASED, and `nib --twin` re-driving a tape through the turn-based policy offline.

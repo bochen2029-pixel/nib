@@ -522,6 +522,16 @@ def main():
         ck = [l for l in n6.lines() if l and l[0] == "ckpt"]
         check(bool(ck) and ck[-1][1] == "off" and ck[-1][2] == "1" and all(os.path.exists(base + x) for x in (".bin", ".meta", ".txt")),
               "off saved the trunk beside the document: %s" % (ck[-1][1:] if ck else "no ckpt line",))
+        # The manners go with the trunk (0.10.3): the sidecar carries what each seat said, so the
+        # restored resident's suppression ladder is the one that was there, not an empty one.
+        try:
+            with open(base + ".meta", encoding="utf-8") as f:
+                meta_lines = [l.rstrip("\n") for l in f]
+        except OSError:
+            meta_lines = []
+        said = [l for l in meta_lines if l.startswith(("m0.say\t", "m1.say\t", "m2.say\t"))]
+        check(len(said) >= 1, "and the sidecar carries what the seats said, so the ladder survives the switch: %s"
+              % (said[0][:72] if said else "no m*.say line in the sidecar"))
         nr, nf = n6.count("resident"), n6.count("fold")
         n6.cmd("ai_on")
         rrow2 = n6.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=120)

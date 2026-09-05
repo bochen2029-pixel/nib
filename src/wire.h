@@ -94,6 +94,7 @@ struct CkptResult {
     uint64_t rev = 0;         // the document revision the trunk had perceived through (the cursor)
     uint64_t dur_ms = 0;
     std::string path, why, err;
+    std::string manners;      // what each seat has said, for the sidecar (Resident::manners_export)
 };
 
 class Wire {
@@ -110,9 +111,11 @@ public:
     // `refuse_reason`, when set, says the editor found a checkpoint and would not use it (its
     // sidecar disagreed with the document or the tape): nothing is restored, and the session row
     // reads `twin` with that reason, so the record says a resident was there and this is not it.
+    // `manners` is the sidecar's record of what each seat had said (Resident::manners_import),
+    // applied only when the trunk is really restored: a twin rebuilds its own from the fold.
     void start(const Resident::Config& cfg, PadSource* src, const std::string& restore_path = std::string(),
                long long expect_npast = 0, const std::string& expect_sha = std::string(),
-               const std::string& refuse_reason = std::string());
+               const std::string& refuse_reason = std::string(), const std::string& manners = std::string());
     // Ask the thread to stop: it drains the ring (bounded), judges the open clause, checkpoints to
     // `ckpt_path` if one is given, and goes Off. join() then collects it; stop() does both.
     void stop_async(const std::string& ckpt_path, const std::string& why);
@@ -169,7 +172,7 @@ public:
 
 private:
     void run(Resident::Config cfg, PadSource* src, std::string restore_path, long long expect_npast, std::string expect_sha,
-             std::string refuse_reason);
+             std::string refuse_reason, std::string manners);
     void set_state(WireState s);
     void do_checkpoint(Resident& res, const std::string& path, const std::string& why);
 

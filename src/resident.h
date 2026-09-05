@@ -185,7 +185,20 @@ public:
     // not load is reported and the resident seeds, as the twin. Returns false with a reason
     // rather than throwing; a missing DLL, a missing model, a drifted seed, a network module and a
     // CPU-only backend are all ordinary, reportable outcomes.
-    bool start(const Config& cfg, std::string& err, const std::string& restore_path = std::string(), long long expect_npast = 0);
+    bool start(const Config& cfg, std::string& err, const std::string& restore_path = std::string(), long long expect_npast = 0,
+               const std::string& manners = std::string());
+
+    // THE MANNERS SURVIVE THE SWITCH (SPEC 6.3.5, 6.2.11.1). The trunk is saved beside the document;
+    // what each seat last said, the clause it answered, how long ago, how many boundaries ago,
+    // and whether the world settled it, go with it — as `key<TAB>value` lines the sidecar carries
+    // verbatim — or a restored resident has its own lines on its trunk and an empty suppression
+    // ladder, and says its piece again (seen on 2026-09-05: the SKEPTIC's Pacific line, twice, in
+    // two lives). Both are pure: no model, no card.
+    std::string manners_export() const;
+    void manners_import(const std::string& lines);
+    // The ladder as a pure check: "" if the line may be said, else the reason (resolved · repeat ·
+    // repeat_other · refractory), with `by` the other seat for repeat_other. Records nothing.
+    const char* manners_allows(int seat, const std::string& say, const std::string& about, std::string& by) const;
 
     // Ingest one percept and judge if a thought closed. This is the free tail of the ingest pass
     // (SPEC 6.2.3): the model is never polled, it is decoded into and read at the frontier.

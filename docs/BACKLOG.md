@@ -36,18 +36,21 @@ before every checkpoint. The compiler pushes the pending clause before a seat's 
 closes the "block inserted above the caret" case for any `floor_ms`/`quiet_ms`. Ten checks in
 `--selftest` with no model; the driver asserts an own-speech row on the tape and no percept on
 the hand's lane beginning with a seat's tag, live or folded.
-- **SPEC 6.2.11.3 promises a refusal when the checkpoint's tape row is in no tape;** `fold_on_ready`
-  degrades to a diff-only fold with an `err` field on the `fold` row instead. `decide_restore`
-  should walk the tapes before the model loads and refuse into the twin, as the clause says.
-- **The first sentence after a pause is judged at a timeout boundary at its sixth token** (found
-  in the un-say window's log during 0.10.1's battery: `judgment 3 SKEPTIC 5.24 t "Actually the
-  staging database is mysql"`, then `b` on "5", then `b` on the rest — three boundaries and nine
-  probes for one sentence). The resident's 1500 ms flush clock runs from the last judgment; in a
-  pad a percept arrives whole and is decoded in one burst, so the clock has always already expired
-  when a percept begins after a gap, and the `t` path fires on the first six tokens of every
-  sentence after every pause and never on a stalled clause. The compiler's `quiet_ms` is the stall
-  timeout at the right grain. Start the clock at the percept; measure the CLI's margins run before
-  and after (boundaries and probes move, margins do not).
+**Landed in 0.10.3 — the manners survive the switch, the refusal, the flush clock.** The
+checkpoint's sidecar carries what each seat last said, the clause it answered, its age in
+milliseconds and in boundaries, and whether the world settled it (`m<seat>.<field>` lines); a
+restored resident gets its ladder back, a twin rebuilds its own from the fold's own-speech
+percepts. The ladder is a pure check now (`manners_allows`), fired at in `--selftest` on an
+imported memory with no model. The refusal SPEC 6.2.11.3 promises is decided by the editor before
+the model loads: a checkpoint whose bound row is in none of the tapes makes the resident the
+twin, where through 0.10.2 the fold ran with an error on its row. And the resident's 1500 ms
+flush clock starts at the percept (SPEC 6.2.13): through 0.10.2 it ran from the last judgment,
+and since a pad's percept arrives whole and is decoded in one burst, the `t` path fired on the
+first six tokens of every sentence typed after any pause longer than a second and a half (the
+un-say window's log: `t` on "Actually the staging database is mysql", `b` on "5", `b` on the
+rest — three boundaries for one sentence) and never on a stalled clause. A `t` now means the
+decode of a percept itself stalled.
+
 - **A clause whose judgment includes a deletion percept can carry a span whose end precedes its
   start** (`step` takes `span_b` from a deletion's empty span). Edge; a deletion closes its own
   clause in every measured run.
@@ -79,12 +82,6 @@ follows is what is still open.
 
 ## Still open from Stage 2 (2026-09-05)
 
-- **The manners do not survive the switch, though the trunk does.** A restored resident has its own
-  lines on its trunk (the self-echo commit) but an empty suppression ladder, so a seat can repeat
-  itself once after the AI switch is flipped. Seen in the driver's own tape: the SKEPTIC said its
-  Pacific line in two lives, in two phrasings. The fix is `last_say`, `last_clause` and the
-  resolved flags in the checkpoint's sidecar, and a wire accessor to read them out of the resident.
-  Cheap, and it should land before the week of real work.
 - **`emit` has no key.** It is a theme setting; the AI switch has `Ctrl+Shift+A` and wrap has
   `Alt+Z`. Stage 4 gives it one, because a toggle that is flipped during real work is a paired
   sample and belongs on the status line and the tape like the others.

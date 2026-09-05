@@ -55,7 +55,8 @@ std::string Wire::boot() const { std::lock_guard<std::mutex> g(mu_); return boot
 std::string Wire::boot_reason() const { std::lock_guard<std::mutex> g(mu_); return boot_reason_; }
 
 void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string& restore_path,
-                 long long expect_npast, const std::string& expect_sha, const std::string& refuse_reason) {
+                 long long expect_npast, const std::string& expect_sha, const std::string& refuse_reason,
+                 const std::string& manners) {
     if (on()) return;
     join();   // a previous Off or Error thread is collected first
     stop_.store(false, std::memory_order_release);
@@ -72,8 +73,8 @@ void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string&
         ckpt_have_ = false;
     }
     set_state(WireState::Loading);
-    th_ = std::thread([this, cfg, src, restore_path, expect_npast, expect_sha, refuse_reason] {
-        run(cfg, src, restore_path, expect_npast, expect_sha, refuse_reason);
+    th_ = std::thread([this, cfg, src, restore_path, expect_npast, expect_sha, refuse_reason, manners] {
+        run(cfg, src, restore_path, expect_npast, expect_sha, refuse_reason, manners);
     });
 }
 
@@ -112,6 +113,7 @@ void Wire::do_checkpoint(Resident& res, const std::string& path, const std::stri
     r.why = why;
     r.ok = res.checkpoint(path, r.err, r.bytes);
     r.npast = res.npast();
+    r.manners = res.manners_export();   // what each seat has said goes beside the trunk (SPEC 6.3.5)
     r.rev = cursor_rev_.load(std::memory_order_acquire);
     r.dur_ms = ms_since(t0);
     std::lock_guard<std::mutex> g(mu_);
@@ -120,7 +122,7 @@ void Wire::do_checkpoint(Resident& res, const std::string& path, const std::stri
 }
 
 void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, long long expect_npast, std::string expect_sha,
-               std::string refuse_reason) {
+               std::string refuse_reason, std::string manners) {
     // The resident is born and dies on this thread. Its destructor frees the context, the model
     // and the backend — that is the card coming back, and it is what "off" means.
     Resident res;
@@ -154,7 +156,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     }
     const bool wanted_restore = !restore_path.empty() || !reason.empty();
     const auto t0 = std::chrono::steady_clock::now();
-    if (!res.start(cfg, err, restore_path, expect_npast)) {
+    if (!res.start(cfg, err, restore_path, expect_npast, manners)) {
         { std::lock_guard<std::mutex> g(mu_); detail_ = err; }
         set_state(WireState::Error);
         return;

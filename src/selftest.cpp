@@ -1480,6 +1480,42 @@ int run_selftest() {
         }
     }
 
+    section("the manners survive the switch - exported, imported, and the ladder as a pure check");
+    {
+        // A restored resident had its own lines on its trunk and an empty suppression ladder, so a
+        // seat could say its piece again after the switch (the SKEPTIC's Pacific line, twice, in
+        // two lives, 2026-09-05). The ladder and its memory need no model, so the round trip and
+        // the refusals it produces are checked here on an unstarted resident.
+        Resident r;
+        std::string by;
+        check(std::string(r.manners_allows(1, "The Pacific is the largest ocean.", "the pacific", by)).empty(),
+              "a fresh resident allows any line");
+        const std::string lines =
+            "m1.say\tThe Pacific is actually the largest ocean, not the smallest.\n"
+            "m1.clause\tActually, the Pacific is the smallest ocean on Earth.\n"
+            "m1.age_ms\t5000\nm1.since_i\t2\nm1.resolved\t0\nm1.open\t1\n"
+            "m2.say\tDropping the users table is irreversible without a backup.\n"
+            "m2.clause\tI am going to drop the users table.\n"
+            "m2.age_ms\t400000\nm2.since_i\t3\nm2.resolved\t1\nm2.open\t0\n";
+        r.manners_import(lines);
+        check(std::string(r.manners_allows(1, "The Pacific is the largest ocean on Earth, not the smallest.", "the pacific again", by)) == "repeat",
+              "a restored seat will not repeat the line it said five seconds ago: repeat");
+        check(std::string(r.manners_allows(2, "The users table cannot be dropped without a backup.", "drop it", by)) == "resolved",
+              "and a line the world settled stays settled across the switch: resolved");
+        check(std::string(r.manners_allows(1, "Lunch is at noon in the small room.", "lunch", by)).empty(),
+              "while a new topic is allowed");
+        const std::string other = r.manners_allows(0, "Dropping the users table is irreversible without a backup.", "drop", by);
+        check(other == "repeat_other" && by == "SENTINEL", "and another seat may not say what the SENTINEL already said: " + other + " by " + by);
+        const std::string out = r.manners_export();
+        check(out.find("m1.say\tThe Pacific is actually") != std::string::npos && out.find("m2.resolved\t1") != std::string::npos &&
+              out.find("m2.open\t0") != std::string::npos && out.find("m0.") == std::string::npos,
+              "export round-trips what was imported, and nothing for a seat that never spoke");
+        Resident r2;
+        r2.manners_import("m1.say\tOld news.\nm1.clause\tx\nm1.age_ms\t1000\nm1.since_i\t99\nm1.resolved\t0\nm1.open\t1\n");
+        check(std::string(r2.manners_allows(1, "Old news.", "y", by)).empty(),
+              "a line said more boundaries ago than the window holds may be said again");
+    }
+
     section("refusals");
     {
         std::string err;

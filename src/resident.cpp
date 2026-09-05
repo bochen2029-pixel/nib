@@ -420,7 +420,8 @@ Resident::~Resident() {
     ctx_ = nullptr;
 }
 
-bool Resident::start(const Config& cfg, std::string& err, const std::string& restore_path, long long expect_npast) {
+bool Resident::start(const Config& cfg, std::string& err, const std::string& restore_path, long long expect_npast,
+                     const std::string& manners) {
     cfg_ = cfg;
     if (cfg_.n_ctx < kMinCtx) {
         err = "n_ctx " + std::to_string(cfg_.n_ctx) + " is below the minimum of " + std::to_string(kMinCtx);
@@ -575,6 +576,7 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
             npast_ = (long long)n;
             restored = true;
             boot_ = "restored";
+            manners_import(manners);   // the same mind, with its own memory of what it has said
         }
         if (!restored) llama_memory_seq_rm(p_->mem, TRUNK, -1, -1);
     }
@@ -793,24 +795,10 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
     return true;
 }
 
-// The manners ladder. A line that clears it is said and remembered; a line that does not is
-// RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
-// that held its tongue and a harness that lost a sentence has to stay visible on the tape.
-bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about) {
-    auto deny = [&](const char* why, const std::string& by) {
-        Suppressed s;
-        s.wall_ms = wall_ms();
-        s.boundary = boundary;   // the want's; the manners' own clock below stays the current count
-        s.seat = m;
-        s.margin = margin;
-        s.say = say;
-        s.clause = about;
-        s.why = why;
-        s.by = by;
-        supp_.push_back(std::move(s));
-        ++suppressed_;
-        return false;
-    };
+// The manners ladder as a pure check, so that --selftest fires at it with no model and a restored
+// resident's imported memory can be shown to work before a card is touched.
+const char* Resident::manners_allows(int m, const std::string& say, const std::string& about, std::string& by) const {
+    by.clear();
     const bool dup = !last_say_[m].empty() &&
                      (near_dup(say, last_say_[m]) || content_overlap(say, last_say_[m]) >= cfg_.dup_overlap);
     const bool in_win = (boundaries_ - last_say_i_[m]) <= kSuppBoundaries &&
@@ -820,15 +808,17 @@ bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std:
     const bool re_armed = dup && !resolved_[m] && about != last_clause_[m] &&
                           content_overlap(about, last_say_[m]) >= 2;
 
-    if (dup && resolved_[m]) return deny("resolved", "");
-    if (dup && in_win && !re_armed) return deny("repeat", "");
+    if (dup && resolved_[m]) return "resolved";
+    if (dup && in_win && !re_armed) return "repeat";
     for (int o = 0; o < 3; ++o) {
         if (o == m || last_say_[o].empty()) continue;
         const bool o_win = (boundaries_ - last_say_i_[o]) <= kSuppBoundaries &&
                            (wall_ms() - last_say_ms_[o]) <= kSuppTtlMs;
         if (!(resolved_[o] || o_win)) continue;
-        if (near_dup(say, last_say_[o]) || content_overlap(say, last_say_[o]) >= cfg_.cross_overlap)
-            return deny("repeat_other", kSeats[o].name);
+        if (near_dup(say, last_say_[o]) || content_overlap(say, last_say_[o]) >= cfg_.cross_overlap) {
+            by = kSeats[o].name;
+            return "repeat_other";
+        }
     }
     // The interruption budget, and it applies to a RESTATEMENT only: an unconditioned window
     // silences a legitimate new catch that happens to arrive soon after the last one, which is
@@ -836,14 +826,87 @@ bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std:
     if (cfg_.refractory_ms > 0 && last_say_ms_[m] && !re_armed &&
         (int64_t)(wall_ms() - last_say_ms_[m]) < cfg_.refractory_ms &&
         (content_overlap(say, last_say_[m]) >= 1 || content_overlap(about, last_clause_[m]) >= 1))
-        return deny("refractory", "");
+        return "refractory";
+    return "";
+}
 
+// The manners ladder. A line that clears it is said and remembered; a line that does not is
+// RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
+// that held its tongue and a harness that lost a sentence has to stay visible on the tape.
+bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about) {
+    std::string by;
+    const char* why = manners_allows(m, say, about, by);
+    if (why[0]) {
+        Suppressed s;
+        s.wall_ms = wall_ms();
+        s.boundary = boundary;   // the want's; the manners' own clock stays the current count
+        s.seat = m;
+        s.margin = margin;
+        s.say = say;
+        s.clause = about;
+        s.why = why;
+        s.by = by;
+        supp_.push_back(std::move(s));
+        ++suppressed_;
+        return false;
+    }
+    const bool dup = !last_say_[m].empty() &&
+                     (near_dup(say, last_say_[m]) || content_overlap(say, last_say_[m]) >= cfg_.dup_overlap);
     if (!dup || !cond_open_[m]) { cond_open_[m] = true; resolved_[m] = false; }
     last_say_[m] = say;
     last_clause_[m] = about;
     last_say_i_[m] = boundaries_;
     last_say_ms_[m] = wall_ms();
     return true;
+}
+
+// ---- the manners across the switch --------------------------------------------------------
+static std::string flat(const std::string& s) {
+    std::string o = s;
+    for (char& c : o) if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+    return o;
+}
+
+std::string Resident::manners_export() const {
+    std::string o;
+    const uint64_t now = wall_ms();
+    for (int m = 0; m < 3; ++m) {
+        if (last_say_[m].empty()) continue;
+        const std::string p = "m" + std::to_string(m) + ".";
+        o += p + "say\t" + flat(last_say_[m]) + "\n";
+        o += p + "clause\t" + flat(last_clause_[m]) + "\n";
+        o += p + "age_ms\t" + std::to_string(last_say_ms_[m] && now > last_say_ms_[m] ? now - last_say_ms_[m] : 0) + "\n";
+        o += p + "since_i\t" + std::to_string(boundaries_ >= last_say_i_[m] ? boundaries_ - last_say_i_[m] : 0) + "\n";
+        o += p + "resolved\t" + (resolved_[m] ? "1" : "0") + "\n";
+        o += p + "open\t" + (cond_open_[m] ? "1" : "0") + "\n";
+    }
+    return o;
+}
+
+void Resident::manners_import(const std::string& lines) {
+    // Fields arrive in export's order, say first; a seat is remembered only if it said something.
+    // The age becomes a clock reading on THIS process's clock; a line more boundaries ago than the
+    // suppression window holds is pushed out of the time window too, so `in_win` reads false.
+    const uint64_t now = wall_ms();
+    size_t i = 0;
+    while (i < lines.size()) {
+        size_t j = lines.find('\n', i);
+        if (j == std::string::npos) j = lines.size();
+        const std::string line = lines.substr(i, j - i);
+        i = j + 1;
+        const size_t t = line.find('\t');
+        if (t == std::string::npos || line.size() < 4 || line[0] != 'm' || line[2] != '.') continue;
+        const int m = line[1] - '0';
+        if (m < 0 || m > 2) continue;
+        const std::string key = line.substr(3, t - 3), val = line.substr(t + 1);
+        if (key == "say") { last_say_[m] = val; last_say_i_[m] = boundaries_; last_say_ms_[m] = now ? now : 1; }
+        else if (last_say_[m].empty()) continue;
+        else if (key == "clause") last_clause_[m] = val;
+        else if (key == "age_ms") { const uint64_t age = strtoull(val.c_str(), nullptr, 10); last_say_ms_[m] = now > age ? now - age : 1; }
+        else if (key == "since_i") { if (strtoull(val.c_str(), nullptr, 10) > kSuppBoundaries) last_say_ms_[m] = now > kSuppTtlMs + 1 ? now - kSuppTtlMs - 1 : 1; }
+        else if (key == "resolved") resolved_[m] = val == "1";
+        else if (key == "open") cond_open_[m] = val == "1";
+    }
 }
 
 void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& out) {
@@ -1076,6 +1139,17 @@ void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
     if (line.empty()) return;
     last_world_line_ = line;   // the newest thing the world said, for the seam's acceptance test
+    // THE FLUSH CLOCK STARTS AT THE PERCEPT (SPEC 6.2.13, 2026-09-05). The pre-registered law is
+    // boundary OR 24 tokens OR 1500 ms; fusord measured the 1500 ms from the last judgment, on a
+    // stream whose words arrive one at a time with real time between them. A pad's percept
+    // arrives whole and is decoded in one burst, so measured that way the clock had always
+    // already expired when a percept began after any pause, and the `t` path fired on the first
+    // six tokens of every sentence after every pause — three boundaries and nine probes for one
+    // sentence in the un-say window's log — and never on a stalled clause. Measured from here, a
+    // `t` means the decode of this percept itself stalled, which is the only stall a pad can have
+    // (the compiler's own quiet is the stall timeout for the hand). The bytes on the trunk and the
+    // probe frame are untouched; only the boundary population moves, and toward the tune's.
+    last_flush_ms_ = wall_ms();
     const auto pre = tk(p_->vocab, std::string("\n[") + lane + "] ", false);
     if (!room_for(pre.size())) { dropped_words_ += count_words(line); return; }
     if (!decode(pre, TRUNK, npast_, true)) return;

@@ -151,6 +151,7 @@ struct View {
         bool have = false;                 // a checkpoint exists beside this document
         bool wanted = false;               // and its sidecar agrees with the document and the tape
         std::string bin, txt, digest, sha, reason;
+        std::string manners;               // the sidecar's `m<seat>.<field>` lines, for the restored resident
         long long npast = 0;
         uint64_t rev = 0, epoch_ms = 0;
     } restore;
@@ -724,6 +725,18 @@ void decide_restore() {
     r.rev = strtoull(meta_get(m, "rev").c_str(), nullptr, 10);
     r.epoch_ms = strtoull(meta_get(m, "epoch_ms").c_str(), nullptr, 10);
     if (r.npast <= 0) return refuse("the sidecar records no tokens");
+    // SPEC 6.2.11.3: the tape row the checkpoint binds to must be in this tape or one it resumed
+    // from, or the tape was replaced and the checkpoint cannot be trusted. Decided here, before
+    // the model loads, so the refusal is a refusal and not a fold with an error on its row.
+    {
+        if (g->tape.is_open()) g->tape.flush();   // rows in the buffer must be on disk to be read back
+        std::vector<TapeRow> rows;
+        std::string e;
+        if (!rows_after(g->tape.path(), r.digest, rows, e)) return refuse(e);
+    }
+    // what each seat had said, for the same mind coming back (SPEC 6.3.5)
+    for (const auto& kv : m)
+        if (kv.first.size() > 3 && kv.first[0] == 'm' && kv.first[2] == '.') r.manners += kv.first + "\t" + kv.second + "\n";
     r.wanted = true;
     g->restore = r;
 }
@@ -775,6 +788,7 @@ void write_sidecar(const CkptResult& r) {
     meta += "version\t" + std::string(kVersion) + "\n";
     meta += "doc\t" + narrow(g->path) + "\n";
     meta += "tape\t" + g->tape.path() + "\n";
+    meta += r.manners;   // `m<seat>.<field>` lines: what each seat has said, so the ladder survives the switch
     if (!write_file_atomic(base + ".meta", meta, e2)) { set_status("checkpoint: " + e2); return; }
     g->last_ckpt_ms = mono_ms();
     g->last_ckpt_deltas = g->wire.deltas();
@@ -827,7 +841,7 @@ void start_resident() {
     decide_restore();
     const View::Restore& r = g->restore;
     g->wire.start(g->rcfg, g->ingest.get(), r.wanted ? r.bin : std::string(), r.npast, r.sha,
-                  r.have && !r.wanted ? r.reason : std::string());
+                  r.have && !r.wanted ? r.reason : std::string(), r.wanted ? r.manners : std::string());
     g->last_state = WireState::Loading;
     nlog("resident	loading	%s	%s", g->th.model.c_str(), r.wanted ? "restore" : r.have ? "twin" : "seed");
 }

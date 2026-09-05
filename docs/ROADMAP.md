@@ -26,6 +26,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **I** | 1d · the trunk as an asset — the checkpoint beside the document, word wrap | ✔ 2026-09-05 | 0.8.0 |
 | **I** | 2 · emission, with floor control | ✔ 2026-09-05 | 0.9.0 |
 | **I** | 3 · un-saying, made visible | ✔ 2026-09-05 | 0.10.0 |
+| **I** | the read of 0.10.0 — the span memory, own speech through the document, the manners across the switch | ✔ 2026-09-05 | 0.10.1–0.10.3 |
 | **I** | 4 · the two switches, and the paired record | ○ | |
 | **I** | 5 · **a week of real work** — the falsifier for the whole idea | ○ | |
 | **II** | 6 · discovery | ○ | |
@@ -33,7 +34,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**213 checks green in the exe, 30 more from the window driver, and 65 with the resident switched on
+**236 checks green in the exe, 30 more from the window driver, and 68 with the resident switched on
 inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
 gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
 llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
@@ -487,6 +488,40 @@ its job and the disposition is not: say-it-once is a fine-tune target, exactly a
 held since 2026-08-12, and this is the first time nib has measured its own version of it. It is
 also why the un-say has a window of its own in the driver — after a long session there is nothing
 fresh for a seat to begin, so there is nothing to take back.
+
+### ✔ The read of 0.10.0 · 0.10.1 – 0.10.3
+
+A fresh session read the whole repository and the chat that built Stages 2 and 3, rebuilt, and ran
+the oracles; every falsifier held, and the defects were one level below where the falsifiers look
+— the review's own sentence about this repository, holding again (`docs/BACKLOG.md`, first
+section; the devlog, "the read of 0.10.0"). Three commits, each with its falsifier fired at:
+
+- **0.10.1 — the span memory, and the want's own boundary.** One entry per boundary, 64 deep, a
+  struct the selftest fires at; a want whose boundary fell out is refused (`span-unknown`), never
+  placed after line 1. Every row a want produces carries the want's boundary, and the forming
+  plane is anchored to the same span. *Falsifier: three seats of one boundary counted thrice; a
+  fallen-out boundary reported as span zero.* — Did not fire; the un-say's abort row now names the
+  claim's own boundary.
+- **0.10.2 — own speech through the document** (SPEC 5.1.6 and 6.3.6 amended, 6.2.11.3.1). The
+  resident's line reaches the trunk only once the editor has written the block, as an own-speech
+  percept on the seat's lane, decoded raw and judged never; both folds attribute by author; a
+  refused line never reaches the trunk; a restore cannot replay a line the trunk holds. *Falsifier:
+  a percept on the hand's lane beginning with a seat's tag, live or folded; no own-speech row after
+  a seat wrote.* — Did not fire: 5 own-speech rows and 0 rows of the hand saying a seat's line,
+  across a seed, a restore that replays the lines committed at stop, and a twin.
+- **0.10.3 — the manners across the switch, the refusal, the flush clock.** The sidecar carries
+  what each seat said; the ladder is a pure check; a checkpoint whose row is in no tape is refused
+  before the model loads; the 1500 ms flush clock starts at the percept (SPEC 6.2.13). *Falsifier:
+  a restored seat repeats its line; a `t` boundary on the sixth token of a sentence typed after a
+  pause.* — Did not fire: the sidecar carries the seats' lines and a restored ladder refuses a
+  repeat (seven checks with no model); the un-say log went from three boundaries to two on the
+  same typed claim with zero `t` rows, the main case's log reads 57 `b`, 3 `f` and no `t`, and the
+  CLI's margins run with the mouth became byte-identical across two runs (SKEPTIC +5.73, SPEAKER
+  +4.32, SENTINEL +5.26; 11 boundaries, 33 probes).
+
+The same evening filed four brainstorms with their nulls (`docs/BRAINSTORMS_2026-09-05.md`): voice
+as a lane, the two-gear escalation, vision as a floor sensor, and the screen saver in which the
+resident holds the floor. None before Stage 4.
 
 ### ○ Stage 4 — the two switches, and the paired record
 

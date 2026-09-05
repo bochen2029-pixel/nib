@@ -38,15 +38,15 @@ rescues that, and the finding gets published beside the laws it bought.
 
 | | |
 |---|---|
-| version | **0.10.2** (the read of 0.10.0's remediation, in progress; see `docs/BACKLOG.md`, first section), branch `main` |
+| version | **0.10.3** (the read of 0.10.0's remediation, landed as 0.10.1–0.10.3; see `docs/BACKLOG.md`, first section), branch `main` |
 | public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 22 commits through this handoff |
 | stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3 — **all green, every falsifier fired at** |
 | next | **Stage 4** — the two switches and the paired record |
-| oracles | `--selftest` **229** · `tools/drive.py` **30** · `tools/drive.py --ai` **67** |
+| oracles | `--selftest` **236** · `tools/drive.py` **30** · `tools/drive.py --ai` **68** |
 
 ```bash
 build.bat                          # /W4 /WX, zero warnings, two gates
-nib.exe --selftest                 # 229 passed, 0 failed        (no model, no GPU)
+nib.exe --selftest                 # 236 passed, 0 failed        (no model, no GPU)
 python tools/drive.py              # 30 passed, 0 failed         (no model, no GPU)
 python tools/drive.py --ai         # 65 passed, 0 failed         (needs the card, ~6 min)
 nib.exe --about                    # the serve pin, the backends by name, the module gate
@@ -154,7 +154,7 @@ model and no card.
 | `src/wire.h/.cpp` | The resident on its own thread inside the window. Two rings out (judgments, emissions), a forming *state*, the floor gate, the checkpoint, `fold_log` and `fold_tape`. |
 | `src/tape.h/.cpp` | The family's append-only hash-chained record: BLAKE2b-256, canonical JSON, six keys a row. Ported from fray, which is glance's, which is REGISTRAR's. Torn-row recovery. Also SHA-256 (the model's hash) and the atomic file helpers. |
 | `src/edit.cpp` | The Win32/GDI window. Every edit goes through `Doc::splice`. Per-monitor DPI, word wrap, the gutter, two status rows, the forming plane, the floor's second gate, block placement, the driver seam. |
-| `src/selftest.cpp` | The oracle: 229 checks, none of which need a model. |
+| `src/selftest.cpp` | The oracle: 236 checks, none of which need a model. |
 | `src/nib.cpp` | The console verbs. |
 | `tools/drive.py` | The window battery: posts messages, reads artefacts, never synthesises input and never looks at the screen. |
 | `tools/snap.py` | Gitignored snapshots with an MD5 manifest (§10). |
@@ -333,23 +333,25 @@ reflow or reformat any of those literals.
 
 Full list in `docs/BACKLOG.md`. The ones that matter:
 
-1. **The manners' memory dies with the resident while the trunk survives.** A restored resident has
-   its own lines on its trunk but an empty suppression ladder, so a seat can repeat itself once
-   after the switch. Three strings in the checkpoint's sidecar. **Should land before the week.**
-2. **The seats perseverate.** One driver run composed fourteen sentences: six said, eight refused,
+1. **The seats perseverate.** One driver run composed fourteen sentences: six said, eight refused,
    and the eight were the same two lines. The harness is doing its job and the disposition is not.
-   Say-it-once is a fine-tune target; nib now measures its own rate to tune against.
-3. **`settled_by_world` has never fired in a measured run** — only `margin_flipped`. The acceptance
+   Say-it-once is a fine-tune target; nib now measures its own rate to tune against, and the
+   screen saver on the checklist (`docs/BRAINSTORMS_2026-09-05.md` §4) would measure it hardest.
+2. **`settled_by_world` has never fired in a measured run** — only `margin_flipped`. The acceptance
    phrase list is small. Sweep the tapes offline before widening it: a false acceptance silences a
    seat.
-4. **The floor is global, not per block.** Stricter than the spec requires, therefore safe, but
-   writing in one paragraph silences a seat that wanted to speak about another.
-5. **The `.prev` checkpoint generation is written and never read.** Needs a fault-injection test.
-6. **The first fold over a long document costs 39 s** at word grain. The checkpoint means it is
+3. **The floor is global, not per block.** Stricter than the spec requires, therefore safe, but
+   writing in one paragraph silences a seat that wanted to speak about another. The screen saver
+   needs the per-block floor.
+4. **The `.prev` checkpoint generation is written and never read.** Needs a fault-injection test.
+5. **The first fold over a long document costs 39 s** at word grain. The checkpoint means it is
    normally paid once.
-7. **The T sweep** (SPEC 14.3) needs a real typing tape; the synthetic cadence never pauses.
-8. **The driver's windows sit on the operator's screen.** Move them off-screen, not hidden — a
+6. **The T sweep** (SPEC 14.3) needs a real typing tape; the synthetic cadence never pauses.
+7. **The driver's windows sit on the operator's screen.** Move them off-screen, not hidden — a
    hidden window gets no `WM_PAINT` and the latency instrument measures keystroke to painted.
+8. **Four brainstorms are on the checklist, none before Stage 4 and the week:** voice as a lane,
+   the two-gear escalation, vision as a floor sensor, and the screen saver — each with its null in
+   `docs/BRAINSTORMS_2026-09-05.md`.
 
 ---
 
@@ -357,7 +359,10 @@ Full list in `docs/BACKLOG.md`. The ones that matter:
 
 **If you are continuing the work:** Stage 4, per §8. Read `docs/review/LIFT_MAP_K5_2026-09-05.md`
 before touching the resident's loop, and the review's §5.5 for the shadow twin and `--twin`. The
-cheap win first, if you want one: gap 1 above (the manners in the sidecar).
+remediation of the read of 0.10.0 (`docs/BACKLOG.md`, first section) landed as 0.10.1–0.10.3; what
+it found and decided is in the devlog under "the read of 0.10.0" — read that entry before the
+resident's own-speech path is touched, because the design there replaced the one the K5 lift map
+describes.
 
 **If you are a fresh session:** read `CLAUDE.md`, then `docs/SPEC.md`, then this file's §4 and §10,
 then `build.bat && nib.exe --selftest && python tools/drive.py`. Do not run `--ai` until you have
