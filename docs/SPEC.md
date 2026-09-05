@@ -1,11 +1,13 @@
 # nib — SPECIFICATION
 
-*Rev 0.6 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
+*Rev 0.7 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
 governs the built artefact and the blueprint governs the intent. Where either disagrees with
 `docs/ASSEMBLY.md` on Etherpad or on the sync model, ASSEMBLY governs. Revs 0.1–0.4 were headed
 2026-09-03; git says they were written 2026-09-04, and this file dates by git. Rev 0.5 is the QC
 pass of that day (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, §3 and §8): every clause it
-touches carries the date. Rev 0.6 is Stage 1c, the wire (2026-09-05), and the first clauses that
+touches carries the date. Rev 0.7 is Stage 1d (2026-09-05): word wrap (§4.7), the trunk as an
+asset (§6.2.11), the batch cap the second life forced (§6.2.12), and the tape's torn-row recovery
+(§8.1.4). Rev 0.6 was Stage 1c, the wire (2026-09-05), and the first clauses that
 cite **K5**, the converged fusord kernel (`C:\fusor1\converge\src\fusord.cpp`, 2026-09-04, in flux
 in another session): by operator ruling a source of ideas and never of bytes (CLAUDE.md).*
 
@@ -235,9 +237,25 @@ so a second person on the same binary is a different file), `model`, `llama_dir`
 ### 4.6 Not built **[SPECIFIED]**
 
 Find and replace; line numbers; multiple documents; a tab bar. None is required by any stage below
-Act II. **Word wrap is not in this list any more:** raised by the operator on 2026-09-05 (a long line
-runs off the right edge with no scroll and no sign that it has), it is Stage 1d's, with a toggle on
-the status line and the tape (`docs/BACKLOG.md`).
+Act II.
+
+### 4.7 Word wrap **[BUILT 2026-09-05]**
+
+4.7.1 A document line is shown as one or more **rows** of at most the client width in characters,
+broken after a space where the line offers one and inside a run where it does not, never inside a
+UTF-8 sequence. The painter, the caret, the mouse, vertical movement and the wheel address rows;
+`Home` and `End` address the logical line. With wrap off every line is one row and the view scrolls
+sideways to keep the caret in sight.
+
+4.7.2 The falsifier is byte conservation, as ingest's is: the rows tile the line with no gap and no
+overlap, no row exceeds the width, and **offset → row/column → offset is the identity at every
+offset of a wrapped line**. Fired at in `--selftest`; the driver types a 220-character line, toggles
+wrap, walks the caret across it and asserts the bytes on disk and a byte-exact replay.
+
+4.7.3 Wrap is on by default (`nib.theme`, `wrap`), toggled with `Alt+Z`. Like the AI switch it is a
+state that changes what is seen, so its transitions are `switch` rows on the tape, and the status
+line reads `no-wrap` while it is off. Raised by the operator on 2026-09-05: a long line ran off the
+right edge with no scroll and no sign that it had.
 
 ---
 
@@ -444,7 +462,9 @@ held in the process. The trunk's state MAY persist on disk beside the document, 
 across the toggle. **Only the trigger may differ**: evidence at a thought boundary, versus an
 explicit keystroke. Any other difference makes the toggle a preference instead of an experiment.
 
-6.1.3 Every transition of either switch MUST be recorded on the tape with its timestamp.
+6.1.3 Every transition of either switch MUST be recorded on the tape with its timestamp. So MUST
+every other state that changes what the person sees or what the mind holds: word wrap (§4.7.3) is
+a `switch` row for the same reason.
 
 ### 6.2 The loop
 
@@ -500,13 +520,29 @@ independently. This is nib's one departure from the 08-12 kernel's loop, and a c
 kernel after it.
 
 6.2.10 **The probe's cost carries its co-tenancy [measured 2026-09-05].** Three seats at one
-boundary cost 118–123 ms on a quiet card and 312–327 ms on the same binary, the same stream and the
+boundary cost 107–122 ms on a quiet card and 312–327 ms on the same binary, the same stream and the
 same card an hour earlier with llama-server busy — a factor of 2.7 from what else the card was
 doing. A probe latency printed without the card's state beside it is therefore not a measurement of
-the resident. **[SPECIFIED, Stage 1d]** free VRAM on every judgment row and on the status line, as
-K5 puts it on every boundary row.
+the resident. **[BUILT 2026-09-05]** free VRAM is read beside every probe round, rides every
+judgment row on the tape, and is on the status line.
 
-6.2.11 **The trunk is an asset [SPECIFIED, Stage 1d].** The resident's held state is not a fold of
+6.2.12 **The decode batch is capped at 64 tokens [BUILT 2026-09-05], and it is not a performance
+choice.** Above roughly 64 rows `ggml-cuda` leaves its quantized matmul for cuBLAS, and on this
+build that path aborts the process with `CUDA error: invalid argument` in
+`ggml_cuda_compute_forward` **on the second model loaded into one process** — which is every life
+of the AI switch after the first. Bisected on this box: 32 and 64 seed a second life; 96, 128 and
+512 abort. A restored life never crashed because the only decode it makes above 64 rows is the
+seed it does not do; that is why the fault presented as "seeding twice crashes". The cap has a
+second and stronger reason: **it makes every life numerically identical.** With the cliff left in,
+the first life would judge through cuBLAS and the second through the quantized path, and the same
+sentence would score differently in the same session — measured: mean 0.16 and max 0.84 logits of
+drift between the two paths, and one near-zero seat crossing sign. nib's only decode above 64
+tokens is the seed (430); a probe frame is about 30 and a word is one to three, so the cap costs
+seven batches instead of one, once per life. `NIB_CHUNK` overrides it for experiments only. **The
+tables of §6.2.10 and the ROADMAP were re-measured under the cap; anything older is off by the
+drift above.**
+
+6.2.11 **The trunk is an asset [BUILT 2026-09-05].** The resident's held state is not a fold of
 the log: a resident rebuilt from its log is the twin (5.1.14; the corpus's amendment to the fold
 law, and K5's `checkpoint`/`restore`). At switch-off and at quiet, the trunk's KV and token list are
 saved atomically beside the document — a temporary, a write-through replace, the previous generation
@@ -514,9 +550,42 @@ kept — with a sidecar written last that carries the model's SHA-256, the serve
 count, the document revision, the tape head and the wall time of the last percept. At switch-on the
 checkpoint is restored if every field agrees, the revisions after it are folded, and the resume tick
 (5.1.9.2) tells the mind how long it was away; if anything disagrees the fold runs and the session
-row says `twin`. Measured in K5's lineage on this model: about 53 MB fixed plus 17 KB a token, so
-about 340 MB at 16k, written in under 100 ms from cache. Off still returns the card; what persists is
-on disk, beside the tape, and the tape says so.
+row says `twin`. Off still returns the card; what persists is on disk, beside the tape, and the tape
+says so.
+
+6.2.11.1 **What is written, and in what order.** Beside the document: `<doc>.trunk.bin` (the state
+and the token list), `.trunk.txt` (the text the trunk had perceived through) and `.trunk.meta` (the
+sidecar). The state file is written to a temporary and replaced write-through, the previous
+generation kept as `.bin.prev`; the text next; **the sidecar last**, so a sidecar never describes a
+state that is not on disk. The sidecar carries the model's path and SHA-256, the serve hash, the
+window, the KV type, the token count, the document revision, **the digest of the tape row that
+revision's changeset produced**, the wall time, and the text's BLAKE2b. A rename moves all four
+beside the tape.
+
+6.2.11.2 **What the restore checks, and who checks it.** The editor, before the model loads: the
+sidecar exists and names this model, this serve format, this window and this KV type; the state
+file exists; the text sidecar is on disk and hashes as recorded. The thread, as it loads: the
+model's SHA-256 equals the sidecar's, and the state holds exactly the token count the sidecar
+claims. **Any disagreement is a refusal with its reason, and a refused restore is the twin**
+(SPEC 5.1.14) — seeded, folded from the log, and labelled `twin` with the reason on the session
+row and the status line. Measured 2026-09-05: a text sidecar with one byte appended is refused,
+and the resident that follows is the twin.
+
+6.2.11.3 **The world since the checkpoint.** A restored trunk has perceived through one document
+revision, whose tape row the sidecar names. `rows_after` walks that tape — and, through `resume`
+rows, the tapes it continued from — for every row after that one; `fold_tape` replays the
+`changeset` rows against the text the checkpoint was taken at, treating a session's `open` row as
+a diff against what the rows so far produce, so a file edited outside nib is perceived as an edit
+and not as a new document. Whatever still differs from the document as it stands now is perceived
+last. A digest in none of the tapes is a refusal: the tape was replaced, and a checkpoint bound to
+it cannot be trusted.
+
+6.2.11.4 **When it is taken.** At switch-off and at close, on the way out, after the thread has
+drained the ring and judged the open clause; and while running, at most every five minutes and
+only when the world is quiet — two seconds since the last keystroke, nothing on the ring, nothing
+in the spool, nothing pending in the compiler — so the trunk and the revision the sidecar names
+agree about what it saw. A checkpoint of a restored trunk that has not yet been folded forward is
+the same trunk the existing sidecar describes, and that sidecar is left alone.
 
 ### 6.3 Emission
 
@@ -580,10 +649,14 @@ session's tape with both verifiers.
 every switch transition, the model's hash, and the seat's mandate. **[BUILT for what exists]** —
 row kinds today: `session_open`, `changeset` (author, kind, the changeset), `percept` (id, lane,
 kind, rev, span, folded, text), `tick`, `fold`, `switch`, `session` (model path and **SHA-256**,
-model bytes and the hash's cost, serve hash, window, KV type, devices, backends by name, module
-count, the seats' mandates, the flush law's constants, `mode`, `egress_bytes`), `mandate` ×3,
-`coefficient` for every dial, `judgment` (boundary, rev, span, first and last percept id, reason,
-boundary mass, clause, the three margins), `end`, `save`, `resume`, `error`, `session_close`. A
+model bytes and the hash's cost and whether it was remembered, serve hash, window, KV type,
+devices, backends by name, module count, free VRAM at load, the seats' mandates, the flush law's
+constants, **`boot` — seed, restored or twin — and its reason**, `mode`, `egress_bytes`),
+`mandate` ×3, `coefficient` for every dial, `judgment` (boundary, rev, span, first and last percept
+id, reason, boundary mass, **free VRAM**, clause, the three margins), `fold` (what the trunk was
+brought up from, how many revisions or rows, the resume tick, what did not fit the budget),
+**`ckpt`** (why, bytes, tokens, the revision and the tape row it binds to, how long it took),
+`end`, `save`, `resume`, `warn`, `error`, `session_close`. A
 hold is a judgment row whose margins are all below zero; there is no separate row because there is
 no emit path yet. `abort` and `emit` arrive with Stages 2 and 3.
 
@@ -595,10 +668,12 @@ moment in the session. **[BUILT]** — the `session` row, written when the model
 judgment; a keystroke never pays for a write; a crash loses at most that window. The tape lives
 beside the document, appended across sessions; an untitled document's lives in `runs/` beside the
 exe until it has a name, and a rename chains on with a `resume` row naming the previous file and
-head. **[SPECIFIED, Stage 1d]** torn-row recovery: a torn last line, the mark of a crash inside a
-write, MUST be skipped with a `warn` row naming the bytes and the chain continued from the last
-complete row — today it refuses the file and the session runs untaped behind a status message
-(K5's F6).
+head. **[BUILT 2026-09-05]** torn-row recovery: a torn last line — no newline after it, the mark
+of a crash inside a write — is cut off, counted, and the chain continues from the last complete
+row, with a `warn` row naming the bytes before anything else is written. A last line that is
+complete and whose digest is wrong still refuses to open: the rule is for fragments, never for
+alterations. Until that day a torn row refused the file and the session ran untaped behind a
+status message (K5's F6).
 
 8.1.5 **A tape without `session_close` ended abnormally.** That is a fact a reader may rely on, not
 a defect; the driver found it on 2026-09-05 by closing a dirty window into a prompt it could not
@@ -665,7 +740,13 @@ incomplete view MUST withdraw (§6.4). Partition-heal is wired to the abort path
 
 ## 11 · Testing
 
-11.1 `--selftest` MUST pass before every commit. **[BUILT: 176 checks, 2026-09-05]**
+11.1 `--selftest` MUST pass before every commit. **[BUILT: 201 checks, 2026-09-05]**
+
+11.1.1 **A crash must name itself.** The window installs a terminate handler and an unhandled
+exception filter that write what they know to `NIB_LOG` before the process dies, and `NIB_TRACE`
+prints the resident's start-up steps to stderr. Bought on 2026-09-05: a CUDA abort inside ggml
+arrived as one line naming a file in llama.cpp and nothing else, and cost an hour of bisecting
+(§6.2.12). An error or a warning from llama or ggml now reaches stderr whatever the verbosity.
 
 11.2 Every stage below Stage 2 MUST remain runnable with no model in the process. A battery that
 needs a 9B on a busy card is a battery that stops being run.
@@ -677,11 +758,13 @@ splices (canonical form and applied result), one thousand random edits interleav
 11.4 The window MUST be verified by a driver that posts window messages and reads an artefact —
 `WM_APP+1` commands and the `NIB_LOG` file. **Synthesising global input is forbidden**: it lands
 wherever the focus happens to be, which can type into another application's window. **[BUILT]** —
-`tools/drive.py`, 27 checks, 2026-09-04, and 14 more with `--ai`, which switches the resident on
-inside the window and needs the card (2026-09-05): the load on its own thread, the fold, the
-SKEPTIC's catch over the ring, keystroke-to-painted with the mind on, the model's hash on the
-session row, the card returned, and both verifiers on the tape. One model on the card at a time:
-`--ai` and any `--resident` run are sequential.
+`tools/drive.py`, 30 checks, and 21 more with `--ai`, which switches the resident on inside the
+window and needs the card (2026-09-05): the load on its own thread, the fold, the SKEPTIC's catch
+over the ring, keystroke-to-painted with the mind on, the model's hash on the session row, the card
+returned, both verifiers on the tape, **and the trunk's round trip — off saves it, on restores it
+instead of seeding, the restored seat catches a new false claim, and a sidecar that disagrees is
+refused into the twin**. One model on the card at a time: `--ai` and any `--resident` run are
+sequential.
 
 11.4.3 **A driven window MUST NOT take the keyboard** (2026-09-04). The driver sets `NIB_DRIVER`,
 and the window it drives is created no-activate and shown without activation: posted messages
@@ -752,5 +835,12 @@ measurement (the marker closes a thought of its own and does not neutralise the 
 tune's question; the runtime keeps it configuration.
 
 14.10 How the fold should judge history: at word grain as today, at prefill speed with judgments
-only at the compiler's closed thoughts, or not at all when a checkpoint is present. Decided by
-Stage 1d's checkpoint and by measuring the prefill fold's cost against the 39 s of 5.1.14.
+only at the compiler's closed thoughts, or not at all when a checkpoint is present. **Half-answered
+2026-09-05:** with a checkpoint the fold is only the world since it, so the cost is paid once, on
+the first switch-on over a document. The prefill fold is still worth measuring for that first time
+and for the twin.
+
+14.11 Whether the batch cap of §6.2.12 can be lifted — that is, whether the cuBLAS path's failure
+on a second model in one process is this llama.cpp build's or the estate's card's. The cap costs
+nib nothing, so this is a question for the DLLs, not for nib; the day they move, re-bisect before
+raising it, because the numbers move with the path.

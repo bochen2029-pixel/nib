@@ -4,15 +4,18 @@
 turn.** A plain-text editor for Windows in which a resident mind writes beside you in real time —
 and later, on a LAN, other people do too.
 
-> **Status: 0.7.0 · Stages 0a–1c built and green (2026-09-05).** The Easysync port, the op-log
-> document, the window, the ingest compiler, a resident that only holds, and the wire: the resident
-> on its own thread inside the window, a gutter that renders its margins, an AI switch that unloads
-> the model and returns the card, and the family's hash-chained tape beside the document — 176
-> checks in the exe, 27 from the window driver and 41 more with the resident on, run before every
-> commit. Stage 1d (the trunk as an asset: a checkpoint beside the document) then Stage 2
-> (emission) are next. The normative spec is `docs/SPEC.md`; the stages and their falsifiers are
-> `docs/ROADMAP.md`; the open items are `docs/BACKLOG.md`; the rules are `CLAUDE.md`; the review
-> that set the work order is `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`. The name is provisional.
+> **Status: 0.8.0 · Stages 0a–1d built and green (2026-09-05).** The Easysync port, the op-log
+> document, the window with word wrap, the ingest compiler, a resident that only holds, the wire
+> (the resident on its own thread inside the window, a gutter that renders its margins, an AI
+> switch that unloads the model and returns the card, the family's hash-chained tape beside the
+> document), and the trunk as an asset: switch it off and the mind's held state is saved beside
+> the document; switch it on and the same mind comes back, told how long it was away and shown
+> what happened meanwhile — or, if anything about the checkpoint disagrees, a fresh one that says
+> it is the twin. 201 checks in the exe, 30 from the window driver and 51 more with the resident
+> on, run before every commit. Stage 2 (emission) is next. The normative spec is `docs/SPEC.md`;
+> the stages and their falsifiers are `docs/ROADMAP.md`; the open items are `docs/BACKLOG.md`; the
+> rules are `CLAUDE.md`; the review that set the work order is
+> `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`. The name is provisional.
 >
 > One exe, like Notepad++: no runtime, no browser, no script to start it, no Node. (Node appears
 > once, at development time only, as the oracle behind `tools/etherpad_harness`.)

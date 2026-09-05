@@ -4,46 +4,33 @@
 it lands (named with its version in the ROADMAP) or when it is deliberately not done (ROADMAP,
 "Deliberately not doing"). Nothing here is a promise about order except the first section.*
 
-## Stage 1d — the trunk as an asset (next, 2026-09-05)
+## Landed in 0.8.0 (Stage 1d, 2026-09-05)
 
-- **Word wrap.** *Operator, 2026-09-05.* There is none, there is no toggle, and a long line runs off
-  the right edge with no horizontal scroll, so the window can hide text with no sign that it has.
-  Wrap on by default for prose, a toggle on the status line and the tape (every state that changes
-  what is seen is a state), and a horizontal scroll when wrap is off. The column arithmetic of SPEC
-  4.1.1 stays: a wrapped line is several rows of one line.
-- **The checkpoint beside the document.** The trunk's KV and token list saved atomically next to the
-  tape at switch-off and at quiet, with a sidecar carrying the model's SHA-256, the serve hash, the
-  token count, the document revision, the tape head and the wall time of the last percept; restored
-  at switch-on with every field checked, else the fold and the label *twin*. The idea is K5's
-  (`C:\fusor1\converge\src\fusord.cpp`, `checkpoint` / `restore`, 2026-09-04), and the corpus's own
-  amendment to the fold law: a resident rebuilt from its log is the twin. Measured there: about
-  53 MB fixed plus 17 KB per token on this model, so about 340 MB at nib's 16k window; writes of
-  60 MB took 56–92 ms. Replaces a fold that costs 39 s for 4.2 KB (ROADMAP, Stage 1c).
-- **The resume tick.** On restore, and on a fold that resumes a tape, `[tick +Ns]` for the wall gap
-  since the last percept, so the mind is told how long the world went on without it. K5's F5.
-- **The hash cache.** SHA-256 of a 6.6 GB GGUF costs 17 s at 388 MB/s (2026-09-05). Cache it on the
-  file's size and mtime under `runs/`, record `hash_cached` on the session row, and re-hash when
-  either moves; the first switch-on of a model pays once.
-- **Free VRAM on every judgment row.** The probe cost on this card ran 118–123 ms per boundary on a
-  quiet card and 312–327 ms on the same binary an hour earlier with llama-server busy
-  (2026-09-05). A slow probe with no VRAM number beside it reads as a slow resident. K5 puts
-  `mib_free` on every boundary row from `ggml_backend_dev_memory`; nib should, and on the status
-  line.
-- **Torn-row recovery.** A crash inside a tape write leaves a torn last line; today `Tape::open`
-  refuses the file and the session runs untaped behind a status message. Skip the fragment, chain
-  from the last complete row, write a `warn` row naming the bytes skipped. K5's F6.
+Word wrap with its toggle · the checkpoint beside the document with its sidecar, the restore and
+the twin · the resume tick · the hash cache · free VRAM on every judgment row and the status line ·
+torn-row recovery · a crash that names itself. The ROADMAP's Stage 1d entry has the numbers. What
+follows is what is still open.
+
+## Still open from Stage 1d
+
 - **The driver's windows sit on the operator's screen** (no-activate, but shown; the screenshot of
   2026-09-05 is one of them). Place them off-screen rather than hide them: a hidden window gets no
   `WM_PAINT`, and the latency instrument measures keystroke to painted.
+- **The fold at prefill speed**, for the first switch-on over a document and for the twin. The
+  checkpoint means the fold is normally only the world since it, so this is no longer on the hot
+  path, but a first fold over a long document still costs 39 s for 4.2 KB at word grain.
+- **The `.prev` generation is written but never read.** `Resident::checkpoint` keeps it and
+  `Resident::start` does not fall back to it when the current one fails to load (K5 does). One
+  more `try_load` and a `boot_reason` of `restored_prev`; needs a fault-injection test to be worth
+  anything, which is K5's T6.
+- **The trunk is not bounded.** Nothing prunes `<doc>.trunk.bin` (58.8 MB a document) or the tape.
+  A week of real work will say what that costs; Stage 5 is where it matters.
 
 ## Later
 
 - **A string-bearing frame instead of auricle's fixed Delta** (SPEC 5.1.1, 5.1.7). K5 abandoned the
   496-byte payload and the 15-character lane; nib's chunking, lane check and lockstep meta ring
   exist only to work around them. At Stage 2, when the frame gains a `grain`.
-- **The fold at prefill speed.** Decode each folded percept as one batch and judge only at the
-  compiler's closed thoughts, or not at all; the trunk's bytes are identical either way and the
-  cost falls by an order of magnitude. Second answer to the switch-on cost, after the checkpoint.
 - **The T sweep** (SPEC 14.3). Needs a real typing tape; the synthetic cadence of `--ingest` and
   `--resident` never pauses, so T never fires.
 - **The `Hand` table** (review §5.8): one table for authors, lanes, colours and the self-echo set.

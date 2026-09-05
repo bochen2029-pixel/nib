@@ -218,11 +218,11 @@ public:
     // the molt (Stage 2) a resident that joins a long document joins it part-way, and says so.
     //
     // Stage 1d: the model loads for seconds, and the hand keeps typing. Between fold_begin and
-    // fold_end the live calls are QUEUED raw, not compiled; the history is compiled between
-    // fold_history_begin and fold_history_end (the switch-on knows what history only once the
-    // model has said whether it restored); and fold_end compiles the queue AFTER the history, so
-    // the trunk sees the document's past and then what was typed during the load, in the order it
-    // happened, with the clock the compiler saw.
+    // the history fold the pad IGNORES the hand's live calls: every one of them is in the
+    // document's log with its own clock, and the fold replays the log (or the tape) at Ready, so
+    // compiling them here as well would perceive them twice. The history is compiled between
+    // fold_history_begin and fold_history_end — the switch-on knows what history only once the
+    // model has said whether it restored — and fold_end ships it and returns the pad to Live.
     void fold_begin();
     void fold_history_begin();
     void fold_history_end();
@@ -232,7 +232,6 @@ public:
     uint64_t fold_shipped() const { return fold_shipped_; }
     uint64_t fold_skipped() const { return fold_skipped_; }
     uint64_t fold_skipped_bytes() const { return fold_skipped_bytes_; }
-    size_t fold_queued() const { return raw_.size(); }
 
     // The resident's own seats. A delta on one of these lanes MUST NOT be fed back (SPEC 5.1.6):
     // in a pad the resident writes into the buffer it reads, so the filter lives here, at the
@@ -269,9 +268,9 @@ private:
     std::deque<Percept> spool_;
     std::vector<Percept> shipped_;      // for the tape
     std::vector<Percept> fold_;         // held between fold_begin and fold_end
-    struct RawEvent { char op; std::string lane, text; uint64_t ms; size_t pos; uint64_t rev; };   // 't' typed · 'r' removed · 'i' idle · 'f' flush
-    std::deque<RawEvent> raw_;          // the live calls queued during a fold
-    enum class Mode { Live, Raw, Hist } mode_ = Mode::Live;
+    // Live: the hand's calls compile and ship. Wait: the model is loading; the calls are the log's
+    // to replay and are ignored here. Hist: the fold is compiling history into `fold_`.
+    enum class Mode { Live, Wait, Hist } mode_ = Mode::Live;
     uint64_t next_id_ = 1;
     uint64_t pushed_ = 0, dropped_ = 0, echoes_ = 0, trunc_lanes_ = 0;
     uint64_t fold_shipped_ = 0, fold_skipped_ = 0, fold_skipped_bytes_ = 0;

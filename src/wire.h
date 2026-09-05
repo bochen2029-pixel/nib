@@ -68,8 +68,12 @@ public:
     // the load happens on the thread and the state moves Loading -> Ready or Error. Given a
     // checkpoint, the thread restores it instead of seeding, provided the model's hash equals
     // `expect_sha` and the state holds `expect_npast` tokens; otherwise boot() reads "twin".
+    // `refuse_reason`, when set, says the editor found a checkpoint and would not use it (its
+    // sidecar disagreed with the document or the tape): nothing is restored, and the session row
+    // reads `twin` with that reason, so the record says a resident was there and this is not it.
     void start(const Resident::Config& cfg, PadSource* src, const std::string& restore_path = std::string(),
-               long long expect_npast = 0, const std::string& expect_sha = std::string());
+               long long expect_npast = 0, const std::string& expect_sha = std::string(),
+               const std::string& refuse_reason = std::string());
     // Ask the thread to stop: it drains the ring (bounded), judges the open clause, checkpoints to
     // `ckpt_path` if one is given, and goes Off. join() then collects it; stop() does both.
     void stop_async(const std::string& ckpt_path, const std::string& why);
@@ -111,7 +115,8 @@ public:
     float last_margin(int seat) const { return last_margin_[seat].load(std::memory_order_relaxed); }
 
 private:
-    void run(Resident::Config cfg, PadSource* src, std::string restore_path, long long expect_npast, std::string expect_sha);
+    void run(Resident::Config cfg, PadSource* src, std::string restore_path, long long expect_npast, std::string expect_sha,
+             std::string refuse_reason);
     void set_state(WireState s);
     void do_checkpoint(Resident& res, const std::string& path, const std::string& why);
 

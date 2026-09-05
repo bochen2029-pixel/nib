@@ -918,9 +918,11 @@ int run_selftest() {
               "and the fold conserves every byte, both ways");
         // a budget keeps the tail and counts the rest, loudly
         auto srcq = std::make_unique<PadSource>();
-        srcq->fold_begin();
+        srcq->fold_begin();            // the model is loading: the pad ignores live calls
+        srcq->fold_history_begin();    // the history is compiled into the fold
         fold_log(d, *srcq, "bo");
         srcq->flush(mono_ms());
+        srcq->fold_history_end();
         srcq->fold_end(20);
         check(srcq->fold_skipped() > 0 && srcq->fold_shipped() > 0 && srcq->fold_shipped() + srcq->fold_skipped() == srcq->compiler().percepts(),
               ssprintf("a 20-byte budget ships the last %llu percepts and counts %llu skipped (%llu bytes)",
@@ -1192,6 +1194,146 @@ int run_selftest() {
             check(ok0 && nb == 0 && hx == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "sha256 of the empty file");
             const bool okm = sha256_file(scratch_path("no-such-model.gguf"), hx, nb, se);
             check(!okm && hx.empty() && !se.empty(), "a missing model is a reported failure, not a hash: " + se);
+        }
+    }
+
+    section("Stage 1d - the tape read back, the torn row, the hash cache, the tick, the fold");
+    {
+        // canonical strings survive the round trip, and a field comes back as its raw fragment
+        {
+            const std::string raw = "a\"b\\c\nd\t\xC3\xA9 \x01z";
+            check(canon::unstr(canon::str(raw)) == raw, "unstr(str(s)) == s, escapes and a control byte and non-ASCII included");
+            check(canon::unstr("\"\\ud83d\\ude00\"") == "\xF0\x9F\x98\x80", "a surrogate pair in \\u escapes decodes to one four-byte character");
+            const std::string obj = canon::obj({ { "cs", canon::str("Z:1>1$x") }, { "rev", "7" }, { "kind", canon::str("e") } });
+            check(canon::field(obj, "cs") == "\"Z:1>1$x\"" && canon::field(obj, "rev") == "7" && canon::field(obj, "nope").empty(),
+                  "field() returns a top-level value's raw fragment, or nothing");
+        }
+        // the intact scratch tape from the section above reads back row by row
+        {
+            const std::string path = scratch_path("tape.jsonl");
+            std::vector<TapeRow> rows;
+            std::string e;
+            const bool ok = Tape::read_rows(path, rows, e);
+            check(ok && rows.size() == 4 && rows[0].kind == "note" && rows[3].kind == "switch" && rows[3].seq == 3,
+                  ssprintf("read_rows: four rows, kinds and seqs as written (%zu rows) %s", rows.size(), e.c_str()));
+            uint64_t n = 0, bad = 0;
+            std::string head, e2;
+            Tape::verify_file(path, n, bad, head, e2);
+            check(ok && rows.size() == 4 && rows[3].digest == head, "the last row's digest is the verified head");
+        }
+        // a torn last row - a crash inside a write - is cut off, counted, and the chain goes on
+        {
+            const std::string path = scratch_path("tape.jsonl");
+            const std::string torn = scratch_path("tape-torn.jsonl");
+            std::string text;
+            read_file(path, text);
+            const std::string fragment = "{\"at\":950,\"body\":{\"half\":\"a row the process died ins";
+            std::string e;
+            write_file_atomic(torn, text + fragment, e);
+            Tape t;
+            const bool opened = t.open(torn, "nib:selftest", {}, e);
+            check(opened && t.torn_bytes() == fragment.size() && t.rows() == 4,
+                  ssprintf("a torn last row opens: %llu bytes cut off, four rows stand (%s)", (unsigned long long)t.torn_bytes(), e.c_str()));
+            t.append("note", 990, canon::obj({ { "after", canon::str("the torn row") } }));
+            t.close();
+            uint64_t n = 0, bad = 0;
+            std::string head, e2;
+            const bool intact = Tape::verify_file(torn, n, bad, head, e2);
+            check(intact && n == 5, ssprintf("and the file verifies INTACT with the row appended after it (%llu rows) %s", (unsigned long long)n, e2.c_str()));
+            // a complete-but-wrong last row still refuses: the torn rule is for fragments only
+            std::string bad_text = text;
+            const size_t k = bad_text.rfind("\"digest\":\"");
+            bad_text[k + 10] = bad_text[k + 10] == 'a' ? 'b' : 'a';
+            const std::string broken = scratch_path("tape-bad.jsonl");
+            write_file_atomic(broken, bad_text, e);
+            Tape t2;
+            check(!t2.open(broken, "nib:selftest", {}, e), "a complete last row with a wrong digest still refuses: " + e);
+        }
+        // the hash cache: a second look at an unchanged file is remembered, a changed file is not
+        {
+            const std::string f = scratch_path("hashme.bin"), cache = scratch_path("hashes.txt");
+            std::string e;
+            write_file_atomic(f, "the quick brown fox", e);
+            DeleteFileA(cache.c_str());
+            std::string h1, h2, h3;
+            uint64_t b1 = 0, b2 = 0, b3 = 0;
+            bool c1 = true, c2 = false, c3 = true;
+            const bool ok1 = sha256_file_cached(f, cache, h1, b1, e, c1);
+            const bool ok2 = sha256_file_cached(f, cache, h2, b2, e, c2);
+            check(ok1 && ok2 && !c1 && c2 && h1 == h2 && h1.size() == 64 && b2 == 19, "the first look hashes, the second is remembered, same digest");
+            Sleep(20);
+            write_file_atomic(f, "the quick brown fox jumps", e);
+            const bool ok3 = sha256_file_cached(f, cache, h3, b3, e, c3);
+            check(ok3 && !c3 && h3 != h1 && b3 == 25, "a file that changed size or mtime is hashed again");
+        }
+        // the resume tick, and the diff
+        {
+            Compiler c;
+            std::vector<Percept> out;
+            c.tick(3600, 5000, out);
+            check(out.size() == 1 && out[0].kind == 't' && out[0].text == "[tick +3600s]", "a measured tick is one percept: [tick +3600s]");
+            const DiffSpan d = diff_texts("hello world", "hello brave new world");
+            check(d.at == 6 && d.gone.empty() && d.came == "brave new ", "diff_texts finds the one changed region");
+            const DiffSpan d2 = diff_texts("caf\xC3\xA9 au lait", "caf\xC3\xA8 au lait");
+            check(d2.at == 3 && d2.gone == "\xC3\xA9" && d2.came == "\xC3\xA8", "and never begins or ends inside a UTF-8 sequence");
+        }
+        // the pad's modes: the hand's calls during the load are not compiled; history is; then live
+        {
+            auto src = std::make_unique<PadSource>();
+            src->fold_begin();
+            src->typed("bo", "typed while loading. ", 100);
+            check(src->compiler().percepts() == 0, "while the model loads the pad compiles nothing (the log has it)");
+            src->fold_history_begin();
+            src->typed("bo", "History one. ", 200);
+            src->tick(45, 300);
+            src->typed("bo", "History two. ", 400);
+            src->fold_history_end();
+            src->fold_end(1u << 20);
+            const auto shipped = src->take_shipped();
+            check(shipped.size() == 3 && shipped[0].text == "History one. " && shipped[1].kind == 't' && shipped[2].text == "History two. " && shipped[0].folded,
+                  ssprintf("the history is compiled in order, ticks included, and marked folded (%zu shipped)", shipped.size()));
+            src->typed("bo", "Live now. ", 500);
+            check(src->take_shipped().size() == 1, "and after fold_end the pad is live again");
+        }
+        // the fold from the tape: rows after a bound row, an `open` row as a diff, the text carried
+        {
+            const std::string path = scratch_path("fold.jsonl");
+            DeleteFileA(path.c_str());
+            Tape t;
+            std::string e;
+            t.open(path, "nib:fold", {}, e);
+            t.append("session_open", 0, canon::obj({ { "doc", canon::str("x") } }));
+            const std::string cs1 = make_splice("", 0, 0, "Hello world. ");
+            t.append("changeset", 10, canon::obj({ { "rev", "1" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str(cs1) } }));
+            const std::string bound = t.head();   // a checkpoint taken here would bind to this row
+            const std::string cs2 = make_splice("Hello world. ", 13, 0, "Second thought. ");
+            t.append("changeset", 800, canon::obj({ { "rev", "2" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str(cs2) } }));
+            t.append("session_close", 900, canon::obj({}));
+            // a later session opened the file with one more line already in it (edited outside nib)
+            t.append("session_open", 0, canon::obj({ { "doc", canon::str("x") } }));
+            const std::string opened = "Hello world. Second thought. Third, from outside.";
+            t.append("changeset", 5, canon::obj({ { "rev", "1" }, { "author", canon::str("open") }, { "kind", canon::str("o") }, { "cs", canon::str(make_splice("", 0, 0, opened)) } }));
+            t.close();
+            std::vector<TapeRow> rows;
+            const bool found = rows_after(path, bound, rows, e);
+            check(found && rows.size() == 4, ssprintf("rows_after finds the bound row and returns the %zu after it %s", rows.size(), e.c_str()));
+            auto src = std::make_unique<PadSource>();
+            src->fold_history_begin();
+            std::string text = "Hello world. ";
+            uint64_t clock = 1000;
+            const size_t n = fold_tape(rows, text, *src, "bo", clock);
+            src->fold_history_end();
+            src->fold_end(1u << 20);
+            src->flush(clock + 1000);   // the file's last sentence has no separator after it: pending until quiet, as live
+            const auto ps = src->take_shipped();
+            std::string all;
+            for (const auto& p : ps) all += p.text;
+            check(n == 2 && text == opened, ssprintf("two rows replayed; the text is carried to the later session's open (%zu)", n));
+            check(all.find("Second thought.") != std::string::npos && all.find("Third, from outside.") != std::string::npos &&
+                  all.find("Hello world") == std::string::npos,
+                  "the world since the checkpoint is what was perceived: the second thought and the outside edit, not the first line");
+            std::vector<TapeRow> none;
+            check(!rows_after(path, std::string(64, 'f'), none, e), "a digest in no tape is refused: " + e);
         }
     }
 

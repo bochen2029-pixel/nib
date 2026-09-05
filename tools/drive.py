@@ -414,11 +414,15 @@ def main():
     if a.ai:
         print(LF + "the resident, switched on inside the window")
         doc6, log6 = scratch("ai.txt"), scratch("six.log")
-        ai_files = (doc6, doc6 + ".tape.jsonl", log6)
-        try:
-            os.remove(doc6 + ".tape.jsonl")
-        except OSError:
-            pass
+        ai_files = (doc6, doc6 + ".tape.jsonl", log6, doc6 + ".trunk.bin", doc6 + ".trunk.bin.prev", doc6 + ".trunk.meta", doc6 + ".trunk.txt")
+        # a clean slate: a tape or a checkpoint left by an earlier --keep run would make the first
+        # life a restore or a twin, and the case is about what a first life does
+        for stale in (doc6 + ".tape.jsonl", doc6 + ".trunk.bin", doc6 + ".trunk.bin.prev",
+                      doc6 + ".trunk.meta", doc6 + ".trunk.txt"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
         vram0 = vram_used_mib()
         n6 = Nib(a.exe, doc6, log6)
         para = ("The coffee machine in the kitchen was refilled this morning. "
@@ -431,8 +435,8 @@ def main():
         nr = n6.count("resident")
         n6.cmd("ai_on")
         rrow = n6.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=120)
-        check(rrow is not None and rrow[1] == "ready",
-              "the resident loaded on its own thread: %s" % (rrow[2:] if rrow else "no resident line in 120 s",))
+        check(rrow is not None and rrow[1] == "ready" and len(rrow) > 6 and rrow[6] == "seed",
+              "the resident loaded on its own thread, seeded (no checkpoint yet): %s" % (rrow[2:] if rrow else "no resident line in 120 s",))
         vram1 = vram_used_mib()
         if rrow is not None and rrow[1] == "ready":
             # the fold: what was typed before the switch is perceived first, then judged
@@ -479,6 +483,47 @@ def main():
                   "the card was taken and given back: %d -> %d -> %d MiB used" % (vram0, vram1, vram2))
         else:
             print("  (no nvidia-smi: the VRAM return is not measured)")
+
+        # ---- the trunk as an asset (Stage 1d): saved on the way out, restored on the way back in
+        base = doc6 + ".trunk"
+        ck = [l for l in n6.lines() if l and l[0] == "ckpt"]
+        check(bool(ck) and ck[-1][1] == "off" and ck[-1][2] == "1" and all(os.path.exists(base + x) for x in (".bin", ".meta", ".txt")),
+              "off saved the trunk beside the document: %s" % (ck[-1][1:] if ck else "no ckpt line",))
+        nr, nf = n6.count("resident"), n6.count("fold")
+        n6.cmd("ai_on")
+        rrow2 = n6.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=120)
+        check(rrow2 is not None and rrow2[1] == "ready" and len(rrow2) > 6 and rrow2[6] == "restored",
+              "on restored the trunk instead of seeding: %s" % (rrow2[2:] if rrow2 else "no resident line",))
+        check(rrow2 is not None and len(rrow2) > 7 and rrow2[7] == "cached",
+              "and the model's hash was remembered, not read again: %s" % (rrow2[5:8] if rrow2 else "?",))
+        frow = n6.wait_for("fold", nf, timeout=30)
+        check(frow is not None and frow[1] == "restored" and frow[2] == "tape",
+              "the world since the checkpoint came from the tape: %s" % (frow[1:] if frow else "no fold line",))
+        if rrow2 is not None and rrow2[1] == "ready":
+            nj = n6.count("judgment")
+            n6.cmd("bottom")
+            n6.type_paced("Actually, the Sun goes around the Earth once a day. ")
+            prow2 = n6.wait_for_match("judgment", lambda l: len(l) > 5 and l[2] == "SKEPTIC" and "Sun" in l[5], nj, timeout=60)
+            check(prow2 is not None and float(prow2[3]) > 0,
+                  "the restored SKEPTIC catches a new false claim: %s" % (prow2[3] if prow2 else "no verdict"))
+        nr = n6.count("resident")
+        n6.cmd("ai_off")
+        orow2 = n6.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=30)
+        check(orow2 is not None, "off again, and the trunk saved again: %s" % (orow2[2:] if orow2 else "?",))
+        # the twin: a sidecar whose text does not hash as recorded is refused, and the record says so
+        with open(base + ".txt", "ab") as f:
+            f.write(b"x")
+        nr, nf = n6.count("resident"), n6.count("fold")
+        n6.cmd("ai_on")
+        rrow3 = n6.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=120)
+        frow3 = n6.wait_for("fold", nf, timeout=30)
+        check(rrow3 is not None and rrow3[1] == "ready" and len(rrow3) > 6 and rrow3[6] == "twin" and frow3 is not None and frow3[2] == "log",
+              "a checkpoint whose sidecar disagrees is refused: the resident is the twin, folded from the log: %s / %s"
+              % (rrow3[6] if rrow3 and len(rrow3) > 6 else "?", frow3[-1] if frow3 else "?"))
+        nr = n6.count("resident")
+        n6.cmd("ai_off")
+        n6.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=30)
+
         # A driven window is never closed dirty: the unsaved-changes prompt has no driver behind
         # it, the process gets killed after the timeout, and the tape ends without its
         # session_close row - which is what the first run of this case produced (2026-09-05).
@@ -512,7 +557,7 @@ def main():
         check(bool(fold) and fold[0].get("skipped") == 0 and int(fold[0].get("shipped", 0)) >= 2,
               "the fold at switch-on shipped the paragraph typed before it and skipped nothing: %s" % (fold[0] if fold else "no fold row",))
         kinds = collections.Counter(r.get("kind") for r in rows[1:])
-        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "save", "session_close")
+        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "ckpt", "save", "session_close")
         check(all(k in kinds for k in wanted), "every row kind the stage promised is on the tape: %s" % dict(kinds))
 
     if not a.keep:

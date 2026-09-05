@@ -19,6 +19,16 @@ to resume.**
 > review's §8 P1, then Stage 2. And by operator ruling the shipped product autodiscovers on the
 > LAN by default (CLAUDE.md rule 2, SPEC 9.1.1).
 >
+> **Addendum, 2026-09-05 (dawn).** **Stage 1d landed as 0.8.0** — word wrap (`Alt+Z`), the trunk
+> as an asset (off saves the mind's state beside the document, on restores it or says it is the
+> twin), free VRAM on every judgment, torn-row recovery, the model's hash remembered. Oracles:
+> **`--selftest` 201, `drive.py` 30, `drive.py --ai` 51.** It also found the defect nobody had hit:
+> switching the resident off and on again crashed the process, because the second model loaded into
+> one process dies in cuBLAS above a 64-token batch. **The batch is capped at 64** (SPEC 6.2.12),
+> which also makes every life numerically identical — every margin measured before 2026-09-05 dawn
+> was taken on the other kernel path. §5's "resume here" now means **Stage 2**, on K5's seam, with
+> the lift map refreshed first.
+>
 > **Addendum, 2026-09-05.** **Stage 1c landed as 0.7.0** — the wire, the tape, the AI switch, the
 > gutter, spans, the latency instrument, the model's SHA-256 (ROADMAP, Stage 1c, with every
 > number). Oracles: **`--selftest` 176, `drive.py` 27, `drive.py --ai` 41.** Two more files a cold
@@ -76,6 +86,14 @@ each load the 9B; two at once with llama-server resident do not fit in 16 GB. Ru
 sequentially, and expect the probe cost to move by a factor of 2.7 with what else the card is doing
 (ROADMAP, Stage 1c). Never kill a nib window to free the card: it may hold unsaved text.
 
+**1.10 A crash inside a DLL says nothing unless you make it.** An hour went into
+`ggml-cuda.cu:103: CUDA error` on 2026-09-05 because llama's log callback swallowed errors along
+with progress. Three instruments exist now and cost nothing: llama and ggml errors always reach
+stderr, the window writes a `crash` line to `NIB_LOG` from a terminate handler and an
+unhandled-exception filter, and `NIB_TRACE=1` prints the resident's start-up steps. When something
+dies inside a DLL, set them and bisect with an env knob (`NIB_CHUNK` is the one that found it)
+rather than rebuilding per guess.
+
 ---
 
 ## 2 · How these repositories are written
@@ -112,7 +130,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.7.0 · the active work · Stages 0a–1c · 176 + 27 + 41 checks · the mind holds, inside the window** |
+| **nib** | `C:\nib` | **0.8.0 · the active work · Stages 0a–1d · 201 + 30 + 51 checks · the mind holds, inside the window, and survives being switched off** |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.

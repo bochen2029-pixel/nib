@@ -24,7 +24,7 @@ std::string Wire::boot() const { std::lock_guard<std::mutex> g(mu_); return boot
 std::string Wire::boot_reason() const { std::lock_guard<std::mutex> g(mu_); return boot_reason_; }
 
 void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string& restore_path,
-                 long long expect_npast, const std::string& expect_sha) {
+                 long long expect_npast, const std::string& expect_sha, const std::string& refuse_reason) {
     if (on()) return;
     join();   // a previous Off or Error thread is collected first
     stop_.store(false, std::memory_order_release);
@@ -40,7 +40,9 @@ void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string&
         ckpt_have_ = false;
     }
     set_state(WireState::Loading);
-    th_ = std::thread([this, cfg, src, restore_path, expect_npast, expect_sha] { run(cfg, src, restore_path, expect_npast, expect_sha); });
+    th_ = std::thread([this, cfg, src, restore_path, expect_npast, expect_sha, refuse_reason] {
+        run(cfg, src, restore_path, expect_npast, expect_sha, refuse_reason);
+    });
 }
 
 void Wire::stop_async(const std::string& ckpt_path, const std::string& why) {
@@ -85,7 +87,8 @@ void Wire::do_checkpoint(Resident& res, const std::string& path, const std::stri
     ckpt_have_ = true;
 }
 
-void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, long long expect_npast, std::string expect_sha) {
+void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, long long expect_npast, std::string expect_sha,
+               std::string refuse_reason) {
     // The resident is born and dies on this thread. Its destructor frees the context, the model
     // and the backend — that is the card coming back, and it is what "off" means.
     Resident res;
@@ -111,7 +114,8 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     { std::lock_guard<std::mutex> g(mu_); model_hash_ = sha; }
     // A checkpoint belongs to one model. If the weights are not the sidecar's, the state is not
     // restored, and the reason is on the record.
-    std::string reason;
+    std::string reason = refuse_reason;   // the editor's refusal, if it had one, comes first
+    if (!reason.empty()) restore_path.clear();
     if (!restore_path.empty() && !expect_sha.empty() && expect_sha != sha) {
         reason = "the model's SHA-256 is not the checkpoint's";
         restore_path.clear();

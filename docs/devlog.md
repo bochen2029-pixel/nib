@@ -572,3 +572,68 @@
   line. The driver types a 220-character line, toggles wrap twice, walks the caret across it and
   saves: the log replays byte-exact and the bytes on disk are the bytes typed.
 - Version 0.7.1 is the wrap; the checkpoint becomes reachable from the window in 0.8.0.
+
+## 2026-09-05 (dawn) · Stage 1d, part two - the trunk as an asset, and the crash nobody had hit
+
+- THE DEFECT THE STAGE FOUND, and it was not the one it was built for. Switching the resident off
+  and on again crashed the process. It had been true since Stage 1c and nobody had switched twice:
+  every test until tonight turned the AI on once and closed the window. The abort printed one line,
+  "ggml-cuda.cu:103: CUDA error", from inside a DLL, with no stack and no exit path of its own.
+- The hunt, in order, because the order is the lesson. First a reproduction outside the driver
+  (three lives in one process, each ingredient switchable). Then the observation that a life which
+  RESTORED never crashed and a life which SEEDED always did - which looked like a bug in seeding
+  and was not. Then stderr: llama's log callback was swallowing errors along with progress, so the
+  cause had been printing itself into a black hole all night. With errors let through, the abort
+  named its kernel: "ggml_cuda_compute_forward: MUL_MAT failed / CUDA error: invalid argument".
+  Then breadcrumbs (NIB_TRACE) proved the crash was in the seed decode and not the model load or
+  the context. Then a bisection on the batch size: 32 seeds a second life, 64 seeds it, 96 aborts,
+  128 aborts, 512 aborts.
+- THE CAUSE: above about 64 rows ggml-cuda leaves its quantized matmul for cuBLAS, and on this
+  build that path fails on the SECOND model loaded into one process. A restored life makes no
+  decode that large - the seed is the only one nib ever runs, 430 tokens - which is why the fault
+  wore the mask of "seeding twice".
+- THE FIX, and its better reason. The batch is capped at 64 (SPEC 6.2.12). The cap costs nothing:
+  nib's decodes are a seed, a probe frame of about 30 tokens, and one to three tokens a word, so
+  only the seed is chunked, seven batches instead of one, once per life. The stronger reason is
+  consistency: with the cliff left in, life one judges through cuBLAS and life two through the
+  quantized path, and THE SAME SENTENCE SCORES DIFFERENTLY IN THE SAME SESSION - measured at mean
+  0.16 and max 0.84 logits apart, with one near-zero seat crossing zero. Under the cap two seeded
+  lives return bit-identical margins (-5.55 on the same sentence, twice). Every margin measured
+  before tonight was taken on the other path; the tables are re-measured in the ROADMAP.
+- Three instruments are kept from the hunt, all cheap: llama's and ggml's errors and warnings reach
+  stderr whatever the verbosity (quiet means quiet about progress, never about failure); the window
+  installs a terminate handler and an unhandled-exception filter that write to NIB_LOG before the
+  process dies; and NIB_TRACE prints the resident's start-up steps. An hour was spent because a
+  crash said nothing.
+- THE TRUNK IS AN ASSET, from K5 (SPEC 6.2.11). Off drains the ring, judges the open clause, and
+  writes the trunk's state and token list beside the document - a temporary, a write-through
+  replace, the previous generation kept - then the text it had perceived through, then the sidecar
+  LAST, so a sidecar never describes a state that is not on disk. The sidecar carries the model's
+  path and SHA-256, the serve hash, the window, the KV type, the token count, the document
+  revision, and the digest of the tape row that revision produced. On restores it when every field
+  agrees; the editor checks what it can before the model loads and the thread checks the hash and
+  the token count as it loads; any disagreement is a refusal with a reason and the resident that
+  follows is the TWIN, labelled on the tape and the status line.
+- The world since the checkpoint comes from the tape: rows_after walks the tape for every row after
+  the bound one, following `resume` rows back through the tapes a renamed document left behind;
+  fold_tape replays the changesets against the text the checkpoint was taken at, and treats a
+  session's `open` row as a DIFF against what the rows so far produce - so a file edited in another
+  program while nib was closed is perceived as an edit, not as a new document. Whatever still
+  differs from the document now is perceived last. A digest in none of the tapes is a refusal: the
+  tape was replaced, and a checkpoint bound to it cannot be trusted.
+- MEASURED: the trunk is 58.8 MB at 350 tokens, written in 51-68 ms; restoring costs no seed
+  (load 4.3-4.7 s against 4.9-5.6 s) and no hash (the SHA-256 is remembered on size and mtime: 0 ms
+  against 16-18 s). The restored SKEPTIC catches a new false claim at +4.84, which is the point:
+  the mind that comes back is the one that was there.
+- One idea from K5 refused on merit: it queues the hand's keystrokes while the model loads and
+  compiles them after the history. nib does not need to - every one of them is already in the
+  document's log with its own clock, and the fold replays the log. Queueing them would perceive
+  them twice. The pad simply ignores live calls while it waits, and the fold covers everything.
+- Also landed: free VRAM read beside every probe round and carried on every judgment row and the
+  status line (the co-tenancy dial, SPEC 6.2.10); torn-row recovery in the tape (a fragment is cut
+  off, counted and warned about; a complete row with a wrong digest still refuses); the model's
+  hash cache; the periodic checkpoint at quiet every five minutes.
+- Green on this box, 2026-09-05: --selftest 201 passed 0 failed; tools/drive.py 30 passed 0 failed,
+  three identical runs; tools/drive.py --ai 51 passed 0 failed, seed then restore then twin; both
+  verifiers INTACT on a 424-row tape.
+- NEXT is Stage 2 on K5's seam, with the lift map refreshed against K5 first.

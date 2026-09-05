@@ -1,6 +1,6 @@
 # nib — ROADMAP
 
-*Rev 0.6 · 2026-09-05. Each stage carries a **falsifier**: the observation that would say the stage
+*Rev 0.7 · 2026-09-05. Each stage carries a **falsifier**: the observation that would say the stage
 failed. A stage is not done because its code exists; it is done when its falsifier has been fired
 at and did not go off. Dates are the day a stage went green on this box — by git: every stage
 below Stage 1c went green on 2026-09-04, though revs 0.1–0.4 of this file said 09-03 for the first
@@ -23,7 +23,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **I** | 1b · a resident that only holds | ✔ 2026-09-04 | 0.6.0 |
 | **I** | the QC pass — two criticals, the runtime gate, six Stage 2 breakers | ✔ 2026-09-04 | 0.6.1 |
 | **I** | 1c · the wire — the resident in the window, the gutter, the AI switch, the tape | ✔ 2026-09-05 | 0.7.0 |
-| **I** | 1d · the trunk as an asset — the checkpoint beside the document, word wrap | ○ | |
+| **I** | 1d · the trunk as an asset — the checkpoint beside the document, word wrap | ✔ 2026-09-05 | 0.8.0 |
 | **I** | 2 · emission, with floor control — on K5's seam | ○ | |
 | **I** | 3 · un-saying, made visible | ○ | |
 | **I** | 4 · the two switches, and the paired record | ○ | |
@@ -33,7 +33,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**176 checks green in the exe, 27 more from the window driver, and 41 with the resident switched on
+**201 checks green in the exe, 30 more from the window driver, and 51 with the resident switched on
 inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
 gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
 llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
@@ -320,7 +320,7 @@ every probe; torn-row recovery. What nib has that K5 lacks is in `docs/BACKLOG.m
 the process was killed after eight seconds and the tape ended without `session_close`. It saves
 first now. A tape without `session_close` means what it says.
 
-### ○ Stage 1d — the trunk as an asset
+### ✔ Stage 1d — the trunk as an asset · 0.8.0
 
 The checkpoint beside the document: the trunk's KV and token list saved atomically at switch-off
 and at quiet, with a sidecar carrying the model's SHA-256, the serve hash, the token count, the
@@ -333,7 +333,47 @@ to flip, which Stage 4 needs.
 *Falsifier: a restored resident's first margins differ from a no-restart control by more than the
 run's margin noise (K5's T8); a checkpoint that loads against a swapped model or a moved document;
 a crash inside a checkpoint that leaves no loadable generation; a torn tape that silences a
-session; a line that leaves the window without a scroll or a wrap.*
+session; a line that leaves the window without a scroll or a wrap.* — **Did not fire.** The driver
+switches off (the trunk is saved: 58.8 MB, 350 tokens, 68 ms), switches on (restored, the model's
+hash remembered, 0 ms), and the restored SKEPTIC catches a *new* false claim at +4.84. A sidecar
+with one byte appended is refused and the resident that follows is the twin, folded from the log,
+with the reason on the tape and the status line. Word wrap conserves every byte, and the caret
+round-trips through row and column at every offset of a wrapped line.
+
+**The defect the stage was built to find, and it was not word wrap.** Switching the resident off
+and on again crashed the process — always, from Stage 1c onward, and nobody had switched it twice
+before. The abort said only `ggml-cuda.cu:103: CUDA error`. Bisected: the second model loaded into
+one process dies in a cuBLAS matmul with *invalid argument* the moment it decodes a batch above
+about 64 tokens; a life that *restores* never crashed, because the only decode it makes that large
+is the seed it does not do. **The batch is capped at 64 now** (SPEC 6.2.12), and the second reason
+is stronger than the first: with the cliff left in, the first life would judge through cuBLAS and
+the second through the quantized path, and the same sentence would score differently in the same
+session — measured at mean 0.16 and max 0.84 logits apart, with one near-zero seat crossing zero.
+Under the cap two seeded lives in one process return **bit-identical margins** (−5.55 on the same
+sentence, twice). Three things made the hunt tractable and are kept: llama's and ggml's errors
+reach stderr whatever the verbosity, the window logs a crash before it dies, and `NIB_TRACE` prints
+the resident's start-up steps.
+
+**Re-measured under the cap, 2026-09-05** — every margin above this line was taken before it and is
+off by the drift named above:
+
+| the stream | SPEAKER | SKEPTIC | SENTINEL |
+|---|---|---|---|
+| "Actually, the Pacific is the smallest ocean on Earth." | −6.19 | **+5.73** | −5.60 |
+| "I am going to drop the users table to free up some disk space." | −0.52 | +4.91 | **+5.64** |
+| "The parser handles the empty case first and then the general one." | −2.00 | +5.78 | **+5.82** |
+| "We agreed last week that the retry limit was three, so I set it to twelve." | −2.91 | +4.77 | **+5.93** |
+
+12 of 33 probes wanted to speak; probe 107–122 ms per boundary on a quiet card. Both A/B findings
+hold: the deletion moves the following margins by under 0.4 logits in no consistent direction, and
+the removed claim re-fires the SKEPTIC at +5.14 against +5.73 for the claim itself; the tick shifts
+the three boundaries after it by at most 0.20 logits and fires no probe.
+
+**One idea taken from K5 and one refused.** Taken: the trunk as an asset, with the atomic write,
+the sidecar written last, the previous generation kept, the quiet gate and the resume tick.
+Refused: K5 queues the hand's keystrokes while the model loads and compiles them after the history.
+nib does not need to — every one of them is already in the document's log with its own clock, and
+the fold replays the log. Queueing them would perceive them twice.
 
 ### ○ Stage 2 — emission, with floor control
 

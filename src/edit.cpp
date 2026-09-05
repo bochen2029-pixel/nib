@@ -33,6 +33,9 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -129,6 +132,24 @@ struct View {
     size_t tape_rev = 0;          // log entries already on the tape
     bool tape_dirty = false;
     uint64_t percept_rows = 0, judgment_rows = 0;
+
+    // Stage 1d — the trunk as an asset (SPEC 6.2.11)
+    std::vector<std::string> rev_digest;   // the tape digest of each revision's changeset row (index rev-1): a checkpoint binds to one
+    std::string open_digest;               // the session_open row's digest, for a checkpoint taken before any revision
+    uint64_t last_key_ms = 0;              // the last edit, for the quiet gate
+    uint64_t last_ckpt_ms = 0;
+    uint64_t last_ckpt_deltas = 0;         // the wire's delta count at the last checkpoint: nothing new, nothing saved
+    uint64_t last_mib_free = 0;            // from the last judgment: the co-tenancy dial, on the status line
+    bool fold_done = false;                // the trunk has been brought up to the document (a checkpoint before that is unchanged)
+    bool stop_pending = false;             // the thread was asked to stop and has not been collected
+    std::string stop_why;                  // off · open · close
+    struct Restore {                       // what the editor decided before the model loaded
+        bool have = false;                 // a checkpoint exists beside this document
+        bool wanted = false;               // and its sidecar agrees with the document and the tape
+        std::string bin, txt, digest, sha, reason;
+        long long npast = 0;
+        uint64_t rev = 0, epoch_ms = 0;
+    } restore;
     std::vector<Mark> marks;
     std::vector<EditRec> edits;
     struct { uint32_t boundary = 0; int n = 0; JudgmentRow rows[3]; } pend;   // three seats, one row
@@ -191,6 +212,7 @@ void load_theme(Theme& t) {
 View* g = nullptr;
 constexpr int kPad = 8;
 constexpr int kGutter = 10;   // the margin where a judged line carries its mark
+constexpr uint64_t kCkptEveryMs = 300000;   // the periodic checkpoint's interval at quiet: five minutes, as K5 has it
 
 void nlog(const char* fmt, ...) {
     if (!g || !g->log) return;
@@ -267,7 +289,24 @@ void tape_row_at(const char* kind, uint64_t ms, const std::string& body, bool fl
 }
 void tape_row(const char* kind, const std::string& body, bool flush_now = false) { tape_row_at(kind, mono_ms(), body, flush_now); }
 
-// every revision the document has that the tape does not: one row each, stamped when it happened
+uint64_t epoch_ms_now() {
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    return (((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000ull - 11644473600000ull;
+}
+
+// The checkpoint lives beside the document like the tape does: `<doc>.trunk.bin` (the trunk's
+// state and token list), `.trunk.txt` (the text the trunk had perceived through) and
+// `.trunk.meta` (the sidecar, written last). An untitled document's lives in runs/ until it has
+// a name, and a rename moves them with the tape.
+std::string ckpt_base() {
+    if (!g->path.empty()) return narrow(g->path) + ".trunk";
+    return narrow(exe_dir()) + "\\runs\\untitled-" + std::to_string((unsigned long long)g->t0) + ".trunk";
+}
+
+// every revision the document has that the tape does not: one row each, stamped when it happened;
+// the row's digest is remembered per revision, because a checkpoint binds to the row of the
+// revision the trunk had perceived through (SPEC 6.2.11)
 void sync_tape_changesets() {
     if (!g->tape.is_open()) return;
     const auto& log = g->doc.log();
@@ -279,6 +318,7 @@ void sync_tape_changesets() {
             { "kind", canon::str(std::string(1, r.kind)) },
             { "cs", canon::str(r.cs) },
         }));
+        g->rev_digest.push_back(g->tape.head());
         g->tape_dirty = true;
     }
 }
@@ -307,15 +347,17 @@ std::string slug_of(const std::wstring& path) {
 
 // The tape lives beside the document, append-only across sessions (a resident's ledger outlives
 // one process); an untitled document's tape lives in runs/ beside the exe until it has a name.
-void open_tape() {
+// `continue_log`: the document was renamed, so the new tape file chains on from the old one with
+// a `resume` row and carries only the revisions after the rename — a reader following `resume`
+// rows back sees one continuous stream, which is what a checkpoint bound to a row in the old
+// file needs (rows_after). A different document starts its log on the tape from revision 1.
+void open_tape(bool continue_log = false) {
     g->tape.close();
-    g->tape_rev = 0;
+    if (!continue_log) { g->tape_rev = 0; g->rev_digest.clear(); }
     std::string p;
     if (!g->path.empty()) p = narrow(g->path) + ".tape.jsonl";
     else p = narrow(exe_dir()) + "\\runs\\untitled-" + std::to_string((unsigned long long)g->t0) + ".tape.jsonl";
-    FILETIME ft{};
-    GetSystemTimeAsFileTime(&ft);
-    const uint64_t epoch_ms = (((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000ull - 11644473600000ull;
+    const uint64_t epoch_ms = epoch_ms_now();
     std::string err;
     if (!g->tape.open(p, "nib:" + slug_of(g->path), {
             { "tool", canon::str("nib") }, { "version", canon::str(kVersion) },
@@ -323,8 +365,13 @@ void open_tape() {
         set_status("tape: " + err);
         return;
     }
+    // a torn last row is the mark of a crash inside a write; it was cut off and counted at open,
+    // and the record says so before anything else is written (SPEC 8.1.4)
+    if (g->tape.torn_bytes())
+        tape_row("warn", canon::obj({ { "what", canon::str("torn_row_skipped") }, { "bytes", canon::num((int64_t)g->tape.torn_bytes()) } }), true);
     tape_row("session_open", canon::obj({ { "doc", canon::str(narrow(g->path)) }, { "version", canon::str(kVersion) },
-                                          { "lane", canon::str(g->th.lane) } }), true);
+                                          { "lane", canon::str(g->th.lane) }, { "epoch_ms", canon::num((int64_t)epoch_ms) } }), true);
+    g->open_digest = g->tape.head();
     sync_tape_changesets();
 }
 
@@ -393,6 +440,7 @@ void after_edit(HWND h, bool caret_from_doc) {
 // was edited, so the judgment is stale — and is remembered with its revision so a judgment that
 // arrives later can be carried forward to the text as it stands now.
 void note_edit(size_t start, size_t ndel, size_t ins) {
+    g->last_key_ms = mono_ms();
     g->edits.push_back(EditRec{ g->doc.revisions(), start, ndel, ins });
     if (g->edits.size() > 4096) g->edits.erase(g->edits.begin(), g->edits.begin() + 2048);
     for (size_t i = 0; i < g->marks.size();) {
@@ -599,48 +647,243 @@ std::string model_name() {
     return k == std::string::npos ? g->th.model : g->th.model.substr(k + 1);
 }
 
+// ---- the checkpoint's sidecar ----------------------------------------------------------------------
+// Line-oriented, `key<TAB>value`: readable by eye, by a batch file, and by the next session.
+std::string meta_get(const std::map<std::string, std::string>& m, const char* k) {
+    const auto it = m.find(k);
+    return it == m.end() ? std::string() : it->second;
+}
+
+bool read_meta(const std::string& path, std::map<std::string, std::string>& out) {
+    std::string text;
+    if (!read_file(path, text)) return false;
+    size_t i = 0;
+    while (i < text.size()) {
+        size_t j = text.find('\n', i);
+        if (j == std::string::npos) j = text.size();
+        std::string line = text.substr(i, j - i);
+        i = j + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t t = line.find('\t');
+        if (t == std::string::npos) continue;
+        out[line.substr(0, t)] = line.substr(t + 1);
+    }
+    return !out.empty();
+}
+
+// Whether the checkpoint beside the document can be trusted, decided before the model loads with
+// everything the editor can check: the sidecar exists and names this model, this serve format,
+// this window and this KV type; the text it says the trunk had perceived through is on disk and
+// hashes as recorded; the state file exists. What only the thread can check — the model's
+// SHA-256 and the token count — the thread checks and refuses on its own. Every refusal is a
+// reason on the record, and a refused checkpoint makes this resident the twin.
+void decide_restore() {
+    View::Restore r;
+    const std::string base = ckpt_base();
+    r.bin = base + ".bin";
+    r.txt = base + ".txt";
+    std::map<std::string, std::string> m;
+    if (!read_meta(base + ".meta", m)) { g->restore = r; return; }   // no checkpoint: a seed, not a twin
+    r.have = true;
+    auto refuse = [&](const std::string& why) { r.wanted = false; r.reason = why; g->restore = r; };
+    if (meta_get(m, "model") != g->rcfg.model) return refuse("the checkpoint is another model's: " + meta_get(m, "model"));
+    if (meta_get(m, "serve") != ssprintf("0x%016llx", (unsigned long long)serve_hash())) return refuse("the checkpoint's serve format is not this build's");
+    if (meta_get(m, "n_ctx") != std::to_string(g->rcfg.n_ctx)) return refuse("the checkpoint's window is " + meta_get(m, "n_ctx") + ", this one is " + std::to_string(g->rcfg.n_ctx));
+    if (meta_get(m, "kv") != (g->rcfg.kv_q8 ? "q8_0" : "f16")) return refuse("the checkpoint's KV type is not this one's");
+    if (GetFileAttributesA(r.bin.c_str()) == INVALID_FILE_ATTRIBUTES) return refuse("the state file is missing");
+    std::string text;
+    if (!read_file(r.txt, text)) return refuse("the text sidecar is missing");
+    if (blake2b_hex(text) != meta_get(m, "text_blake2b")) return refuse("the text sidecar does not hash as recorded");
+    r.digest = meta_get(m, "digest");
+    if (r.digest.size() != 64) return refuse("the sidecar names no tape row");
+    r.sha = meta_get(m, "sha256");
+    r.npast = atoll(meta_get(m, "npast").c_str());
+    r.rev = strtoull(meta_get(m, "rev").c_str(), nullptr, 10);
+    r.epoch_ms = strtoull(meta_get(m, "epoch_ms").c_str(), nullptr, 10);
+    if (r.npast <= 0) return refuse("the sidecar records no tokens");
+    r.wanted = true;
+    g->restore = r;
+}
+
+// The sidecar, written by the editor once the thread reports the state file is in place: the
+// text the trunk had perceived through (revision `rev`) first, then the meta LAST, so a sidecar
+// never describes a state that is not on disk. A checkpoint of a restored trunk that has not yet
+// been brought up to the document is the same trunk the old sidecar describes, so that one is
+// left alone.
+void write_sidecar(const CkptResult& r) {
+    if (!r.ok) {
+        tape_row("ckpt", canon::obj({ { "why", canon::str(r.why) }, { "ok", canon::boolean(false) }, { "err", canon::str(r.err) } }), true);
+        nlog("ckpt	%s	0	%s", r.why.c_str(), r.err.c_str());
+        set_status("checkpoint failed: " + r.err);
+        return;
+    }
+    const std::string base = ckpt_base();
+    if (r.path != base + ".bin") {   // the document was renamed while the state was being written
+        std::string e3;
+        replace_file_retry(r.path, base + ".bin", true, e3);
+        replace_file_retry(r.path + ".prev", base + ".bin.prev", false, e3);
+    }
+    if (g->wire.boot() == "restored" && !g->fold_done) {
+        tape_row("ckpt", canon::obj({ { "why", canon::str(r.why) }, { "ok", canon::boolean(true) }, { "bytes", canon::num((int64_t)r.bytes) },
+                                      { "npast", canon::num(r.npast) }, { "unchanged", canon::boolean(true) }, { "dur_ms", canon::num((int64_t)r.dur_ms) } }), true);
+        nlog("ckpt	%s	1	%llu	%lld	unchanged	%llu", r.why.c_str(), (unsigned long long)r.bytes, r.npast, (unsigned long long)r.dur_ms);
+        return;
+    }
+    std::string text, err;
+    if (!g->doc.text_at((size_t)r.rev, text, err)) text = g->doc.text();
+    const std::string digest = r.rev == 0 ? g->open_digest
+                             : (r.rev <= g->rev_digest.size() ? g->rev_digest[(size_t)r.rev - 1] : std::string());
+    std::string e2;
+    if (!write_file_atomic(base + ".txt", text, e2)) { set_status("checkpoint: " + e2); return; }
+    const uint64_t epoch = epoch_ms_now();
+    std::string meta;
+    meta += "model\t" + g->rcfg.model + "\n";
+    meta += "sha256\t" + g->wire.model_hash() + "\n";
+    meta += "serve\t" + ssprintf("0x%016llx", (unsigned long long)serve_hash()) + "\n";
+    meta += "n_ctx\t" + std::to_string(g->rcfg.n_ctx) + "\n";
+    meta += std::string("kv\t") + (g->rcfg.kv_q8 ? "q8_0" : "f16") + "\n";
+    meta += "npast\t" + std::to_string(r.npast) + "\n";
+    meta += "rev\t" + std::to_string((unsigned long long)r.rev) + "\n";
+    meta += "digest\t" + digest + "\n";
+    meta += "epoch_ms\t" + std::to_string((unsigned long long)epoch) + "\n";
+    meta += "text_blake2b\t" + blake2b_hex(text) + "\n";
+    meta += "bytes\t" + std::to_string((unsigned long long)r.bytes) + "\n";
+    meta += "why\t" + r.why + "\n";
+    meta += "version\t" + std::string(kVersion) + "\n";
+    meta += "doc\t" + narrow(g->path) + "\n";
+    meta += "tape\t" + g->tape.path() + "\n";
+    if (!write_file_atomic(base + ".meta", meta, e2)) { set_status("checkpoint: " + e2); return; }
+    g->last_ckpt_ms = mono_ms();
+    g->last_ckpt_deltas = g->wire.deltas();
+    tape_row("ckpt", canon::obj({
+        { "why", canon::str(r.why) }, { "ok", canon::boolean(true) }, { "bytes", canon::num((int64_t)r.bytes) },
+        { "npast", canon::num(r.npast) }, { "rev", canon::num((int64_t)r.rev) }, { "digest", canon::str(digest) },
+        { "dur_ms", canon::num((int64_t)r.dur_ms) }, { "epoch_ms", canon::num((int64_t)epoch) },
+    }), true);
+    nlog("ckpt	%s	1	%llu	%lld	%llu	%llu", r.why.c_str(), (unsigned long long)r.bytes, r.npast,
+         (unsigned long long)r.rev, (unsigned long long)r.dur_ms);
+}
+
+// After the thread has gone Off: collect it, write the sidecar for the checkpoint it took on the
+// way out, and close the record. From the timer when the state changes; synchronously at exit and
+// before another document is opened.
+void finish_stop() {
+    if (!g->stop_pending) return;
+    g->stop_pending = false;
+    g->wire.join();
+    CkptResult r;
+    if (g->wire.take_checkpoint(r)) write_sidecar(r);
+    tape_row("end", canon::obj({
+        { "why", canon::str(g->stop_why) },
+        { "boundaries", canon::num((int64_t)g->wire.boundaries()) },
+        { "probes", canon::num((int64_t)g->wire.probes()) },
+        { "wanted", canon::num((int64_t)g->wire.wanted()) },
+        { "ticks", canon::num((int64_t)g->wire.ticks()) },
+        { "deltas", canon::num((int64_t)g->wire.deltas()) },
+        { "dropped_words", canon::num((int64_t)g->wire.dropped_words()) },
+        { "window_full", canon::boolean(g->wire.window_full()) },
+        { "context_used", canon::num(g->wire.context_used()) },
+        { "probe_ms", canon::num((int64_t)g->wire.probe_ms()) },
+    }), true);
+    nlog("resident	off	%llu boundaries	%s", (unsigned long long)g->wire.boundaries(), g->stop_why.c_str());
+    g->last_state = g->wire.state();
+    if (!getenv("NIB_COMPILE")) g->ingest.reset();   // off means no ingest
+}
+
 void start_resident() {
-    // A fresh world for the mind: the log replayed through the compiler with its own clock, so
-    // the resident that switches on perceives the document as it was written — deletions, order
-    // and silences included — not a snapshot of how it looks.
+    if (g->stop_pending) finish_stop();   // the previous resident's checkpoint is written before its successor is born
+    // The pad is born now and ignores the hand's live calls while the model loads (they are in
+    // the log with their own clock); the history is compiled once the thread says whether it
+    // restored the trunk, so the fold is the world since the checkpoint or the whole log
+    // (SPEC 5.1.14, 6.2.11).
     g->ingest = std::make_unique<PadSource>();
     register_seats(*g->ingest);
     g->ingest->fold_begin();
-    const size_t revs = fold_log(g->doc, *g->ingest, g->th.lane);
+    g->last_percepts = 0;
+    g->fold_done = false;
+    decide_restore();
+    const View::Restore& r = g->restore;
+    g->wire.start(g->rcfg, g->ingest.get(), r.wanted ? r.bin : std::string(), r.npast, r.sha,
+                  r.have && !r.wanted ? r.reason : std::string());
+    g->last_state = WireState::Loading;
+    nlog("resident	loading	%s	%s", g->th.model.c_str(), r.wanted ? "restore" : r.have ? "twin" : "seed");
+}
+
+// The fold, once the thread has said what it holds. Restored: a tick for the time away, then the
+// world since the checkpoint — the tape's rows after the bound row, replayed against the text the
+// checkpoint was taken at — then whatever still differs from the document now. Seeded or twin:
+// the whole log, as before. The hand's edits during the load are in both, with their own clock.
+void fold_on_ready() {
+    if (!g->ingest) return;
+    const std::string boot = g->wire.boot();
+    const bool restored = boot == "restored";
+    g->ingest->fold_history_begin();
+    size_t replayed = 0;
+    uint64_t tick_s = 0;
+    std::string from = "log", err;
+    if (restored) {
+        from = "tape";
+        const uint64_t now_epoch = epoch_ms_now();
+        if (g->restore.epoch_ms && now_epoch > g->restore.epoch_ms) {
+            const uint64_t gap = (now_epoch - g->restore.epoch_ms) / 1000;
+            if ((int64_t)gap > g->ingest->compiler().config().idle_tick_s) { tick_s = gap; g->ingest->tick(gap, mono_ms()); }
+        }
+        std::string text;
+        read_file(g->restore.txt, text);          // verified against its hash in decide_restore
+        if (g->tape.is_open()) g->tape.flush();   // rows in the buffer must be on disk to be read back
+        std::vector<TapeRow> rows;
+        uint64_t clock = 1000;
+        if (rows_after(g->tape.path(), g->restore.digest, rows, err)) replayed = fold_tape(rows, text, *g->ingest, g->th.lane, clock);
+        // whatever still differs from the document now: the file changed while nib was closed, or
+        // a row never reached the tape
+        const DiffSpan d = diff_texts(text, g->doc.text());
+        if (!d.gone.empty() || !d.came.empty()) {
+            const uint64_t t = mono_ms();
+            if (!d.gone.empty()) g->ingest->removed(g->th.lane, d.gone, t, d.at, g->doc.revisions());
+            if (!d.came.empty()) g->ingest->typed(g->th.lane, d.came, t, d.at, g->doc.revisions());
+        }
+    } else {
+        replayed = fold_log(g->doc, *g->ingest, g->th.lane);
+    }
+    g->ingest->fold_history_end();
     g->ingest->fold_end(fold_budget_bytes());
+    g->ingest->resync_clock(mono_ms());
+    g->wire.set_fold_rev(g->doc.revisions());
+    g->fold_done = true;
     tape_row("fold", canon::obj({
-        { "revisions", canon::num((int64_t)revs) },
+        { "boot", canon::str(boot) },
+        { "reason", canon::str(g->wire.boot_reason()) },
+        { "from", canon::str(from) },
+        { "replayed", canon::num((int64_t)replayed) },
+        { "tick_s", canon::num((int64_t)tick_s) },
         { "percepts", canon::num((int64_t)g->ingest->compiler().percepts()) },
         { "shipped", canon::num((int64_t)g->ingest->fold_shipped()) },
         { "skipped", canon::num((int64_t)g->ingest->fold_skipped()) },
         { "skipped_bytes", canon::num((int64_t)g->ingest->fold_skipped_bytes()) },
         { "budget_bytes", canon::num((int64_t)fold_budget_bytes()) },
+        { "err", canon::str(err) },
     }), true);
     tape_percepts();
     g->last_percepts = g->ingest->compiler().percepts();
-    g->wire.start(g->rcfg, g->ingest.get());
-    g->last_state = WireState::Loading;
-    nlog("resident	loading	%s", g->th.model.c_str());
+    nlog("fold	%s	%s	%zu	%llu	%llu	%llu	%s", boot.c_str(), from.c_str(), replayed,
+         (unsigned long long)g->ingest->fold_shipped(), (unsigned long long)g->ingest->fold_skipped(),
+         (unsigned long long)tick_s, g->wire.boot_reason().c_str());
 }
 
-void stop_resident() {
-    if (g->wire.on() || g->wire.state() == WireState::Stopping) {
-        g->wire.stop();   // joins: a decode in flight is at most one batch; then the card comes back
-        tape_row("end", canon::obj({
-            { "boundaries", canon::num((int64_t)g->wire.boundaries()) },
-            { "probes", canon::num((int64_t)g->wire.probes()) },
-            { "wanted", canon::num((int64_t)g->wire.wanted()) },
-            { "ticks", canon::num((int64_t)g->wire.ticks()) },
-            { "deltas", canon::num((int64_t)g->wire.deltas()) },
-            { "dropped_words", canon::num((int64_t)g->wire.dropped_words()) },
-            { "window_full", canon::boolean(g->wire.window_full()) },
-            { "context_used", canon::num(g->wire.context_used()) },
-            { "probe_ms", canon::num((int64_t)g->wire.probe_ms()) },
-        }), true);
-        nlog("resident	off	%llu boundaries", (unsigned long long)g->wire.boundaries());
+// Off: the clause still in the compiler is real and is shipped; the thread drains the ring, judges
+// the open clause, saves the trunk beside the document, and goes Off; the editor collects it from
+// the timer (`wait` false) or at once (`wait` true: exit, and before another document is opened).
+void stop_resident(bool wait, const char* why) {
+    if (!(g->wire.on() || g->wire.state() == WireState::Stopping)) {
+        g->last_state = g->wire.state();
+        if (!getenv("NIB_COMPILE")) g->ingest.reset();
+        return;
     }
-    g->last_state = g->wire.state();
-    if (!getenv("NIB_COMPILE")) g->ingest.reset();   // off means no ingest
+    g->stop_why = why;
+    g->stop_pending = true;
+    if (g->ingest) { g->ingest->flush(mono_ms()); tape_percepts(); }
+    g->wire.stop_async(ckpt_base() + ".bin", why);
+    if (wait) finish_stop();
 }
 
 void ai_set(HWND h, bool on) {
@@ -649,7 +892,7 @@ void ai_set(HWND h, bool on) {
                                     { "to", canon::str(on ? "on" : "off") } }), true);
     g->ai_wanted = on;
     if (on) { start_resident(); set_status("AI: loading " + model_name()); }
-    else { stop_resident(); set_status("AI off - the model is unloaded, the card is returned"); }
+    else { stop_resident(false, "off"); set_status("AI stopping - the trunk is being saved, then the card comes back"); }
     InvalidateRect(h, nullptr, TRUE);
 }
 
@@ -686,6 +929,7 @@ void flush_pending_judgment() {
         { "last_id", canon::num((int64_t)r0.last_id) },
         { "reason", canon::str(std::string(1, r0.reason)) },
         { "bscore", canon::flt(r0.bscore) },
+        { "mib_free", canon::num((int64_t)r0.mib_free) },
         { "clause", canon::str(r0.clause) },
         { "margins", canon::obj(margins) },
     }), true);
@@ -698,8 +942,9 @@ void poll_wire(HWND h) {
     if (s != g->last_state) {
         g->last_state = s;
         if (s == WireState::Ready) {
-            nlog("resident	ready	%s	%llu ms	%s	%llu ms", g->wire.detail().c_str(), (unsigned long long)g->wire.load_ms(),
-                 g->wire.model_hash().c_str(), (unsigned long long)g->wire.hash_ms());
+            nlog("resident	ready	%s	%llu ms	%s	%llu ms	%s	%s", g->wire.detail().c_str(), (unsigned long long)g->wire.load_ms(),
+                 g->wire.model_hash().c_str(), (unsigned long long)g->wire.hash_ms(), g->wire.boot().c_str(),
+                 g->wire.hash_cached() ? "cached" : "hashed");
             tape_row("session", g->wire.session_body(), true);
             for (size_t i = 0; i < seat_count(); ++i)
                 tape_row("mandate", canon::obj({ { "seat", canon::num((int64_t)i) }, { "name", canon::str(seats()[i].name) },
@@ -712,15 +957,25 @@ void poll_wire(HWND h) {
                 tape_row("coefficient", canon::obj({ { "name", canon::str("removed_mark") }, { "value", canon::str(c.removed_mark) } }));
             }
             tape_row("coefficient", canon::obj({ { "name", canon::str("n_ctx") }, { "value", canon::num(g->rcfg.n_ctx) } }), true);
-            set_status(ssprintf("AI on: %s loaded in %.1f s", model_name().c_str(), g->wire.load_ms() / 1000.0));
+            fold_on_ready();
+            set_status(ssprintf("AI on (%s): %s loaded in %.1f s", g->wire.boot().c_str(), model_name().c_str(), g->wire.load_ms() / 1000.0));
         } else if (s == WireState::Error) {
             nlog("resident	error	%s", g->wire.detail().c_str());
             tape_row("error", canon::obj({ { "text", canon::str(g->wire.detail()) } }), true);
+            g->wire.join();
+            g->stop_pending = false;
             g->ai_wanted = false;
             if (!getenv("NIB_COMPILE")) g->ingest.reset();
             set_status("AI error: " + g->wire.detail());
+        } else if (s == WireState::Off && g->stop_pending) {
+            finish_stop();   // the thread drained, judged, saved the trunk and left; the card is back
+            set_status("AI off - the trunk is saved beside the document, the card is returned");
         }
         InvalidateRect(h, nullptr, FALSE);
+    }
+    {
+        CkptResult cr;   // a checkpoint taken while running lands here; the sidecar is the editor's to write
+        if (g->wire.take_checkpoint(cr)) write_sidecar(cr);
     }
 
     JudgmentRow r;
@@ -739,6 +994,7 @@ void poll_wire(HWND h) {
             m = &g->marks.back();
         }
         if (m && r.seat >= 0 && r.seat < 3) { m->margin[r.seat] = r.margin; m->have[r.seat] = true; }
+        g->last_mib_free = r.mib_free;
         nlog("judgment	%u	%s	%.2f	%c	%s", r.boundary, seats()[r.seat].name, (double)r.margin, r.reason, r.clause);
         // the tape row carries the three seats of one boundary together, as fusord's k=b does
         if (g->pend.n == 0 || g->pend.boundary != r.boundary) { flush_pending_judgment(); g->pend.boundary = r.boundary; }
@@ -795,7 +1051,7 @@ void load_into(HWND h, const std::wstring& path, std::string raw) {
     // A different file is a different world: the resident, if it is on, stops perceiving this one
     // and starts again on the other by folding its log; the tape switches to the new document's.
     const bool ai = g->ai_wanted;
-    if (ai) stop_resident();
+    if (ai) stop_resident(true, "open");   // the old document's trunk is saved beside IT before the tape moves
     g->bom = raw.size() >= 3 && (unsigned char)raw[0] == 0xEF && (unsigned char)raw[1] == 0xBB && (unsigned char)raw[2] == 0xBF;
     if (g->bom) raw.erase(0, 3);
     g->crlf = raw.find("\r\n") != std::string::npos;
@@ -846,14 +1102,23 @@ bool save_to(HWND h, const std::wstring& path) {
     std::string err;
     if (!write_atomic(path, bytes, err)) { set_status("save failed: " + err); InvalidateRect(h, nullptr, TRUE); return false; }
     const bool renamed = path != g->path;
+    const std::string old_base = ckpt_base();
     g->path = path;
     g->saved_rev = g->doc.revisions();
     if (renamed) {
-        // the document has a name now (or a new one): its tape moves beside it, chaining on
+        // the document has a name now (or a new one): its tape moves beside it, chaining on, and
+        // so does its checkpoint, whose sidecar still binds to a row in the old tape (rows_after
+        // follows the `resume` row back to it)
         const std::string prev_head = g->tape.head();
         const std::string prev_path = g->tape.path();
-        open_tape();
+        open_tape(true);
         tape_row("resume", canon::obj({ { "from", canon::str(prev_path) }, { "head", canon::str(prev_head) } }), true);
+        const std::string new_base = ckpt_base();
+        for (const char* ext : { ".bin", ".bin.prev", ".txt", ".meta" }) {
+            std::string e3;
+            if (GetFileAttributesA((old_base + ext).c_str()) != INVALID_FILE_ATTRIBUTES)
+                replace_file_retry(old_base + ext, new_base + ext, false, e3);
+        }
     }
     tape_row("save", canon::obj({ { "bytes", canon::num((int64_t)bytes.size()) }, { "rev", canon::num((int64_t)g->doc.revisions()) } }), true);
     nlog("saved	%zu	%zu", bytes.size(), g->doc.revisions());
@@ -923,14 +1188,17 @@ std::string resident_line() {
     const WireState s = g->wire.state();
     if (!g->ai_wanted && s == WireState::Off) return "AI off  ·  Ctrl+Shift+A to switch on";
     switch (s) {
-        case WireState::Loading: return "AI loading  ·  " + model_name();
-        case WireState::Stopping: return "AI stopping";
+        case WireState::Loading: return "AI loading  ·  " + model_name() + (g->restore.wanted ? "  ·  restoring the trunk" : "");
+        case WireState::Stopping: return "AI stopping  ·  saving the trunk beside the document";
         case WireState::Error: return "AI error  ·  " + g->wire.detail();
-        case WireState::Off: return "AI off";
+        case WireState::Off: return g->stop_pending ? "AI stopping  ·  saving the trunk beside the document" : "AI off";
         case WireState::Ready: {
-            std::string l = ssprintf("AI on  ·  SPEAKER %+.1f  SKEPTIC %+.1f  SENTINEL %+.1f  ·  %llu boundaries  ·  ctx %d/%d",
+            const std::string boot = g->wire.boot();
+            std::string l = ssprintf("AI on%s  ·  SPEAKER %+.1f  SKEPTIC %+.1f  SENTINEL %+.1f  ·  %llu boundaries  ·  ctx %d/%d",
+                                     boot == "restored" ? " (restored)" : boot == "twin" ? " (twin)" : "",
                                      (double)g->wire.last_margin(0), (double)g->wire.last_margin(1), (double)g->wire.last_margin(2),
                                      (unsigned long long)g->wire.boundaries(), g->wire.context_used(), g->rcfg.n_ctx);
+            if (g->last_mib_free) l += ssprintf("  ·  %llu MiB free", (unsigned long long)g->last_mib_free);
             if (g->ingest) {
                 if (g->ingest->spooled()) l += ssprintf("  ·  spool %zu", g->ingest->spooled());
                 if (g->ingest->fold_skipped()) l += ssprintf("  ·  joined late: %llu percepts before me", (unsigned long long)g->ingest->fold_skipped());
@@ -1108,6 +1376,19 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 if (n != g->last_percepts) { g->last_percepts = n; repaint = true; }
             }
             poll_wire(h);
+            // The periodic checkpoint (SPEC 6.2.11), taken only when the world is quiet: two seconds
+            // since the last edit, nothing on the ring or in the spool, nothing pending in the
+            // compiler — so the trunk and the revision the sidecar names agree about what it saw —
+            // and only when something new has reached the trunk since the last one.
+            if (g->wire.state() == WireState::Ready && g->fold_done && g->ingest && !g->stop_pending) {
+                const uint64_t now = mono_ms();
+                const bool quiet = now - g->last_key_ms >= 2000 && g->ingest->pending() == 0 && g->ingest->spooled() == 0 &&
+                                   !g->ingest->compiler().has_pending();
+                if (quiet && now - g->last_ckpt_ms >= kCkptEveryMs && g->wire.deltas() != g->last_ckpt_deltas) {
+                    g->last_ckpt_ms = now;   // asked for; the sidecar sets it again when the result lands
+                    g->wire.request_checkpoint(ckpt_base() + ".bin", "periodic");
+                }
+            }
             if (g->tape_dirty) { g->tape.flush(); g->tape_dirty = false; }
             if (repaint) InvalidateRect(h, nullptr, FALSE);
             return 0;
@@ -1342,16 +1623,40 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
 }  // namespace
 
+// A crash names itself. An uncaught exception on any thread reaches std::terminate, and a hardware
+// fault reaches the unhandled-exception filter; both write what they know to the log before the
+// process dies, because a crash that says nothing costs an hour of bisecting (2026-09-05).
+[[noreturn]] void on_terminate() {
+    std::string what = "terminate with no exception";
+    if (auto e = std::current_exception()) {
+        try { std::rethrow_exception(e); }
+        catch (const std::exception& ex) { what = std::string("uncaught exception: ") + ex.what(); }
+        catch (...) { what = "uncaught exception of an unknown type"; }
+    }
+    nlog("crash	%s	thread %lu", what.c_str(), (unsigned long)GetCurrentThreadId());
+    abort();
+}
+
+LONG WINAPI on_fault(EXCEPTION_POINTERS* ep) {
+    const DWORD code = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0;
+    const void* at = ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : nullptr;
+    nlog("crash	fault 0x%08lx at %p	thread %lu", (unsigned long)code, at, (unsigned long)GetCurrentThreadId());
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 int run_editor(const std::string& path_utf8) {
     static View view;
     g = &view;
     g->t0 = mono_ms();
     if (const char* lp = getenv("NIB_LOG")) g->log = fopen(lp, "ab");
+    std::set_terminate(on_terminate);
+    SetUnhandledExceptionFilter(on_fault);
     load_theme(g->th);
     g->rcfg.model = g->th.model;
     g->rcfg.llama_dir = g->th.llama_dir;
     g->rcfg.n_ctx = g->th.n_ctx;
     g->rcfg.n_gpu_layers = g->th.gpu_layers;
+    g->rcfg.hash_cache = narrow(exe_dir()) + "\\runs\\model-hashes.txt";   // the model's SHA-256, remembered on size and mtime
 
     // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow
     // answers 96, WM_DPICHANGED is never delivered, and on a 225 % box the window is a bitmap
@@ -1403,7 +1708,8 @@ int run_editor(const std::string& path_utf8) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    if (g->ai_wanted) { g->ai_wanted = false; stop_resident(); }
+    if (g->ai_wanted) { g->ai_wanted = false; stop_resident(true, "close"); }
+    else if (g->stop_pending) finish_stop();
     else g->wire.stop();
     flush_pending_judgment();
     tape_row("session_close", canon::obj({ { "revisions", canon::num((int64_t)g->doc.revisions()) } }), true);

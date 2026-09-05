@@ -209,6 +209,15 @@ struct Resident::Impl {
 
 static const llama_seq_id TRUNK = 0, DECIDE = 7;
 
+// A breadcrumb to stderr when NIB_TRACE is set. The window's stderr is the driver's file, so a
+// crash inside llama or ggml — which kills the process without unwinding — still says which step
+// it was in. Off by default; costs one getenv per start.
+static bool trace_on() {
+    static const bool on = getenv("NIB_TRACE") != nullptr;
+    return on;
+}
+#define NIB_TRACE(what) do { if (trace_on()) { fprintf(stderr, "nib: %s\n", (what)); fflush(stderr); } } while (0)
+
 static uint64_t wall_ms() {
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -223,8 +232,18 @@ static std::vector<llama_token> tk(const llama_vocab* v, const std::string& s, b
 
 static bool dec(llama_context* c, const std::vector<llama_token>& t, llama_seq_id s,
                 llama_pos start, bool ll) {
+    // THE BATCH IS CAPPED AT 64 TOKENS, and this is not a performance choice (SPEC 6.2.12).
+    // Above ~64 rows ggml-cuda leaves its quantized matmul for cuBLAS, and the cuBLAS path dies
+    // with "invalid argument" on the SECOND model loaded into one process — which is every life
+    // of the AI switch after the first. Measured 2026-09-05, bisected: 64 seeds a second life,
+    // 96 and 128 abort in ggml_cuda_compute_forward; a restored life never crashed because the
+    // only decode it makes above 64 rows is the seed it does not do. Capping also makes every
+    // life NUMERICALLY IDENTICAL, which is the stronger reason: with the cliff left in, life one
+    // would judge through cuBLAS and life two through the quantized path, and the same sentence
+    // would score differently in the same session. NIB_CHUNK overrides it for experiments only.
+    static const int kChunk = getenv("NIB_CHUNK") ? atoi(getenv("NIB_CHUNK")) : 64;
     for (int off = 0, tot = (int)t.size(); off < tot;) {
-        const int take = tot - off > 512 ? 512 : tot - off;
+        const int take = tot - off > kChunk ? kChunk : tot - off;
         llama_batch b = llama_batch_init(take, 0, 1);
         b.n_tokens = take;
         for (int i = 0; i < take; ++i) {
@@ -239,7 +258,22 @@ static bool dec(llama_context* c, const std::vector<llama_token>& t, llama_seq_i
     return true;
 }
 
-static void quiet_log(ggml_log_level, const char*, void*) {}
+// Quiet means quiet about progress, never about failure: an error or a warning from llama or ggml
+// reaches stderr whatever the verbosity, because on 2026-09-05 a CUDA abort that named its cause
+// in exactly such a line arrived as "ggml-cuda.cu:103: CUDA error" and nothing else, and cost an
+// hour of bisecting. The driver and the reproductions capture stderr; the window does not need it.
+static void quiet_log(ggml_log_level level, const char* text, void*) {
+    if (level == GGML_LOG_LEVEL_ERROR || level == GGML_LOG_LEVEL_WARN) { fputs(text, stderr); fflush(stderr); }
+}
+
+// The backends and llama's global state live as long as the process; a resident is one model and
+// one context on top of them. Until 2026-09-05 each resident also called llama_backend_free() on
+// its way out, and the NEXT resident's seed decode — the one 430-token batch nib ever runs — died
+// in a cuBLAS matmul with "invalid argument" while every small decode still worked (the driver's
+// third life, then a two-life reproduction). Backend up once, DLLs loaded once, freed never; the
+// card is returned by freeing the context and the model, which the driver measures.
+static bool g_backend_up = false;
+static std::string g_backends_loaded;
 
 Resident::~Resident() {
     if (p_) {
@@ -247,7 +281,6 @@ Resident::~Resident() {
         if (p_->mdl) llama_model_free(p_->mdl);
         delete p_;
         p_ = nullptr;
-        llama_backend_free();
     }
     ctx_ = nullptr;
 }
@@ -272,7 +305,12 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
         return false;
     }
 
-    if (!load_backends(cfg_.llama_dir, backends_, err)) return false;
+    if (!g_backend_up) {
+        if (!load_backends(cfg_.llama_dir, backends_, err)) return false;
+        g_backends_loaded = backends_;
+    } else {
+        backends_ = g_backends_loaded;   // loaded once per process; the gate below still runs every time
+    }
 
     // The runtime half of rule 2. The build gate proved the exe imports no network DLL; this
     // proves the process holds none now that the backends are in. A LoadLibrary at this point is
@@ -286,8 +324,8 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
         }
     }
 
-    llama_backend_init();
-    if (!cfg_.verbose) llama_log_set(quiet_log, nullptr);
+    if (!g_backend_up) { llama_backend_init(); g_backend_up = true; }
+    if (!cfg_.verbose) { llama_log_set(quiet_log, nullptr); ggml_log_set(quiet_log, nullptr); }
 
     // WHICH DEVICES ACTUALLY CAME UP. A missing CUDA backend is not an error in ggml — it is a
     // silent fall back to CPU that runs about 47x slower, which on this box means a nine-minute
@@ -315,8 +353,10 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
 
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = cfg_.n_gpu_layers;
+    NIB_TRACE("model loading");
     p_->mdl = llama_model_load_from_file(cfg_.model.c_str(), mp);
     if (!p_->mdl) { err = "could not load the model: " + cfg_.model; return false; }
+    NIB_TRACE("model loaded");
     p_->vocab = llama_model_get_vocab(p_->mdl);
     p_->n_vocab = llama_vocab_n_tokens(p_->vocab);
     {
@@ -359,8 +399,10 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
         cp.type_k = GGML_TYPE_Q8_0; cp.type_v = GGML_TYPE_Q8_0;
         cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
     }
+    NIB_TRACE("context creating");
     p_->ctx = llama_init_from_model(p_->mdl, cp);
     if (!p_->ctx) { err = "could not create the context"; return false; }
+    NIB_TRACE("context created");
     if (llama_n_ctx_seq(p_->ctx) != llama_n_ctx(p_->ctx)) {
         err = "kv_unified did not hold";
         return false;
@@ -374,6 +416,7 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
     // The trunk is an asset (SPEC 6.2.11): given a checkpoint, the held state comes back instead
     // of the seed — if it loads, and if it holds exactly the tokens its sidecar says it holds. A
     // resident that seeds because the checkpoint would not load is the twin, and says so.
+    NIB_TRACE(restore_path.empty() ? "seeding" : "restoring");
     bool restored = false;
     if (!restore_path.empty()) {
         std::vector<llama_token> buf((size_t)cfg_.n_ctx);
@@ -398,6 +441,7 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
     }
     last_flush_ms_ = wall_ms();
     ctx_ = p_->ctx;
+    NIB_TRACE("started");
     return true;
 }
 

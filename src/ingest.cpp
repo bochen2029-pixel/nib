@@ -288,13 +288,12 @@ std::vector<Percept> PadSource::take_shipped() {
 }
 
 void PadSource::fold_begin() {
-    mode_ = Mode::Raw;
+    mode_ = Mode::Wait;
     fold_.clear();
-    raw_.clear();
 }
 
 void PadSource::fold_history_begin() { mode_ = Mode::Hist; }
-void PadSource::fold_history_end() { mode_ = Mode::Raw; }
+void PadSource::fold_history_end() { mode_ = Mode::Wait; }
 
 void PadSource::tick(uint64_t gap_s, uint64_t now_ms) {
     comp_.tick(gap_s, now_ms, scratch_);
@@ -302,18 +301,6 @@ void PadSource::tick(uint64_t gap_s, uint64_t now_ms) {
 }
 
 void PadSource::fold_end(size_t budget_bytes) {
-    // what the hand typed while the model loaded, compiled now, after the history, in its order
-    mode_ = Mode::Hist;
-    for (const RawEvent& e : raw_) {
-        switch (e.op) {
-            case 't': comp_.typed(e.lane, e.text, e.ms, e.pos, e.rev, scratch_); break;
-            case 'r': comp_.removed(e.lane, e.text, e.ms, e.pos, e.rev, scratch_); break;
-            case 'i': comp_.idle(e.ms, scratch_); break;
-            default:  comp_.flush(e.ms, scratch_); break;
-        }
-        ship(scratch_);
-    }
-    raw_.clear();
     mode_ = Mode::Live;
     // keep the LAST percepts that fit the budget, in order; count the rest, loudly
     size_t bytes = 0, keep_from = fold_.size();
@@ -337,7 +324,7 @@ void PadSource::fold_end(size_t budget_bytes) {
 
 void PadSource::typed(const std::string& lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev) {
     if (is_seat(lane)) { ++echoes_; return; }   // SPEC 5.1.6 — filtered at the door
-    if (mode_ == Mode::Raw) { raw_.push_back(RawEvent{ 't', lane, text, now_ms, pos, rev }); return; }
+    if (mode_ == Mode::Wait) return;             // in the log with its clock; the fold replays it
     if (pos == Compiler::kContinue) comp_.typed(lane, text, now_ms, scratch_);
     else comp_.typed(lane, text, now_ms, pos, rev, scratch_);
     ship(scratch_);
@@ -345,27 +332,21 @@ void PadSource::typed(const std::string& lane, const std::string& text, uint64_t
 
 void PadSource::removed(const std::string& lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev) {
     if (is_seat(lane)) { ++echoes_; return; }
-    if (mode_ == Mode::Raw) { raw_.push_back(RawEvent{ 'r', lane, text, now_ms, pos, rev }); return; }
+    if (mode_ == Mode::Wait) return;
     if (pos == Compiler::kContinue) comp_.removed(lane, text, now_ms, scratch_);
     else comp_.removed(lane, text, now_ms, pos, rev, scratch_);
     ship(scratch_);
 }
 
 void PadSource::idle(uint64_t now_ms) {
-    if (mode_ == Mode::Raw) {
-        // one idle a beat is enough to carry the clock; the queue does not grow with the timer
-        if (raw_.empty() || raw_.back().op != 'i') raw_.push_back(RawEvent{ 'i', {}, {}, now_ms, 0, 0 });
-        else raw_.back().ms = now_ms;
-        pump();
-        return;
-    }
+    if (mode_ == Mode::Wait) { pump(); return; }
     comp_.idle(now_ms, scratch_);
     ship(scratch_);
     pump();
 }
 
 void PadSource::flush(uint64_t now_ms) {
-    if (mode_ == Mode::Raw) { raw_.push_back(RawEvent{ 'f', {}, {}, now_ms, 0, 0 }); return; }
+    if (mode_ == Mode::Wait) return;
     comp_.flush(now_ms, scratch_);
     ship(scratch_);
 }
