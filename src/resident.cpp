@@ -2,6 +2,8 @@
 #include "resident.h"
 
 #include <windows.h>
+#define PSAPI_VERSION 2   // K32EnumProcessModules lives in kernel32: no new import for the gate
+#include <psapi.h>
 
 #include "ggml-backend.h"
 #include "llama.h"
@@ -47,6 +49,11 @@ static const Seat kSeats[3] = {
 const Seat* seats() { return kSeats; }
 size_t seat_count() { return 3; }
 
+void register_seats(PadSource& src) {
+    for (const Seat& s : kSeats) src.add_seat(s.name);
+    src.add_seat("fusor");   // the daemon's own lane, as fusord.cpp:707 filters it
+}
+
 static uint64_t fnv1a(uint64_t h, const char* s) {
     for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
         h ^= (uint64_t)*p; h *= 1099511628211ull;
@@ -65,6 +72,119 @@ uint64_t serve_hash() {
                  "Give your one-sentence line now — no preamble."
                  "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
     return h;
+}
+
+// ---- the DLLs and the gate --------------------------------------------------------------------
+static std::wstring wide(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+    std::wstring w((size_t)(n > 0 ? n : 0), L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
+    return w;
+}
+
+static std::string narrow(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s((size_t)(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+static bool file_exists(const std::wstring& p) {
+    const DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+bool load_backends(const std::string& llama_dir, std::string& loaded, std::string& err) {
+    loaded.clear();
+    const std::wstring dir = wide(llama_dir);
+    // The directory must be on the DLL search path BEFORE anything is loaded, because
+    // ggml-cuda.dll's own dependencies (cudart64_12, cublas64_12, cublasLt64_12) live beside it
+    // and are resolved by name. Dropping this is how the whole model silently lands on the CPU:
+    // ggml simply reports no CUDA device and offloads nothing, with no error anywhere.
+    SetDllDirectoryW(dir.c_str());
+
+    // The three the exe imports, loaded by full path and in dependency order rather than left to
+    // the delay-load search: a delay-load that cannot resolve raises a structured exception deep
+    // inside the first llama call, which is a miserable way to learn that a path is wrong.
+    const char* need[] = { "ggml-base.dll", "ggml.dll", "llama.dll" };
+    for (const char* n : need) {
+        const std::wstring full = dir + L"/" + wide(n);
+        if (!LoadLibraryExW(full.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)) {
+            err = std::string("could not load ") + n + " (llama.cpp is expected at " + llama_dir + ")";
+            return false;
+        }
+    }
+
+    // The backends, BY NAME. `ggml_backend_load_all_from_path` would also load ggml-rpc.dll —
+    // the RPC backend imports ws2_32 — and any DLL named in GGML_BACKEND_PATH. Neither belongs in
+    // a process whose status line says 0 bytes egress (CLAUDE.md rule 2, the runtime half).
+    {
+        const std::wstring cuda = dir + L"/ggml-cuda.dll";
+        if (file_exists(cuda)) {
+            if (ggml_backend_load(narrow(cuda).c_str())) loaded += "cuda: ggml-cuda.dll";
+            else loaded += "cuda: ggml-cuda.dll present but did not load";
+        } else {
+            loaded += "cuda: absent";
+        }
+    }
+    {
+        // The CPU backend ships as one DLL per instruction set; each exports a score for the CPU
+        // it is running on, and the best one is the one to load — which is what the directory
+        // loader does, done here by hand so that only this family of DLLs is considered.
+        using ScoreFn = int (*)(void);
+        std::wstring best;
+        int best_score = 0;
+        WIN32_FIND_DATAW fd{};
+        HANDLE fh = FindFirstFileW((dir + L"/ggml-cpu-*.dll").c_str(), &fd);
+        if (fh != INVALID_HANDLE_VALUE) {
+            do {
+                const std::wstring full = dir + L"/" + fd.cFileName;
+                HMODULE m = LoadLibraryExW(full.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+                if (!m) continue;
+                int score = 1;   // a variant without a score is usable, at the lowest rank
+                if (auto f = reinterpret_cast<ScoreFn>(GetProcAddress(m, "ggml_backend_score"))) score = f();
+                FreeLibrary(m);
+                if (score > best_score) { best_score = score; best = full; }
+            } while (FindNextFileW(fh, &fd));
+            FindClose(fh);
+        }
+        if (best.empty() && file_exists(dir + L"/ggml-cpu.dll")) { best = dir + L"/ggml-cpu.dll"; best_score = 1; }
+        if (best.empty()) { err = "no ggml-cpu backend found in " + llama_dir; return false; }
+        if (!ggml_backend_load(narrow(best).c_str())) { err = "could not load " + narrow(best); return false; }
+        const size_t slash = best.find_last_of(L"/\\");
+        loaded += " · cpu: " + narrow(slash == std::wstring::npos ? best : best.substr(slash + 1)) +
+                  " (score " + std::to_string(best_score) + ")";
+    }
+    return true;
+}
+
+bool module_gate(std::string& modules, size_t& count, std::string& offending) {
+    modules.clear();
+    offending.clear();
+    count = 0;
+    static const char* kForbidden[] = { "ws2_32.dll", "winhttp.dll", "wininet.dll", "urlmon.dll",
+                                        "dnsapi.dll", "ggml-rpc.dll" };
+    HMODULE mods[1024];
+    DWORD needed = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &needed)) {
+        offending = "EnumProcessModules failed";
+        return false;
+    }
+    const size_t n = needed / sizeof(HMODULE) < 1024 ? needed / sizeof(HMODULE) : 1024;
+    for (size_t i = 0; i < n; ++i) {
+        wchar_t name[MAX_PATH]{};
+        if (!GetModuleBaseNameW(GetCurrentProcess(), mods[i], name, MAX_PATH)) continue;
+        std::string base = narrow(name);
+        for (char& c : base) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        ++count;
+        if (!modules.empty()) modules += ", ";
+        modules += base;
+        for (const char* f : kForbidden)
+            if (base == f) { if (!offending.empty()) offending += ", "; offending += base; }
+    }
+    return offending.empty();
 }
 
 // ---- the llama handles ---------------------------------------------------------------------
@@ -118,12 +238,17 @@ Resident::~Resident() {
         if (p_->mdl) llama_model_free(p_->mdl);
         delete p_;
         p_ = nullptr;
+        llama_backend_free();
     }
     ctx_ = nullptr;
 }
 
 bool Resident::start(const Config& cfg, std::string& err) {
     cfg_ = cfg;
+    if (cfg_.n_ctx < kMinCtx) {
+        err = "n_ctx " + std::to_string(cfg_.n_ctx) + " is below the minimum of " + std::to_string(kMinCtx);
+        return false;
+    }
 
     // The gate, before anything expensive: a drifted seed is a wasted model load and a corpus of
     // numbers measured off-distribution. Refuse first (SPEC 6.2.2).
@@ -138,37 +263,25 @@ bool Resident::start(const Config& cfg, std::string& err) {
         return false;
     }
 
-    // The DLLs live in C:/llama.cpp and are neither beside the exe nor copied, so the one build on
-    // this box is the one everything uses. They are loaded BY FULL PATH and in dependency order
-    // rather than left to the delay-load search: a delay-load that cannot resolve raises a
-    // structured exception deep inside the first llama call, which is a miserable way to learn
-    // that a path is wrong. Loading them here turns that into a sentence.
-    {
-        // The directory must be on the DLL search path BEFORE anything is loaded, because
-        // ggml-cuda.dll's own dependencies (cudart64_12, cublas64_12, cublasLt64_12) live beside
-        // it and are resolved by name. Dropping this is how the whole model silently lands on the
-        // CPU: ggml simply reports no CUDA device and offloads nothing, with no error anywhere.
-        wchar_t wd[MAX_PATH];
-        MultiByteToWideChar(CP_UTF8, 0, cfg_.llama_dir.c_str(), -1, wd, MAX_PATH);
-        SetDllDirectoryW(wd);
+    if (!load_backends(cfg_.llama_dir, backends_, err)) return false;
 
-        const char* need[] = { "ggml-base.dll", "ggml.dll", "llama.dll" };
-        for (const char* n : need) {
-            const std::string full = cfg_.llama_dir + "/" + n;
-            wchar_t w[MAX_PATH];
-            MultiByteToWideChar(CP_UTF8, 0, full.c_str(), -1, w, MAX_PATH);
-            if (!LoadLibraryExW(w, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)) {
-                err = std::string("could not load ") + full +
-                      " (llama.cpp is expected at " + cfg_.llama_dir + ")";
-                return false;
-            }
+    // The runtime half of rule 2. The build gate proved the exe imports no network DLL; this
+    // proves the process holds none now that the backends are in. A LoadLibrary at this point is
+    // invisible to dumpbin, and ggml-rpc.dll sits in C:/llama.cpp beside the DLLs nib wants.
+    {
+        std::string mods, bad;
+        if (!module_gate(mods, module_count_, bad)) {
+            err = "a network module is loaded in this process: " + bad +
+                  " — the status line would say 0 bytes egress and it would not be true. Refusing.";
+            return false;
         }
     }
+
+    llama_backend_init();
     if (!cfg_.verbose) llama_log_set(quiet_log, nullptr);
-    ggml_backend_load_all_from_path(cfg_.llama_dir.c_str());   // the CUDA/CPU backends
 
     // WHICH DEVICES ACTUALLY CAME UP. A missing CUDA backend is not an error in ggml — it is a
-    // silent fall back to CPU that runs about 75x slower, which on this box means a nine-minute
+    // silent fall back to CPU that runs about 47x slower, which on this box means a nine-minute
     // battery and a saturated CPU nobody asked for. Measured 2026-09-04, the day it happened.
     // So the devices are enumerated and named, and asking for GPU layers without a GPU is refused.
     {
@@ -183,7 +296,7 @@ bool Resident::start(const Config& cfg, std::string& err) {
         have_gpu_ = gpu;
         if (!gpu && cfg_.n_gpu_layers > 0 && !cfg_.allow_cpu) {
             err = "no GPU backend loaded from " + cfg_.llama_dir + " (devices: " + devices_ +
-                  "). Every layer would run on the CPU, which is ~75x slower and saturates this "
+                  "). Every layer would run on the CPU, which is ~47x slower and saturates this "
                   "box. Pass --allow-cpu to do it deliberately.";
             return false;
         }
@@ -271,6 +384,23 @@ float Resident::read_frontier() {
     return (float)(bnd / tot);
 }
 
+bool Resident::room_for(size_t ntok) {
+    // A full window is a REFUSAL, not a return. Stage 1b has no molt; the honest thing at the
+    // wall is to stop perceiving, say so, and mark the run invalid — never to keep judging a
+    // clause the trunk did not see.
+    if (window_full_) return false;
+    if (npast_ + (long long)ntok >= (long long)cfg_.n_ctx - 512) { window_full_ = true; return false; }
+    return true;
+}
+
+bool Resident::decode(const std::vector<int>& toks, int seq, long long pos, bool logits) {
+    if (!dec(p_->ctx, toks, (llama_seq_id)seq, (llama_pos)pos, logits)) {
+        if (failure_.empty()) failure_ = "llama_decode failed at position " + std::to_string(pos);
+        return false;
+    }
+    return true;
+}
+
 void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& out) {
     if (clause_.empty()) return;
     ++boundaries_;
@@ -282,7 +412,7 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
         llama_memory_seq_cp(p_->mem, TRUNK, DECIDE, -1, -1);
         const auto pr = tk(p_->vocab, std::string("\n[") + kSeats[m].name + " — " +
                                           kSeats[m].mandate + "]\nwatcher:", false);
-        dec(p_->ctx, pr, DECIDE, (llama_pos)npast_, true);
+        if (!decode(pr, DECIDE, npast_, true)) { llama_memory_seq_rm(p_->mem, DECIDE, -1, -1); break; }
         const float* l = llama_get_logits_ith(p_->ctx, -1);
         Judgment j;
         j.wall_ms = wall_ms();
@@ -307,11 +437,11 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
     last_flush_ms_ = wall_ms();
 }
 
-void Resident::ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out) {
+bool Resident::ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out) {
     const auto wt = tk(p_->vocab, w, false);
-    if (wt.empty()) return;
-    if (npast_ + (long long)wt.size() >= cfg_.n_ctx - 512) return;   // Stage 1b does not molt yet
-    dec(p_->ctx, wt, TRUNK, (llama_pos)npast_, true);
+    if (wt.empty()) return true;
+    if (!room_for(wt.size())) return false;
+    if (!decode(wt, TRUNK, npast_, true)) return false;
     npast_ += (long long)wt.size();
     ++words_;
     clause_toks_ += (int)wt.size();
@@ -329,36 +459,71 @@ void Resident::ingest_word(const std::string& w, size_t backlog, std::vector<Jud
     } else if ((long long)(wall_ms() - last_flush_ms_) >= cfg_.flush_ms && clause_toks_ >= 6) {
         judge("t", bscore, out);
     }
+    return true;
+}
+
+static uint64_t count_words(const std::string& text) {
+    uint64_t n = 0;
+    bool in = false;
+    for (char c : text) {
+        if (c == ' ') in = false;
+        else if (!in) { in = true; ++n; }
+    }
+    return n;
 }
 
 void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
                     size_t backlog, std::vector<Judgment>& out) {
     if (!ctx_) return;
+    if (failed() || window_full_) { dropped_words_ += count_words(text); return; }
+
+    // The empty lane is a raw line: a tick. It is decoded onto the trunk exactly as fusord.cpp:712
+    // decodes its own — "\n[tick +Ns]", no speaker's prefix — the frontier is read, and NOTHING is
+    // judged. Ticks never trigger a probe round (anti-turn exemption 4): silence is world to be
+    // perceived, never a clock that wakes the mind.
+    if (lane.empty()) {
+        const auto tt = tk(p_->vocab, "\n" + text, false);
+        if (!room_for(tt.size())) { dropped_words_ += 1; return; }
+        if (!decode(tt, TRUNK, npast_, true)) return;
+        npast_ += (long long)tt.size();
+        read_frontier();
+        ++ticks_;
+        return;
+    }
+
     // One percept is one bracketed line on the trunk, exactly as fusord reads a Delta.
     const auto pre = tk(p_->vocab, std::string("\n[") + lane + "] ", false);
-    if (npast_ + (long long)pre.size() >= cfg_.n_ctx - 512) return;
-    dec(p_->ctx, pre, TRUNK, (llama_pos)npast_, true);
+    if (!room_for(pre.size())) { dropped_words_ += count_words(text); return; }
+    if (!decode(pre, TRUNK, npast_, true)) return;
     npast_ += (long long)pre.size();
     read_frontier();
 
     size_t p = 0;
     bool first = true;
+    bool whole = true;
     while (p < text.size()) {
         size_t q = text.find(' ', p);
         if (q == std::string::npos) q = text.size();
         if (q > p) {
             const std::string w = text.substr(p, q - p);
-            ingest_word(first ? w : " " + w, backlog, out);
+            if (!ingest_word(first ? w : " " + w, backlog, out)) {
+                // the window filled, or a decode failed, mid-percept: the rest of this percept was
+                // never perceived, and a clause the trunk only half saw is not judged
+                dropped_words_ += count_words(text.substr(p));
+                whole = false;
+                break;
+            }
             clause_ += (clause_.empty() ? "" : " ") + w;
             first = false;
         }
         p = q + 1;
     }
+    if (!whole) { clause_.clear(); clause_toks_ = 0; return; }
     if (!clause_.empty()) judge("f", 0.0f, out);   // the line ended: a real final
 }
 
 void Resident::finish(std::vector<Judgment>& out) {
-    if (ctx_ && !clause_.empty()) judge("f", 0.0f, out);
+    if (ctx_ && !clause_.empty() && !failed() && !window_full_) judge("f", 0.0f, out);
 }
 
 }  // namespace nib

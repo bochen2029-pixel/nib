@@ -32,10 +32,17 @@ they are the price of the exception.
 
 1. **C or C++ only, one exe, OS APIs plus llama.cpp.** No runtime, no browser, no Electron, no
    web view. `build.bat`, `/W4 /WX`, zero warnings.
-2. **Act I links no network stack.** `dumpbin /dependents` fails the build on `ws2_32`, `wininet`,
-   `winhttp`, `urlmon`. The model is local, the pad is local, the tape is local, and the status
-   line says `0 bytes egress` because it is structurally true. **Act II must link sockets — that
-   is the moment this gate relaxes, and §7 of the blueprint says exactly what replaces it.**
+2. **Until Stage 6, the build links no network stack and the process holds none.** Two gates, both
+   mechanical: `dumpbin /dependents` fails the build on `ws2_32`, `wininet`, `winhttp`, `urlmon`,
+   `dnsapi`; and at run time the ggml backends are loaded by name, never by directory —
+   `ggml-rpc.dll` imports ws2_32 and sits beside the DLLs nib wants — and the resident refuses to
+   start if any of those modules is in the process (`nib --about` prints the receipt). The model
+   is local, the pad is local, the tape is local, and the status line may say `0 bytes egress` only
+   while both gates hold. **Operator ruling, 2026-09-04: LAN autodiscovery is ON by default in the
+   shipped product — toggled off, never absent — so this is a build-phase gate that ends at
+   Stage 6, where SPEC 9.2 replaces it: no HTTP client, no DNS resolver, a socket layer that
+   refuses any destination off the local subnet by construction, and an egress counter that reads
+   what was actually sent.**
 3. **Forming text never persists.** The resident's half-written sentence is rendered but not
    committed. Save mid-formation and you get the committed document. A crash loses nothing that
    was ever real. Reflex partials never persist — the file format enforces it, not a code path.
@@ -61,6 +68,15 @@ they are the price of the exception.
 10. **The seed is byte-frozen.** `SEED_SYS`, `SEED_EXAMPLES`, `SEED_OPEN`, the seat probe and the
     speak-cue are copied from `fusord.cpp` verbatim; the build hashes them and refuses to run if a
     character drifted. v11's dial-0 calibration is off-distribution otherwise.
+11. **One process, two clocks.** The model runs inside the editor's process (rule 1: one exe),
+    which the substrate's own law forbids for a host's *frame budget*. The law is kept in
+    substance: the resident owns its thread and its clock, the editor never calls the model, the
+    two meet only at the lock-free ring, and neither ever waits on the other. The price of one
+    process is that a driver fault takes the editor with it; the mitigations are rule 3, the
+    atomic save, and a tape that is durable as it goes.
+12. **A driven window never takes the keyboard.** The test driver posts messages to a handle; the
+    window it drives is created no-activate. A scratch window that steals the foreground eats
+    whatever the operator is typing elsewhere, and on 2026-09-04 it did.
 
 ## Build and test discipline
 

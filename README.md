@@ -4,8 +4,15 @@
 turn.** A plain-text editor for Windows in which a resident mind writes beside you in real time —
 and later, on a LAN, other people do too.
 
-> **Status: blueprint (0.0.0).** Nothing is built. The design is in `docs/BLUEPRINT.md`, the
-> session rules in `CLAUDE.md`. The name is provisional.
+> **Status: 0.6.1 · Stages 0a–1b built and green (2026-09-04).** The Easysync port, the op-log
+> document, the window, the ingest compiler and a resident that only holds — 144 checks in the exe
+> and 27 from the window driver, run before every commit. Stage 2 (emission) is next. The normative
+> spec is `docs/SPEC.md`; the stages and their falsifiers are `docs/ROADMAP.md`; the rules are
+> `CLAUDE.md`; the review that set the current work order is
+> `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`. The name is provisional.
+>
+> One exe, like Notepad++: no runtime, no browser, no script to start it, no Node. (Node appears
+> once, at development time only, as the oracle behind `tools/etherpad_harness`.)
 
 ## Why this, and why now
 
@@ -44,8 +51,11 @@ withdrawn words stay on the tape.
 
 ## What it will not do
 
-No network stack in Act I: the model is local, the pad is local, the tape is local, and the build
-fails if a socket is ever linked. No cloud model in Act I or II. Forming text is never saved. The
+No network stack until discovery is built: the model is local, the pad is local, the tape is local,
+the build fails if a socket is ever linked, and the resident refuses to start if a network module
+has entered the process (`nib --about` prints the receipt). When the LAN arrives it is **on by
+default** — the shipped pad finds its peers on the local subnet, and the toggle that turns that off
+is on the status line and the tape like the other two. No cloud model in Act I or II. Forming text is never saved. The
 resident never writes into a paragraph you are touching. Nothing simulates a human tell that does
 not correspond to a real internal event — no fake hesitation, no invented typos, no "thinking…"
 that is not thinking. It is never ambiguous who is on the other end.

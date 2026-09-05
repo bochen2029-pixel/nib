@@ -43,6 +43,14 @@ struct Percept {
     char        kind = 'w';   // 'w' typed world · 'd' a deletion · 't' an idle tick
 };
 
+// The lane a percept travels on. A tick is not anyone's speech: it goes on the EMPTY lane, which
+// the resident reads as "decode this line raw, and judge nothing" — so the trunk sees
+// "\n[tick +Ns]" byte-identical to fusord.cpp:712 rather than "\n[bo] [tick +45s]" wrapped in a
+// speaker's line, and a tick never fires a probe round (anti-turn exemption 4, fusord.cpp:709-719).
+// The kind itself does not survive the ring — `Delta` has no field for it (SPEC 5.1.7) — so the
+// lane carries the one bit that matters until auricle's `Delta` gains a `kind` in its padding.
+inline const char* delta_lane(const Percept& p) { return p.kind == 't' ? "" : p.lane.c_str(); }
+
 // ---------------------------------------------------------------------------------------------
 // The compiler. Pure, single-threaded, no ring, no clock of its own — every entry point takes the
 // time as an argument, so the whole thing is deterministic and testable without a GPU or a wait.

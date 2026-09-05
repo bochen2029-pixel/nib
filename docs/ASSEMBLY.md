@@ -103,8 +103,11 @@ way:
    writes into the very buffer it reads. This law is load-bearing here in a way it is not for a
    file tail — `PadSource` must filter the resident's own authorship out of the intake, at the
    source, not downstream.
-2. **`kPayloadMax = 496`**, so a `Delta` stays a tidy 512 bytes on the ring. Pad edits chunk at
-   that boundary; the compiler in BLUEPRINT §4 gets a hard upper bound for free.
+2. **`kPayloadMax = 496`** — and both numbers this sentence used to carry were wrong, measured on
+   2026-09-04 (SPEC 5.1.7): a `Delta` is **528** bytes, not 512, and `fill_delta` keeps the last
+   payload byte for a NUL, so the lossless bound is **495** (`nib::kChunkMax`), not 496. Chunking
+   "at that boundary" would have lost one byte per full chunk, silently. The compiler in
+   BLUEPRINT §4 still gets a hard upper bound for free; it is one byte lower than the header says.
 3. **The lane string is train ≡ serve.** The trunk sees `[lane] text` byte-identically to the
    soak and tune format, or v11's dial-0 calibration is off-distribution. A pad's lane naming is
    therefore not a UI decision.

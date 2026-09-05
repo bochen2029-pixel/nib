@@ -8,6 +8,17 @@ estate. Everything load-bearing is either in this file or named by absolute path
 **If you are starting from this file: read §1 and §2 before you touch anything, then §5 for where
 to resume.**
 
+> **Addendum, 2026-09-04 (later).** This file was written on 2026-09-04, not 09-03 — the session
+> that wrote it began on the night of the 2nd and carried its start date through a compaction;
+> git dates every commit. Since it was written: the review
+> `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md` (read it after §1 and §2 — its §3 is the QC, its
+> §5 the design, its §8 the work order), and **0.6.1, the QC pass**, which fixed two editor
+> criticals, the runtime half of the network law and six things Stage 2 would have walked into
+> (ROADMAP, "The QC pass"). Where this file says 77/17 or 120/22 it is stale: **`--selftest`
+> 144 passed, `drive.py` 27 passed** (2026-09-04). §5's "resume here" now means **Stage 1c** per the
+> review's §8 P1, then Stage 2. And by operator ruling the shipped product autodiscovers on the
+> LAN by default (CLAUDE.md rule 2, SPEC 9.1.1).
+
 ---
 
 ## 1 · The machine — rules that bit this session, repeatedly
@@ -131,12 +142,13 @@ amnesia, and a resident does not have amnesia; the interaction is the prompt.
 5. `C:\nib\docs\BLUEPRINT.md` — the design and the intent.
 6. `C:\nib\docs\devlog.md` — what happened, in order, with the traps.
 
-### 4.3 Built and green — 120 checks in the exe, 22 in the driver
+### 4.3 Built and green — 144 checks in the exe, 27 in the driver
 
 ```
-C:\nib\build.bat               /W4 /WX, gate: no network DLL among the dependents
-C:\nib\nib.exe --selftest      120 passed, 0 failed
-python C:/nib/tools/drive.py   22 passed, 0 failed   (the window, driven by messages)
+C:\nib\build.bat               /W4 /WX, gates: no network DLL among the dependents; llama delay-loaded
+C:\nib\nib.exe --selftest      144 passed, 0 failed
+python C:/nib/tools/drive.py   27 passed, 0 failed   (the window, driven by messages, never focused)
+C:\nib\nib.exe --about         the backends by name, the module gate, no model loaded
 ```
 
 - **`src/changeset.h/.cpp`** — Etherpad's Easysync format in C++: base36, `Op`,
@@ -214,8 +226,9 @@ longer marked done ahead of its evidence.
 Run both oracles before any commit:
 
 ```
-C:\nib\nib.exe --selftest        77 passed, 0 failed
-python C:/nib/tools/drive.py     17 passed, 0 failed
+C:\nib\nib.exe --selftest        144 passed, 0 failed     (2026-09-04, 0.6.1)
+python C:/nib/tools/drive.py     27 passed, 0 failed
+C:\nib\nib.exe --about           the runtime module gate: no network DLL in the process
 ```
 
 Three things the driver found, kept here because they are the kind of thing that comes back:

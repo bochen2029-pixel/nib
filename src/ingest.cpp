@@ -98,7 +98,10 @@ void Compiler::push_pending(uint64_t now_ms, std::vector<Percept>& out) {
     if (pending_.empty()) return;
     std::string text;
     text.swap(pending_);
-    emit(pending_lane_, std::move(text), now_ms, 'w', out);
+    // A flushed clause is stamped with the moment its last byte was typed, not the moment the
+    // flush happened: otherwise a flush on a lane change or a deletion would overwrite the clock
+    // the tick reads and swallow the silence that came after the clause (SPEC 5.1.9).
+    emit(pending_lane_, std::move(text), last_input_ms_ ? last_input_ms_ : now_ms, 'w', out);
 }
 
 void Compiler::drain(uint64_t now_ms, std::vector<Percept>& out) {
@@ -151,13 +154,25 @@ void Compiler::removed(const std::string& lane, const std::string& text, uint64_
     maybe_tick(now_ms, out);
     pending_lane_ = lane;
     last_input_ms_ = now_ms;
-    // The removed text arrives INTACT. The marker says it left; nothing summarises what it was.
-    // The marker is counted out of band so the byte-conservation check stays exact.
-    std::string body = cfg_.removed_mark + text;
-    emit(lane, std::move(body), now_ms, 'd', out);
-    // emit() counted the whole payload, marker included. The marker is nib's, not the world's, so
-    // it comes back off — that keeps removed_in() == removed_out() an exact byte identity.
-    removed_out_ -= cfg_.removed_mark.size();
+    // The removed text arrives INTACT behind the marker; nothing summarises what it was. A long
+    // removal becomes several percepts and EVERY one carries the marker — a bare tail chunk would
+    // read to the trunk as newly typed text, the opposite of what happened. The marker is nib's,
+    // not the world's, so it is counted out of band and removed_in() == removed_out() stays exact.
+    const size_t room = kChunkMax > cfg_.removed_mark.size() + 1 ? kChunkMax - cfg_.removed_mark.size() : 1;
+    std::string rest = text;
+    while (!rest.empty()) {
+        size_t take = rest.size();
+        if (take > room) {
+            take = utf8_safe_cut(rest, room);
+            const size_t w = last_word_cut(rest, take);
+            if (w > 0) take = w;
+            if (take == 0) take = utf8_safe_cut(rest, room);
+            if (take == 0) take = 1;
+        }
+        emit(lane, cfg_.removed_mark + rest.substr(0, take), now_ms, 'd', out);
+        removed_out_ -= cfg_.removed_mark.size();
+        rest.erase(0, take);
+    }
 }
 
 void Compiler::idle(uint64_t now_ms, std::vector<Percept>& out) {
@@ -193,7 +208,7 @@ bool PadSource::is_seat(const std::string& lane) const {
 void PadSource::ship(std::vector<Percept>& ps) {
     for (const auto& p : ps) {
         auricle::fusor::Delta d{};
-        auricle::fusor::fill_delta(d, p.lane.c_str(), p.text);
+        auricle::fusor::fill_delta(d, delta_lane(p), p.text);   // a tick rides the empty lane
         if (p.lane.size() > kLaneUsable) ++trunc_lanes_;
         // Back-pressure rule (CLAUDE.md rule 7, SPEC 5.1.4): a full ring is COUNTED, never
         // silently swallowed. A dropped percept is the turn reborn inside the loop.

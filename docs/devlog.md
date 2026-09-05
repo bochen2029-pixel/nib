@@ -1,5 +1,11 @@
 # nib — development log
 
+> **Correction, 2026-09-04.** Every entry below headed 2026-09-03 was written on 2026-09-04: the
+> repository was created at 10:57 that morning and every commit is dated that day (git). The
+> session that wrote them began on the night of the 2nd and carried its start date through a
+> compaction. The entries stand as written, because a notebook is not rewritten; the dates are
+> corrected here, once, in the same voice they were wrong in.
+
 ## 2026-09-03 · the blueprint
 
 - The idea arrived in three moves. First: a native Notepad++-shaped editor doing Etherpad-style
@@ -335,3 +341,97 @@
 - Green: --selftest 120 passed 0 failed, tools/drive.py 22 passed 0 failed.
 - NEXT is Stage 2, and it is the first stage where the thing can speak. Everything in this entry
   exists so that when it does, the decision to let it is deliberate and dated.
+
+## 2026-09-04 (night) · the QC pass, 0.6.1 - everything that was checked was correct
+
+- A full review of the repository at 0.6.0 (docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md, with
+  four companion reports in docs/review/) read every line, rebuilt from a scratch copy, re-ran
+  both oracles, and probed the window through its own seam. Its closing sentence is the finding:
+  everything that was checked was correct, and everything that was not checked was where the bugs
+  were - in each case one level below where the falsifier looked. This entry is the remediation.
+- CRITICAL, reproduced: a Down-arrow and a Backspace over an accented character destroyed it.
+  Columns were bytes (LineIndex::offset_of) while the painter counted UTF-16 units; the caret
+  landed inside the sequence, Backspace removed the lead byte alone, and Ctrl+R still said
+  byte-exact - the replay check verifies the log, and the log recorded the cut faithfully. Now a
+  column is a character everywhere (col_of / offset_of walk UTF-8), Doc::splice snaps its bounds
+  to sequence boundaries, and a thousand random edits at random BYTE offsets over an alphabet of
+  ASCII, e-acute, em dash and an emoji leave valid UTF-8 after every one.
+- CRITICAL, reproduced: any emoji typed became two U+FFFD, because Windows delivers an astral
+  character as two WM_CHARs and each was converted alone. The high half now waits for the low
+  half; an unpaired half is dropped, never substituted; the driver posts D83D DE00 and reads
+  F0 9F 98 80 on disk.
+- The Act I network law held for the exe and not the process. ggml_backend_load_all_from_path
+  loads every backend it knows - the list in the ggml source on this disk includes "rpc" - and
+  C:/llama.cpp holds ggml-rpc.dll, which imports ws2_32. So at --resident time a socket library
+  entered the process, past the build gate, and GGML_BACKEND_PATH could have injected any DLL at
+  all. The backends are now loaded BY NAME (ggml-cuda.dll if present; the best-scoring
+  ggml-cpu-*.dll, scored through the DLLs' own ggml_backend_score export, the way the directory
+  loader does it), and the resident enumerates the process's modules and refuses to start if a
+  network DLL is among them. nib --about prints the receipt with no model loaded: 23 modules
+  before the backends, 56 after, none of them network.
+- Undo, redo and open bypassed ingest. The QC typed 26 characters, undid them, and the document
+  emptied while the percept counters stood still and the conservation identity read green - the
+  identity audits the compiler, not the feed. They are percepts now, derived from the difference
+  between the text before and after; the window's ingest report carries the removed counts, and
+  the driver asserts an undo moves them. Undone revisions are attributed to the hand that undid
+  (Rev.author) with Rev.kind saying what happened; "undo" is not an author.
+- Doc::apply - the path a resident's block will take - left the undo stacks pointing at text it
+  had changed. A same-length replacement passes every length guard and would have corrupted the
+  document on the next Ctrl+Z. It now ends the undo history (SPEC 2.3.5); the transform that would
+  keep it is Etherpad's follow, which Act II ports. And a group is validated on a scratch copy
+  before a byte moves, so a failed undo can no longer leave the document half-changed with the
+  group already gone. Doc::apply had zero test coverage; it has some.
+- The self-echo filter guarded "watcher", which is not a lane any seat speaks on. It guards the
+  seat set now, from one source (register_seats), and the selftest asserts the two sets are one.
+- Ticks fired a full three-seat probe round. The compiler emitted the tick as an ordinary percept
+  and the resident judged every percept; fusord decodes a tick and never judges (anti-turn
+  exemption 4). A tick now rides the EMPTY lane, which the resident decodes raw - "\n[tick +Ns]",
+  the bytes fusord's trunk sees - and never judges. The Delta has no kind field; the lane carries
+  the one bit that matters until auricle's Delta gains one in its six bytes of padding.
+- The resident dropped words silently at the context wall and went on judging clauses the trunk
+  never saw - a corpus of judgments about stale logits, the same shape as the CPU fall. A full
+  window is a refusal now: counted, reported, the run marked not a record (exit 4). A failed
+  decode is reported too, instead of a discarded return value. --ctx below 2048 is refused.
+- A long deletion's tail chunks reached the trunk as newly typed text: only the first 495-byte
+  chunk carried the (removed) marker. Every chunk carries it now, and a 1,800-byte removal is the
+  test. A flushed clause is stamped with the time of its last byte rather than of the flush, so a
+  lane change or a deletion no longer swallows the silence that followed it.
+- The process was DPI-unaware: GetDpiForWindow answered 96, WM_DPICHANGED was dead code, and on
+  this 225 % box the window was a stretched bitmap. Per-monitor-v2 awareness is set at startup,
+  resolved by name so the SDK's version gate does not bind the build; the driver asserts it on the
+  process it launched.
+- --check, --unpack and --ops were documented everywhere and dispatched nowhere; nib --check on a
+  non-canonical changeset exited 0. Dispatched. The version string was 0.1.0; it is one constant.
+  WM_QUERYENDSESSION now prompts like close does, so a shutdown cannot lose work.
+- The build asserts what it used to assume: the three llama DLLs must appear in dumpbin's
+  delay-load list and nowhere else, or the build fails.
+- TRAP, and it cost ten minutes: inside cmd launched from Git Bash, a bare `find` resolves to
+  Git's Unix find, which took `/c /v ""` as directories and started walking the whole drive. The
+  build script names find and more by their System32 paths now. The machine-wide backslash rule
+  has a cousin: never a bare Unix-named tool in a batch file run from Bash.
+- INCIDENT, kept because it is the kind that comes back: the first driver run after the DPI change
+  showed stray letters in the scratch files - "o", "ur" - fragments of a sentence the operator was
+  typing to another program at that moment. The driver's windows had taken the foreground and
+  eaten the keystrokes. That is HANDOFF 1.6's hazard from the other side: not synthesised input
+  landing in someone else's window, but someone else's input landing in ours. A driven window is
+  created WS_EX_NOACTIVATE and shown without activation now (NIB_DRIVER); posted messages still
+  arrive, the keyboard never does. CLAUDE.md rule 12.
+- The dates: every entry above headed 2026-09-03 was written on 2026-09-04 (git). Corrected at
+  the top of this file rather than rewritten. README said 0.0.0 and nothing built; SPEC said 71
+  checks; HANDOFF contradicted itself by 43 checks in the section a cold start is told to read;
+  ASSEMBLY still carried the two numbers Stage 1a exists to correct. All fixed, each with its date.
+- Doctrine landed alongside: SPEC 5.1.6 now states both halves of the self-echo law (the gate half
+  and the trunk half - the emission commits to the trunk on its seat's lane, or say-it-once is
+  structurally unlearnable); BLUEPRINT's "13 microseconds / 65.7 seconds" is withdrawn as two
+  unrelated measurements on two clocks; CLAUDE.md gains rule 11 (one process, two clocks) and rule
+  12 (a driven window never takes the keyboard); and the operator's ruling that the shipped
+  product autodiscovers on the LAN by default is written into rule 2, SPEC 9.1.1 and the ROADMAP -
+  the no-socket gate is a build-phase gate that ends at Stage 6.
+- The differential harness against the real Changeset.ts runs from tools/etherpad_harness with
+  nothing installed: node gen.mjs 7 > cases.jsonl && node check.mjs cases.jsonl, 66/66 matched,
+  hash-stable per seed, a one-byte corruption caught. Node is a development-time oracle only; the
+  product is one exe.
+- Green on this box, 2026-09-04: --selftest 144 passed 0 failed; tools/drive.py 27 passed 0
+  failed, three identical runs; nib --about: no network module in the process. The exe is 470 KB.
+- NEXT is Stage 1c, the wire: the resident on its own thread inside the window, the gutter, the AI
+  switch that unloads the model, and the tape in the family's format - per the review's section 8.

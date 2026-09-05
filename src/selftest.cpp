@@ -403,12 +403,12 @@ int run_selftest() {
 
         const std::string full = d.text();
         const size_t revs_before = d.revisions();
-        const bool u1 = d.undo(err);
+        const bool u1 = d.undo("me", err);
         check(u1 && d.text().empty(), u1 ? "one undo takes back the whole burst (left: \"" + d.text() + "\")" : "undo failed: " + err);
         check(d.revisions() > revs_before,
               ssprintf("and the log GREW rather than shrank: %zu revisions, was %zu", d.revisions(), revs_before));
 
-        const bool r1 = d.redo(err);
+        const bool r1 = d.redo("me", err);
         check(r1 && d.text() == full, r1 ? "one redo puts the whole burst back: " + d.text() : "redo failed: " + err);
 
         std::string out, e;
@@ -425,7 +425,7 @@ int run_selftest() {
             Sleep(Doc::kGroupMs + 150);
             d.splice(3, 0, "def", "me", err);
             check(d.undo_groups() == 2, ssprintf("a pause longer than %lld ms starts a new group (%zu)", (long long)Doc::kGroupMs, d.undo_groups()));
-            d.undo(err);
+            d.undo("me", err);
             check(d.text() == "abc", "so one undo leaves the first burst standing: \"" + d.text() + "\"");
         }
         {   // a newline: a person who pressed Enter finished a thought
@@ -434,7 +434,7 @@ int run_selftest() {
             d.splice(3, 0, "\n", "me", err);
             d.splice(4, 0, "def", "me", err);
             check(d.undo_groups() >= 2, ssprintf("a newline closes the group (%zu groups)", d.undo_groups()));
-            d.undo(err);
+            d.undo("me", err);
             check(d.text() == "abc\n", "so one undo leaves the finished line: \"" + d.text() + "\"");
         }
         {   // moving away: an edit somewhere else is a different act
@@ -448,7 +448,7 @@ int run_selftest() {
             d.splice(0, 0, "abc", "me", err);
             d.splice(2, 1, "", "me", err);
             check(d.undo_groups() == 2, ssprintf("typing then deleting are two groups (%zu)", d.undo_groups()));
-            d.undo(err);
+            d.undo("me", err);
             check(d.text() == "abc", "and undoing the delete restores the character: \"" + d.text() + "\"");
         }
         {   // a different hand: the resident's edit never joins a person's burst
@@ -481,9 +481,9 @@ int run_selftest() {
         for (int i = 0; i < 1000; ++i) {
             const uint64_t roll = rnd(10);
             if (roll < 2 && d.can_undo()) {
-                if (d.undo(err)) ++undos;
+                if (d.undo("me", err)) ++undos;
             } else if (roll < 3 && d.can_redo()) {
-                d.redo(err);
+                d.redo("me", err);
             } else {
                 const int64_t start = (int64_t)rnd(d.size() + 1);
                 const int64_t ndel = (int64_t)rnd((uint64_t)((int64_t)d.size() - start) + 1);
@@ -843,6 +843,150 @@ int run_selftest() {
         r.finish(js);
         check(js.empty() && !r.running(),
               ssprintf("an unstarted resident is inert, so the battery never needs a GPU (%zu judgments)", js.size()));
+    }
+
+    section("UTF-8 - columns are characters, and a splice never cuts one");
+    {
+        // The QC of 2026-09-04 reproduced this: with byte columns, Down then Backspace over an
+        // accented character removed one byte of it, and Ctrl+R still said byte-exact, because
+        // the replay check verifies the log and the log recorded the cut faithfully.
+        const std::string t = "ab\n\xC3\xA9\xE2\x80\x94z\n";   // "ab", then e-acute, em dash, z
+        LineIndex ix;
+        ix.build(t);
+        check(ix.offset_of(1, 1, t) == 5, ssprintf("column 1 of line 1 is past the whole e-acute: offset %zu (want 5)", ix.offset_of(1, 1, t)));
+        check(ix.offset_of(1, 2, t) == 8, ssprintf("column 2 is past the em dash: offset %zu (want 8)", ix.offset_of(1, 2, t)));
+        check(ix.offset_of(1, 99, t) == 9, "a column past the end of the line clamps to its end, on a boundary");
+        check(ix.col_of(5, t) == 1 && ix.col_of(8, t) == 2 && ix.col_of(9, t) == 3, "and offsets map back to character columns");
+        check(utf8_count(t, 3, 6) == 3 && utf8_snap_down(t, 4) == 3 && utf8_snap_up(t, 4) == 5,
+              "count, snap down and snap up agree about where the characters are");
+        check(utf8_valid(t) && !utf8_valid(std::string("ab\n\xA9\n")), "the validity walk accepts the text and rejects the corrupted one");
+
+        Doc d(t);
+        std::string err;
+        d.splice(4, 1, "", "me", err);   // a caller inside the e-acute: the whole character goes, not one byte of it
+        check(utf8_valid(d.text()) && d.text() == "ab\n\xE2\x80\x94z\n",
+              "a splice that lands inside a character removes the whole character, never half of it");
+    }
+
+    section("UTF-8 - a thousand random edits over a multi-byte alphabet");
+    {
+        // The property the byte-exact replay could not see: after every edit, at random BYTE
+        // offsets, the text is still well-formed and the log still replays.
+        uint64_t z = 0x5851F42D4C957F2Dull;
+        auto next = [&z]() {
+            z += 0x9E3779B97F4A7C15ull;
+            uint64_t x = z;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+            return x ^ (x >> 31);
+        };
+        auto rnd = [&next](uint64_t n) { return n ? (uint64_t)(next() % n) : 0ull; };
+        const char* alphabet[] = { "a", "b", " ", "\n", "\xC3\xA9", "\xE2\x80\x94", "\xF0\x9F\x98\x80" };
+        Doc d;
+        std::string err;
+        int edits = 0, invalid = 0, diverged = 0;
+        for (int i = 0; i < 1000; ++i) {
+            const uint64_t roll = rnd(10);
+            if (roll < 2 && d.can_undo()) d.undo("me", err);
+            else if (roll < 3 && d.can_redo()) d.redo("me", err);
+            else {
+                const int64_t start = (int64_t)rnd(d.size() + 1);   // any byte, even inside a character
+                const int64_t ndel = (int64_t)rnd((uint64_t)((int64_t)d.size() - start) + 1);
+                std::string ins;
+                for (uint64_t k = 0, n = rnd(5); k < n; ++k) ins += alphabet[rnd(7)];
+                if (d.splice(start, ndel, ins, "me", err)) ++edits;
+            }
+            if (!utf8_valid(d.text())) ++invalid;
+            std::string out, e;
+            if (!d.replay(out, e) || out != d.text()) ++diverged;
+        }
+        check(invalid == 0, ssprintf("%d edits at random byte offsets, and the text was well-formed UTF-8 after every one (%d were not)", edits, invalid));
+        check(diverged == 0, ssprintf("and the log replayed byte-exact every time (%d diverged)", diverged));
+    }
+
+    section("a foreign change ends the undo history, and a group is all or nothing");
+    {
+        // Doc::apply is the path a resident's block takes. The stored inverses were computed
+        // against text the foreign change has just altered; a same-length replacement passes every
+        // length guard and would corrupt the document on the next Ctrl+Z (QC 2026-09-04, H-4).
+        Doc d;
+        std::string err;
+        d.splice(0, 0, "hello", "me", err);
+        check(d.can_undo(), "a burst can be undone");
+        const std::string cs = make_splice(d.text(), 1, 3, "ELL");   // a same-length foreign replacement
+        const bool ok = d.apply(cs, "SKEPTIC", err);
+        check(ok && d.text() == "hELLo", ok ? "a foreign changeset applies: " + d.text() : "apply failed: " + err);
+        check(!d.can_undo() && !d.can_redo(), "and it ends what the hand could take back (nothing to undo)");
+        check(d.log().back().author == "SKEPTIC" && d.log().back().kind == 'a' && d.log().back().inverse.empty(),
+              "the log records the author and the kind, and stores no whole-document inverse");
+        std::string out, e;
+        check(d.replay(out, e) && out == d.text(), "and the log still replays byte-exact");
+
+        Doc d2;
+        d2.splice(0, 0, "abc", "me", err);
+        d2.splice(3, 0, "def", "me", err);
+        const std::string before = d2.text();
+        const size_t revs = d2.revisions();
+        check(d2.undo("me", err) && d2.text().empty(), "a validated group undoes whole");
+        check(d2.log().back().author == "me" && d2.log().back().kind == 'u',
+              "and the undo is attributed to the hand that undid, not to a verb");
+        check(d2.redo("me", err) && d2.text() == before && d2.revisions() == revs + 4,
+              ssprintf("redo restores it, every step on the log (%zu revisions)", d2.revisions()));
+    }
+
+    section("ingest - a long deletion carries its marker on every chunk");
+    {
+        // A bare tail chunk would reach the trunk as newly typed text, the opposite of what
+        // happened (QC 2026-09-04, F7). The marker is nib's, so it is still counted out of band.
+        Compiler c;
+        std::vector<Percept> out;
+        std::string big;
+        for (int i = 0; i < 300; ++i) big += "word" + std::to_string(i % 10) + " ";   // ~1,800 bytes
+        c.removed("bo", big, 1000, out);
+        const std::string mark = c.config().removed_mark;
+        bool all_marked = true, all_bounded = true;
+        std::string rebuilt;
+        for (const auto& p : out) {
+            if (p.kind != 'd' || p.text.compare(0, mark.size(), mark) != 0) all_marked = false;
+            if (p.text.size() > kChunkMax) all_bounded = false;
+            rebuilt += p.text.substr(mark.size());
+        }
+        check(out.size() > 1 && all_marked, ssprintf("a %zu-byte removal became %zu percepts, every one marked", big.size(), out.size()));
+        check(all_bounded && rebuilt == big, "none over the Delta bound, and the removed text reassembles exactly");
+        check(c.removed_in() == c.removed_out(),
+              ssprintf("removed in %llu == out %llu", (unsigned long long)c.removed_in(), (unsigned long long)c.removed_out()));
+    }
+
+    section("ingest - a tick rides the empty lane, and the seats are the filter's set");
+    {
+        Percept tick;
+        tick.kind = 't';
+        tick.lane = "bo";
+        tick.text = "[tick +45s]";
+        check(std::string(delta_lane(tick)).empty(), "a tick's Delta has no lane: the resident decodes it raw and never judges it");
+        Percept w;
+        w.lane = "bo";
+        check(std::string(delta_lane(w)) == "bo", "typed world keeps its lane");
+
+        auto srcp = std::make_unique<PadSource>();
+        register_seats(*srcp);
+        bool all = true;
+        for (size_t i = 0; i < seat_count(); ++i) {
+            std::string lower = seats()[i].name;
+            for (char& ch : lower) if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+            if (!srcp->is_seat(seats()[i].name) || !srcp->is_seat(lower)) all = false;
+        }
+        check(all && srcp->is_seat("fusor") && !srcp->is_seat("bo"),
+              "the window's filter set is the resident's seat set, from one source, case-insensitively");
+
+        // the tick lands on the ring with an empty lane and its text intact
+        srcp->typed("bo", "first. ", 1000);
+        srcp->typed("bo", "second. ", 1000 + 45000);
+        auricle::fusor::Delta d{};
+        bool saw_tick = false;
+        while (srcp->poll(d))
+            if (d.lane[0] == 0 && std::string(d.payload, d.len) == "[tick +45s]") saw_tick = true;
+        check(saw_tick, "and off the ring the tick is [tick +45s] on the empty lane");
     }
 
     section("refusals");

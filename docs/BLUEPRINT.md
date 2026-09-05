@@ -1,8 +1,20 @@
 # nib — blueprint
 
-*Design 0.1 · 2026-09-03 · Bo Chen (operator) + Claude Opus 5 (synthesis) · MIT · Windows 10
-1809+ / 11, x64, C++20, one exe + llama.cpp. **Act I: no network stack, single user, local
-weights.** Act II: the LAN.*
+*Design 0.1 · written 2026-09-04 (the file said 09-03; git and the file system say 09-04) · Bo Chen
+(operator) + Claude Opus 5 (synthesis) · MIT · Windows 10 1809+ / 11, x64, C++20, one exe +
+llama.cpp. **Act I: no network stack, single user, local weights.** Act II: the LAN.*
+
+> **Corrections, 2026-09-04** (from `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`). This is the
+> intent document and it stands as written; where it is now wrong the correction sits beside the
+> error rather than replacing it. **§2:** the document model is Etherpad's Easysync, not an invented
+> op log with character identities (ASSEMBLY §6). **§4:** "a word boundary" is not a percept trigger
+> (SPEC 5.1.2). **§6:** "13 microseconds" and "65.7 seconds" are two unrelated measurements from two
+> binaries on two clocks, one of them a virtual clock; both are withdrawn until nib measures its
+> own keystroke-to-withdrawn latency and its own twin gap. The shape of the claim stands. **§7:**
+> "the room survives the host closing their laptop" is superseded by ASSEMBLY §3, and the 1.208×
+> carries a bimodal caveat (`C:\auricle\SESSION_HANDOFF.md:90`). **And by operator ruling the
+> network is not "after Stage 5":** LAN autodiscovery is on by default in the shipped product,
+> toggled off, never absent. §8's build order stays; the product ships with the LAN on.
 
 ---
 

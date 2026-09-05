@@ -1,9 +1,14 @@
-// nib · nib.cpp — the console, while there is no window yet. Stage 0a is the changeset port, so
-// the only verbs are the ones that let a person poke at it: read one, apply one, check one.
+// nib · nib.cpp — the console. The window is `--edit`; everything else is a way to poke at one
+// part of the machine without the others: the changeset port, the compiler, the resident, and the
+// gates that stand in front of the resident.
 #include "changeset.h"
 #include "doc.h"
 #include "ingest.h"
 #include "resident.h"
+
+#include <windows.h>
+
+#include "ggml-backend.h"   // --about enumerates the devices the backends brought up
 
 #include <cstdio>
 #include <cstdlib>
@@ -16,15 +21,20 @@ int run_editor(const std::string& path);     // edit.cpp
 
 namespace {
 
+// One version string, so the binary cannot report a number the repository has moved past.
+const char* kVersion = "0.6.1";
+
 const char* kUsage =
     "nib %s - a writing surface with no send key on either side\n"
     "\n"
-    "  nib --selftest                  the changeset port, against Etherpad's own vectors\n"
+    "  nib --selftest                  the oracle: the port, the document, the compiler, the gates\n"
+    "  nib --edit [FILE]               the window\n"
+    "  nib --about                     what this build is: version, serve hash, DLLs, the module gate\n"
     "  nib --unpack CS                 split a changeset into oldLen, newLen, ops and charBank\n"
     "  nib --ops CS                    the operations, one per line\n"
+    "  nib --check CS                  validate it, canonical form included (exit 2 if not)\n"
     "  nib --apply CS TEXT             apply a changeset to a document\n"
-    "  nib --check CS                  validate it, canonical form included\n"
-    "  nib --edit [FILE]               the window\n"
+    "  nib --splice TEXT START NDEL INS  the changeset for one edit, and the result\n"
     "  nib --ingest FILE [opts]        compile a file as if typed; print the percept stream\n"
     "        --lane L --chars N --quiet-ms T --tick-s S --burst N --burst-ms M --counts\n"
     "  nib --resident FILE [opts]      run the mind over it; print what each seat wanted\n"
@@ -53,6 +63,54 @@ int do_ops(const std::string& cs) {
     return 0;
 }
 
+int do_check(const std::string& cs) {
+    std::string err;
+    if (!check_rep(cs, err)) { printf("not canonical: %s\n", err.c_str()); return 2; }
+    printf("canonical\n");
+    return 0;
+}
+
+// What this build is, with no model loaded: the version, the serve-format pin, and the two gates
+// that stand in front of the resident — which DLLs came up, and whether a network module is in
+// the process once they have. This is the receipt the status line's "0 bytes egress" rests on.
+int do_about(int argc, char** argv) {
+    std::string llama_dir = "C:/llama.cpp";
+    bool load = true;
+    for (int i = 2; i < argc; ++i) {
+        const std::string f = argv[i];
+        if (f == "--llama-dir" && i + 1 < argc) llama_dir = argv[++i];
+        else if (f == "--no-load") load = false;
+    }
+    char exe[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    printf("nib %s\n%s\n", kVersion, exe);
+    printf("serve hash 0x%016llx (pin 0x%016llx) %s\n",
+           (unsigned long long)serve_hash(), (unsigned long long)kServeHashPin,
+           serve_hash() == kServeHashPin ? "- verbatim" : "- DRIFTED");
+    printf("seats     ");
+    for (size_t i = 0; i < seat_count(); ++i) printf("%s%s", i ? ", " : "", seats()[i].name);
+    printf("\n");
+
+    std::string mods, bad;
+    size_t count = 0;
+    module_gate(mods, count, bad);
+    printf("modules   %zu before any backend loads%s%s\n", count, bad.empty() ? "" : " - NETWORK: ", bad.c_str());
+    if (!load) return bad.empty() ? 0 : 3;
+
+    std::string loaded, err;
+    if (!load_backends(llama_dir, loaded, err)) { printf("backends  FAILED: %s\n", err.c_str()); return 2; }
+    printf("backends  %s\n", loaded.c_str());
+    printf("devices   ");
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i)
+        printf("%s%s", i ? ", " : "", ggml_backend_dev_name(ggml_backend_dev_get(i)));
+    printf("\n");
+    const bool ok = module_gate(mods, count, bad);
+    printf("modules   %zu after the backends loaded\n", count);
+    printf("gate      %s\n", ok ? "no network module in the process - 0 bytes egress is structurally true"
+                                : ("NETWORK MODULE PRESENT: " + bad + " - the resident would refuse to start").c_str());
+    return ok ? 0 : 3;
+}
+
 // Compile a file as if it were typed, and print the percept stream exactly as the trunk would
 // receive it: one "[lane] text" line per Delta. No model, no GPU, no window — this is how the
 // compiler's N and T get looked at against real prose before they are chosen (SPEC 14.3).
@@ -74,6 +132,7 @@ int do_ingest(int argc, char** argv) {
         else if (path.empty()) path = f;
     }
     if (path.empty()) { fprintf(stderr, "nib: --ingest needs a file\n"); return 2; }
+    if (burst == 0) burst = 1;
 
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) { fprintf(stderr, "nib: cannot open %s\n", path.c_str()); return 2; }
@@ -98,7 +157,7 @@ int do_ingest(int argc, char** argv) {
     // A deletion already carries its own marker and a tick its own brackets, so the line is
     // printed exactly as the trunk will see it and nothing is added here.
     if (!quiet_only)
-        for (const auto& p : out) printf("[%s] %s\n", p.lane.c_str(), p.text.c_str());
+        for (const auto& p : out) printf("[%s] %s\n", delta_lane(p), p.text.c_str());
 
     printf("\n%zu bytes -> %llu percepts (%llu ticks) · longest %zu · N=%zu T=%lldms tick=%llds\n",
            text.size(), (unsigned long long)c.percepts(), (unsigned long long)c.ticks(),
@@ -110,8 +169,9 @@ int do_ingest(int argc, char** argv) {
     return c.typed_in() == c.typed_out() ? 0 : 3;
 }
 
-// Run the resident over a file, or over lines given on stdin, and print what each seat wanted.
-// This is Stage 1b's whole surface: the margins, and no way to act on them.
+// Run the resident over a file and print what each seat wanted. This is Stage 1b's whole
+// surface: the margins, and no way to act on them. A run that hit the window wall or failed a
+// decode says so and exits non-zero: it is not a record.
 int do_resident(int argc, char** argv) {
     std::string path, lane = "bo";
     Resident::Config rc;
@@ -131,6 +191,11 @@ int do_resident(int argc, char** argv) {
         else if (path.empty()) path = f;
     }
     if (path.empty()) { fprintf(stderr, "nib: --resident needs a file\n"); return 2; }
+    if (rc.n_ctx < Resident::kMinCtx) {
+        fprintf(stderr, "nib: --ctx %d is below the minimum of %d (the seed alone is ~430 tokens)\n",
+                rc.n_ctx, Resident::kMinCtx);
+        return 2;
+    }
 
     std::string text;
     {
@@ -152,9 +217,10 @@ int do_resident(int argc, char** argv) {
     printf("loading %s (ctx %d, %d gpu layers) ...\n", rc.model.c_str(), rc.n_ctx, rc.n_gpu_layers);
     fflush(stdout);
     if (!res.start(rc, err)) { fprintf(stderr, "nib: %s\n", err.c_str()); return 2; }
-    printf("loaded in %.1f s · %s · devices: %s%s\n\n",
+    printf("loaded in %.1f s · %s\nbackends: %s · devices: %s%s · %zu modules, no network DLL\n\n",
            (double)(auricle::fusor::now_ms() - t0) / 1000.0, res.model_desc().c_str(),
-           res.devices().c_str(), res.have_gpu() ? "" : "  (CPU ONLY - this will be slow)");
+           res.backends().c_str(), res.devices().c_str(),
+           res.have_gpu() ? "" : "  (CPU ONLY - this will be slow)", res.module_count());
 
     // The pad compiles the file exactly as it would compile typing, so what the resident sees
     // here is byte-identical to what it would see from the window.
@@ -172,20 +238,22 @@ int do_resident(int argc, char** argv) {
     const uint64_t r0 = auricle::fusor::now_ms();
     for (const auto& p : ps) {
         const size_t before = js.size();
-        res.feed(p.lane, p.text, p.wall_ms, 0, js);
+        res.feed(delta_lane(p), p.text, p.wall_ms, 0, js);
         for (size_t k = before; k < js.size(); ++k) {
             const Judgment& j = js[k];
             if (!show_all && j.margin <= 0.0f) continue;
             printf("  %-8s %+7.2f  b=%.2f %c  %s\n", seats()[j.seat].name, (double)j.margin,
                    (double)j.bscore, j.reason, j.clause.c_str());
         }
+        if (res.failed() || res.window_full()) break;
     }
     res.finish(js);
     const uint64_t elapsed = auricle::fusor::now_ms() - r0;
 
-    printf("\n%zu percepts · %llu words · %llu boundaries (%llu coarsened) · %llu probes\n",
-           ps.size(), (unsigned long long)res.words(), (unsigned long long)res.boundaries(),
-           (unsigned long long)res.coarsened(), (unsigned long long)res.probes());
+    printf("\n%zu percepts · %llu words · %llu ticks · %llu boundaries (%llu coarsened) · %llu probes\n",
+           ps.size(), (unsigned long long)res.words(), (unsigned long long)res.ticks(),
+           (unsigned long long)res.boundaries(), (unsigned long long)res.coarsened(),
+           (unsigned long long)res.probes());
     printf("%llu of %llu probes wanted to speak; none could - Stage 1b has no emit path\n",
            (unsigned long long)res.wanted(), (unsigned long long)res.probes());
     if (res.boundaries())
@@ -194,6 +262,16 @@ int do_resident(int argc, char** argv) {
                (double)res.probe_ms_total() / (double)res.boundaries(),
                (unsigned long long)res.probe_ms_total(), (unsigned long long)elapsed,
                res.context_used());
+    if (res.failed()) {
+        printf("\nFAILED: %s - this run is not a record\n", res.failure().c_str());
+        return 5;
+    }
+    if (res.window_full()) {
+        printf("\nWINDOW FULL at %d of %d tokens: %llu words were never perceived - this run is not a "
+               "valid record (Stage 1b has no molt; raise --ctx or shorten the stream)\n",
+               res.context_used(), rc.n_ctx, (unsigned long long)res.dropped_words());
+        return 4;
+    }
     return 0;
 }
 
@@ -205,8 +283,12 @@ int main(int argc, char** argv) {
     const std::string a = argc > 1 ? argv[1] : "--help";
     if (a == "--selftest") return run_selftest();
     if (a == "--edit") return run_editor(argc > 2 ? argv[2] : "");
+    if (a == "--about") return do_about(argc, argv);
     if (a == "--ingest") return do_ingest(argc, argv);
     if (a == "--resident") return do_resident(argc, argv);
+    if (a == "--unpack" && argc > 2) return do_unpack(argv[2]);
+    if (a == "--ops" && argc > 2) return do_ops(argv[2]);
+    if (a == "--check" && argc > 2) return do_check(argv[2]);
     if (a == "--splice" && argc > 5) {
         const std::string orig = argv[2], ins = argv[5];
         const long long start = atoll(argv[3]), ndel = atoll(argv[4]);
@@ -224,6 +306,6 @@ int main(int argc, char** argv) {
         printf("%s\n", out.c_str());
         return 0;
     }
-    printf(kUsage, "0.1.0");
-    return 0;
+    printf(kUsage, kVersion);
+    return a == "--help" ? 0 : 2;
 }

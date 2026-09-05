@@ -1,8 +1,11 @@
 # nib — SPECIFICATION
 
-*Rev 0.4 · 2026-09-03 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
+*Rev 0.5 · 2026-09-04 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
 governs the built artefact and the blueprint governs the intent. Where either disagrees with
-`docs/ASSEMBLY.md` on Etherpad or on the sync model, ASSEMBLY governs.*
+`docs/ASSEMBLY.md` on Etherpad or on the sync model, ASSEMBLY governs. Revs 0.1–0.4 were headed
+2026-09-03; git says they were written 2026-09-04, and this file dates by git. Rev 0.5 is the QC
+pass of that day (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, §3 and §8): every clause it
+touches carries the date.*
 
 Terms: **MUST**, **MUST NOT**, **SHOULD**, **MAY** carry their usual force. A line marked
 **[BUILT]** exists and is covered by `--selftest`; **[SPECIFIED]** is settled but unbuilt;
@@ -45,7 +48,14 @@ within each op, and a CRLF document makes every op's line count disagree with it
 2.2.1 Text is UTF-8. Offsets throughout the document model are **byte** offsets.
 
 2.2.2 Caret movement and deletion MUST operate on whole UTF-8 sequences: one keystroke moves or
-removes one character, never one byte.
+removes one character, never one byte. **[BUILT 2026-09-04, for every movement]** — a column is a
+character, not a byte (`LineIndex::col_of` / `offset_of`), for vertical movement and mouse placement
+as well as for the arrows; and `Doc::splice` snaps its bounds to sequence boundaries, so no code
+path can commit half a character. Until that day a Down-arrow could land the caret inside a
+sequence and the next Backspace removed one byte of it, while `Ctrl+R` still read byte-exact — the
+replay check verifies the log, not the text. The text's validity is therefore its own falsifier: a
+thousand random edits at random byte offsets over a multi-byte alphabet, `utf8_valid` after every
+one (§11.3).
 
 2.2.3 A changeset's `chars` field counts bytes, consistent with Etherpad's own treatment of the
 document as a string of code units. **[OPEN — §14.1]** whether this must become code points for
@@ -72,7 +82,17 @@ finished a thought.
 2.3.5 The **author** clause of 2.3.4 is load-bearing beyond convenience: from Stage 1 the resident
 writes into the same buffer a person is typing into, and its edits MUST NOT fuse into that
 person's undo. `Doc::apply` — the path a non-local changeset takes — closes the open group
-unconditionally.
+unconditionally, **and ends the undo history** (2026-09-04). Every stored inverse was computed
+against text the foreign change has just altered; a same-length replacement passes every length
+guard and would corrupt the document on the next Ctrl+Z. Dropping the stacks is the honest Act I
+rule; keeping them needs Etherpad's `follow` (§14.7). `apply` records no inverse of its own.
+
+2.3.7 An undo or redo group MUST be validated against a scratch copy before a byte of the document
+moves, and popped only once it has been applied. A failure leaves the document as it was.
+
+2.3.8 An undo or a redo is attributed to the hand that performed it (`Rev.author`), and `Rev.kind`
+records that it was one (`u`, `r`; `e` edit, `o` open, `a` a foreign change). An author field never
+carries a verb.
 
 2.3.6 The undo and redo stacks carry **opposite orderings**, and both are normative. An undo group
 is stored in edit order and applied newest-first, because each inverse was computed against the
@@ -86,7 +106,11 @@ apply order and applied forwards. Reversing either half-restores a burst.
 ### 3.1 Conformance **[BUILT]**
 
 3.1.1 The port MUST accept and emit Etherpad's Easysync wire format without extension. A changeset
-produced by nib and one produced by Etherpad for the same edit MUST be byte-identical.
+produced by nib and one produced by Etherpad for the same edit MUST be byte-identical **for ASCII
+text.** nib counts bytes and Etherpad counts UTF-16 code units (§2.2.3, decided in §14.1), so for
+non-ASCII text every count differs and the wire is not shared; the differential harness
+(`tools/etherpad_harness`, 66/66 against the real `Changeset.ts` on 2026-09-04) generates ASCII
+corpora, as Etherpad's own generators do.
 
 3.1.2 `check_rep` MUST verify canonical form by re-serialising the parsed ops and comparing bytes.
 A changeset that means the correct thing but serialises differently MUST be refused.
@@ -135,6 +159,10 @@ are not sufficient for these two functions, because their failure modes are rare
 derived from the model on every paint and is never tracked independently.
 
 4.1.2 The window MUST be per-monitor DPI aware and MUST rebuild its font on `WM_DPICHANGED`.
+**[BUILT 2026-09-04]** — the process sets per-monitor-v2 awareness at startup, resolved by name so
+the SDK's version gate does not bind the build. Until that day the process was
+`PROCESS_DPI_UNAWARE`, `GetDpiForWindow` answered 96 and this clause was false as built; the driver
+now asserts the awareness of the process it launched.
 
 4.1.3 Painting order per line: the selection band, then the glyphs, then the caret.
 
@@ -166,7 +194,8 @@ replace. A failure at any point MUST leave the previous file intact.
 4.3.2 A file's line-ending convention and UTF-8 BOM MUST be detected on open and restored on save.
 nib MUST NOT silently convert a file's conventions.
 
-4.3.3 Closing with unsaved changes MUST prompt. Discarding MUST be an explicit choice.
+4.3.3 Closing with unsaved changes MUST prompt. Discarding MUST be an explicit choice. So MUST
+shutdown and logoff (`WM_QUERYENDSESSION`, 2026-09-04): a cancelled prompt holds the session.
 
 4.3.4 Opening a file restarts the log, with the file's content as revision 1. A different file is
 a different document; pretending otherwise would make §2.1.3 false.
@@ -229,9 +258,14 @@ MUST count the loss loudly; a silently dropped percept is a turn reborn inside t
 
 5.1.5 The compiler MUST NOT summarise, clean, annotate or interpret. The world is never edited.
 
-5.1.6 **Self-echo:** a delta whose lane is one of the resident's own seats MUST NOT be fed back as
-input (`source.h`, spec §5.8). In a pad the resident writes into the buffer it reads, so this
-filter MUST live in `PadSource` at the source, not downstream.
+5.1.6 **Self-echo, both halves.** The GATE half: a delta whose lane is one of the resident's own
+seats MUST NOT be fed back as world to judge (`source.h`, spec §5.8). In a pad the resident writes
+into the buffer it reads, so this filter MUST live in `PadSource` at the source, not downstream;
+its set is the seat set from one source (`register_seats`), and `--selftest` asserts it. The TRUNK
+half (2026-09-04): the resident's own emission MUST be committed to the trunk on its seat's lane
+(`fusord.cpp:555-561`) so that the mind knows it spoke — without it the SKEPTIC re-fired one catch
+at ten consecutive boundaries, and say-it-once is structurally unlearnable ("L-GATE has no self
+exception"). nib is a room, not `--pure`; the tape says so.
 
 5.1.7 The compiler MUST chunk at **495 bytes**, and a chunk boundary MUST NOT split a UTF-8
 sequence or, where the text allows it, a word.
@@ -258,16 +292,25 @@ as an immediate crash with no output (`0xC00000FD`) and no clue as to the cause.
 and tune format. Lane naming is therefore not a user-interface decision.
 
 5.1.9 Silence MUST enter as world — idle ticks — and not as a question. The tick's text is
-`[tick +Ns]`, byte-identical to `fusord.cpp:712`, and it is emitted **before** the percept that
-broke the silence, as fusord does it.
+`[tick +Ns]`, and it is emitted **before** the percept that broke the silence, as fusord does it.
+
+> **CORRECTED 2026-09-04.** This clause claimed byte-identity with `fusord.cpp:712`, and the stream
+> was not identical: fusord decodes `\n[tick +Ns]` raw onto the trunk, while nib wrapped the tick in
+> a speaker's line (`\n[bo] [tick +45s]`) — and then judged it, firing three probes on silence,
+> which the estate forbids (anti-turn exemption 4: ticks never trigger a probe round). Now a tick
+> rides the **empty lane** (`delta_lane`); the resident decodes an empty-lane Delta raw and judges
+> nothing. A `Delta` carries no `kind` (5.1.7), so the lane carries the one bit that matters until
+> auricle's `Delta` gains a `kind` in its padding. A flushed clause is stamped with the time of its
+> last byte, not of the flush, so the silence after it is never overwritten.
 
 5.1.9.1 Because the tick is produced here, at the source, the lifted resident loop MUST run with
 its own `--idle-tick-s` set to 0 or the silence is counted twice. The pad is the right place for
 it: the pad knows what a typing pause is and a generic resident does not.
 
-5.1.10 A deletion reaches the trunk as the removed text, intact, behind a marker saying it left.
-The marker is nib's and not the world's, so it is excluded from the byte-conservation arithmetic
-of 5.1.11. **[OPEN]** — the marker's wording is off-distribution for v11 and is a decision, not a
+5.1.10 A deletion reaches the trunk as the removed text, intact, behind a marker saying it left —
+**on every chunk** of a long removal (2026-09-04; a bare tail chunk would read as newly typed text,
+the opposite of what happened). The marker is nib's and not the world's, so it is excluded from the
+byte-conservation arithmetic of 5.1.11. **[OPEN]** — the marker's wording is off-distribution for v11 and is a decision, not a
 finding; it is configuration until it has been looked at against a real trunk.
 
 5.1.11 **The falsifier, stated as arithmetic.** With nothing pending, the bytes that entered the
@@ -275,6 +318,14 @@ compiler MUST equal the bytes that left it, and every percept MUST be either pus
 counted as dropped: `typed_in == typed_out`, `removed_in == removed_out`, `pushed + dropped ==
 percepts`. This is checkable after every keystroke and is fired from inside the running window by
 `drive.py`'s `ingest` command, not only in unit tests.
+
+5.1.12 **Undo, redo and open are percepts** (2026-09-04). They change the text without passing
+through `edit_splice`; what they remove and restore is perceived by diffing the text before and
+after, on the hand's lane. Until that day an undo emptied the document while every counter of
+5.1.11 stood still and read green — the identity audits the compiler, not the feed, so the driver
+now asserts that an undo moves the removed-bytes count. A different file is a different world: the
+compiler starts over on open and the file's text is perceived as the hand's own, until the tape
+(§8) can offer better provenance.
 
 ---
 
@@ -291,6 +342,18 @@ then runs entirely on the CPU at roughly 1/47th of the speed. Measured on this b
 1500 ms flush law fires on wall-clock time — the slow run invented 30 boundaries where the correct
 one finds 18. A silent fallback is therefore not a degraded mode, it is a wrong answer, and
 `Resident::start` enumerates the devices, names them, and refuses unless `allow_cpu` is set.
+
+6.0.2 **[BUILT 2026-09-04]** The backends MUST be loaded by name, never by directory, and the
+resident MUST refuse to start if a network module is in the process (the runtime half of §9.1).
+`ggml_backend_load_all_from_path` loads every backend it knows, including `ggml-rpc.dll`, which
+imports ws2_32, and any DLL named in `GGML_BACKEND_PATH`. nib loads `ggml-cuda.dll` if present and
+the best-scoring `ggml-cpu-*.dll`, then enumerates the process's modules; `nib --about` prints the
+verdict without loading a model.
+
+6.0.3 **[BUILT 2026-09-04]** A full context window is a REFUSAL: the resident counts the words it
+did not perceive, judges nothing further — never a clause the trunk only partly saw — and the run
+is reported as not a record (exit 4). A failed decode is likewise reported, never a discarded return
+value. `n_ctx` below 2048 is refused. The molt that makes the window a non-event is Stage 2's.
 
 ### 6.1 The two switches
 
@@ -382,17 +445,27 @@ moment in the session.
 
 ## 9 · Boundaries
 
-9.1 **Act I MUST link no network stack.** `build.bat` fails on `ws2_32`, `wininet`, `winhttp`,
-`urlmon`, `dnsapi` among the dependents. **[BUILT]**
+9.1 **Until Stage 6, the build MUST link no network stack and the process MUST hold none.** Two
+gates, both mechanical **[BUILT 2026-09-04]**: `build.bat` fails on `ws2_32`, `wininet`, `winhttp`,
+`urlmon`, `dnsapi` among the dependents, and asserts that the llama DLLs are delay-loaded; and at
+run time the resident refuses to start if any of those modules, or `ggml-rpc.dll`, is in the
+process (6.0.2). The first gate proves the file; the second proves the process, because a
+`LoadLibrary` at `--resident` time is invisible to `dumpbin`.
 
-9.2 **[SPECIFIED]** Act II narrows rather than removes this gate: no HTTP client, no DNS resolver,
-and a socket layer that refuses any destination outside the machine's own subnet by construction.
+9.1.1 **Operator ruling, 2026-09-04: LAN autodiscovery is ON by default in the shipped product** —
+toggled off, never absent. §9.1 is therefore a build-phase gate that ends at Stage 6, where 9.2
+replaces it. The build order is unchanged (Stages 1c–4 before 6); the product ships with the LAN on.
+
+9.2 **[SPECIFIED]** Stage 6 narrows rather than removes this gate: no HTTP client, no DNS resolver,
+a socket layer that refuses any destination outside the machine's own subnet by construction, and
+the runtime module gate of 6.0.2 kept for `wininet`, `winhttp`, `urlmon` and `dnsapi`.
 
 9.3 No frontier API in Act I or Act II. When one arrives it is behind a flag, and the room shows a
 permanent badge.
 
-9.4 The status line MUST carry an egress counter. In Act I it reads zero because that is
-structurally true, not because nothing has been sent yet.
+9.4 **[SPECIFIED]** The status line MUST carry an egress counter. Until Stage 6 it reads zero
+because that is structurally true, not because nothing has been sent yet — and it may read zero
+only while both gates of 9.1 hold. It is not built; it belongs with Stage 1c's status line.
 
 9.5 The resident MUST NOT be able to act outside the document: no shell, no file system beyond the
 open document, no input synthesis, no window manipulation.
@@ -401,10 +474,12 @@ open document, no input synthesis, no window manipulation.
 
 ## 10 · Act II — the network
 
-**[SPECIFIED]** — see `docs/ASSEMBLY.md` §3 for why OT and not CRDT.
+**[SPECIFIED]** — see `docs/ASSEMBLY.md` §3 for why OT and not CRDT. **Operator ruling,
+2026-09-04: discovery is ON by default in the shipped product**, toggled off, never absent; the
+toggle's state is on the status line and on the tape like the other two switches (§6.1).
 
 10.1 Discovery: IPv4 only. A periodic UDP beacon and a peer table with a TTL. No IPv6, no mDNS
-dependency, no configuration.
+dependency, no configuration. On by default.
 
 10.2 A room has a host that linearises. **Consequence, recorded as a cost:** a room needs its host,
 and a host that leaves ends the room or hands it over. Handoff is a state transfer, not a consensus
@@ -426,7 +501,7 @@ incomplete view MUST withdraw (§6.4). Partition-heal is wired to the abort path
 
 ## 11 · Testing
 
-11.1 `--selftest` MUST pass before every commit. **[BUILT: 71 checks]**
+11.1 `--selftest` MUST pass before every commit. **[BUILT: 144 checks, 2026-09-04]**
 
 11.2 Every stage below Stage 2 MUST remain runnable with no model in the process. A battery that
 needs a 9B on a busy card is a battery that stops being run.
@@ -438,7 +513,12 @@ splices (canonical form and applied result), one thousand random edits interleav
 11.4 The window MUST be verified by a driver that posts window messages and reads an artefact —
 `WM_APP+1` commands and the `NIB_LOG` file. **Synthesising global input is forbidden**: it lands
 wherever the focus happens to be, which can type into another application's window. **[BUILT]** —
-`tools/drive.py`, 17 checks, 2026-09-04.
+`tools/drive.py`, 27 checks, 2026-09-04.
+
+11.4.3 **A driven window MUST NOT take the keyboard** (2026-09-04). The driver sets `NIB_DRIVER`,
+and the window it drives is created no-activate and shown without activation: posted messages
+still arrive, the keyboard never does. Before this a scratch window took the foreground and ate
+what the operator was typing to another program, and the fragments turned up in the scratch files.
 
 11.4.1 The driver MUST bind to the window of the process it launched, not to a class name.
 `FindWindow` by class alone returns any nib window, including one left over from an earlier case or
@@ -470,8 +550,12 @@ wrong.** No amount of Act II rescues that, and the finding is published beside t
 
 ## 14 · Open questions
 
-14.1 Whether `chars` must count code points rather than bytes for server interoperability. Affects
-§2.2.3. Deferred until a real Etherpad server is on the other end.
+14.1 **Decided 2026-09-04: bytes.** `chars` counts UTF-8 bytes; that is deliberately not
+Etherpad-wire-compatible for non-ASCII text, and Act I does not need it. Code points would buy
+neither interoperability (Etherpad counts UTF-16 units, so an emoji is 2 there and would be 1
+here) nor simplicity, and are rejected. The named future work, for the day a real Etherpad server
+is on the other end: an adapter at the wire that maps byte offsets to code-unit offsets over the
+current text and re-`pack`s. (`docs/review/ETHERPAD_DEEP_READ.md` §3.)
 
 14.2 Tab: four spaces, a real tab, or configurable. Currently spaces, unjustified.
 
@@ -483,3 +567,12 @@ anger.
 14.5 Where a room's identity comes from in Act II — a name, a key, or both.
 
 14.6 Whether the tape should be encrypted at rest, as caseclock's is.
+
+14.7 Undo across a foreign change. Act I drops the history (2.3.5); the transform that would keep
+it is Etherpad's `follow`, which Act II ports. Whether losing undo across a resident's emission
+hurts in practice is a Stage 5 measurement, not a guess.
+
+14.8 A fourth percept kind, *open fragment*. A Delta the compiler flushed on quiet mid-sentence is
+judged as a final today, exactly as a bridge's complete line would be; whether that over-segments
+at pad grain (three probes per half-second pause) is to be measured against real typing before a
+kind is added (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, F8 and §6.2).

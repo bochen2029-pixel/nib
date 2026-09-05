@@ -16,6 +16,7 @@
 //     must not be able to destroy the thing it was saving.
 #include "doc.h"
 #include "ingest.h"
+#include "resident.h"   // seats(): the lanes the self-echo filter must know, from one source
 
 #include <windows.h>
 #include <commdlg.h>
@@ -77,6 +78,11 @@ struct View {
     // since the window opened was already compiled, in order, with nothing lost.
     std::unique_ptr<PadSource> ingest;
     uint64_t last_percepts = 0;
+
+    // The first half of an astral character (an emoji, most CJK extension blocks), waiting for
+    // its second WM_CHAR. Windows delivers one character as two surrogate messages; converting
+    // either alone yields U+FFFD, which is how an emoji used to land on disk as two question marks.
+    wchar_t high = 0;
 };
 
 // "#rrggbb" -> COLORREF, or false and the caller keeps its default
@@ -195,10 +201,11 @@ std::string sel_text() {
     return g->doc.text().substr(sel_lo(), sel_hi() - sel_lo());
 }
 
-size_t col_of(size_t offset) {
-    const size_t line = g->idx.line_of(offset);
-    return offset - g->idx.start[line];
-}
+// Columns are characters, not bytes (SPEC 2.2.2). The painter draws one cell per character and
+// the caret moves by whole characters, so the two arithmetics must agree — when they did not, a
+// Down-arrow could land the caret inside a UTF-8 sequence and the next Backspace removed one byte
+// of it, which the replay check could not see because the log recorded the cut faithfully.
+size_t col_of(size_t offset) { return g->idx.col_of(offset, g->doc.text()); }
 
 void scroll_to_caret(HWND h) {
     const size_t line = g->idx.line_of(g->caret);
@@ -242,6 +249,41 @@ void edit_splice(HWND h, int64_t start, int64_t ndel, const std::string& ins) {
         if (!ins.empty()) g->ingest->typed("bo", ins, t);
     }
     after_edit(h, true);
+}
+
+// An undo, a redo or an open changes the text without passing through edit_splice, and the world
+// is never edited (rule 7): whatever left and whatever arrived is a percept, derived from the
+// difference between the text before and after. The QC of 2026-09-04 typed 26 characters, undid
+// them, and watched the percept counters stand still while the document emptied.
+void perceive_change(const std::string& before, const std::string& after) {
+    if (!g->ingest) return;
+    const size_t n = before.size() < after.size() ? before.size() : after.size();
+    size_t p = 0;
+    while (p < n && before[p] == after[p]) ++p;
+    size_t s = 0;
+    while (s < n - p && before[before.size() - 1 - s] == after[after.size() - 1 - s]) ++s;
+    // the changed region never begins or ends inside a UTF-8 sequence
+    while (p > 0 && ((unsigned char)before[p] & 0xC0) == 0x80) --p;
+    while (s > 0 && ((unsigned char)before[before.size() - s] & 0xC0) == 0x80) --s;
+    const std::string gone = before.substr(p, before.size() - s - p);
+    const std::string came = after.substr(p, after.size() - s - p);
+    const uint64_t t = auricle::fusor::now_ms();
+    if (!gone.empty()) g->ingest->removed("bo", gone, t);
+    if (!came.empty()) g->ingest->typed("bo", came, t);
+}
+
+void do_undo_redo(HWND h, bool redo) {
+    std::string err;
+    const std::string before = g->doc.text();
+    const bool ok = redo ? g->doc.redo("me", err) : g->doc.undo("me", err);
+    if (ok) {
+        perceive_change(before, g->doc.text());
+        after_edit(h, false);
+        set_status("");
+    } else {
+        set_status(err);
+    }
+    InvalidateRect(h, nullptr, TRUE);
 }
 
 // Typing with a selection replaces it — one splice, so it is one revision and one undo, which is
@@ -406,6 +448,15 @@ void load_into(HWND h, const std::wstring& path, std::string raw) {
     g->caret = g->anchor = 0;
     g->top_line = 0;
     g->idx.build(g->doc.text());
+    // A different file is a different world: the pad's compiler starts over, and the text the
+    // file brought with it is perceived as the hand's own. Until the tape exists (Stage 1c) a
+    // file has no other provenance to offer. Open, like undo, must not bypass the mind.
+    if (g->ingest) {
+        g->ingest = std::make_unique<PadSource>();
+        register_seats(*g->ingest);
+        g->last_percepts = 0;
+        if (!g->doc.text().empty()) g->ingest->typed("bo", g->doc.text(), auricle::fusor::now_ms());
+    }
     set_status(std::string("opened · ") + (g->crlf ? "CRLF" : "LF") + (g->bom ? " · BOM" : ""));
     set_title(h);
     InvalidateRect(h, nullptr, TRUE);
@@ -511,8 +562,8 @@ void paint(HWND h) {
             const size_t s = lo > a ? lo - a : 0;
             const size_t e = hi < a + len ? hi - a : len;
             const bool spans_newline = hi > a + len;
-            const int sx = x0 + (int)widen(t.substr(a, s)).size() * g->cw;
-            const int ex = x0 + (int)widen(t.substr(a, e > s ? e : s)).size() * g->cw + (spans_newline ? g->cw / 2 : 0);
+            const int sx = x0 + (int)utf8_count(t, a, s) * g->cw;
+            const int ex = x0 + (int)utf8_count(t, a, e > s ? e : s) * g->cw + (spans_newline ? g->cw / 2 : 0);
             if (ex > sx) {
                 RECT band{ sx, y, ex, y + g->ch };
                 HBRUSH sb = CreateSolidBrush(selbg);
@@ -531,8 +582,7 @@ void paint(HWND h) {
     // the caret, drawn rather than a system caret so it cannot drift from the model
     const size_t cl = g->idx.line_of(g->caret);
     if (cl >= g->top_line && cl < g->top_line + (size_t)rows) {
-        const std::wstring before = widen(t.substr(g->idx.start[cl], g->caret - g->idx.start[cl]));
-        const int cx = x0 + (int)before.size() * g->cw;
+        const int cx = x0 + (int)utf8_count(t, g->idx.start[cl], g->caret - g->idx.start[cl]) * g->cw;
         const int cy = y0 + (int)(cl - g->top_line) * g->ch;
         RECT car{ cx, cy, cx + px(2), cy + g->ch };
         HBRUSH cb = CreateSolidBrush(g->th.accent);
@@ -573,7 +623,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             g->idx.build(g->doc.text());
             set_title(h);
             g->ingest = std::make_unique<PadSource>();
-            g->ingest->add_seat("watcher");   // the resident's lane never re-enters (SPEC 5.1.6)
+            register_seats(*g->ingest);   // the resident's own lanes never re-enter as world (SPEC 5.1.6)
             // The compiler's T is a quiet timeout, so something has to notice the quiet. 120 ms is
             // well under the smallest sensible T and costs nothing when nothing has been typed.
             SetTimer(h, 1, 120, nullptr);
@@ -605,12 +655,23 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         case WM_CHAR: {
             const wchar_t c = (wchar_t)wp;
             if (GetKeyState(VK_CONTROL) & 0x8000) return 0;   // Ctrl chords are handled in WM_KEYDOWN
-            if (c == '\r') { insert_text(h, "\n"); return 0; }
-            if (c == '\t') { insert_text(h, "    "); return 0; }
+            if (c == '\r') { g->high = 0; insert_text(h, "\n"); return 0; }
+            if (c == '\t') { g->high = 0; insert_text(h, "    "); return 0; }
             if (c < 0x20) return 0;
-            const wchar_t w[2] = { c, 0 };
+            // An astral character arrives as two messages, a high surrogate then a low one. Hold
+            // the first until the second, convert the pair, and drop an unpaired half rather than
+            // let the converter substitute U+FFFD.
+            wchar_t w[2] = { 0, 0 };
+            int wn = 0;
+            if (c >= 0xD800 && c <= 0xDBFF) { g->high = c; return 0; }
+            if (c >= 0xDC00 && c <= 0xDFFF) {
+                if (!g->high) return 0;
+                w[0] = g->high; w[1] = c; wn = 2; g->high = 0;
+            } else {
+                g->high = 0; w[0] = c; wn = 1;
+            }
             char utf8[8]{};
-            const int n = WideCharToMultiByte(CP_UTF8, 0, w, 1, utf8, sizeof utf8, nullptr, nullptr);
+            const int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w, wn, utf8, sizeof utf8, nullptr, nullptr);
             if (n > 0) insert_text(h, std::string(utf8, (size_t)n));
             return 0;
         }
@@ -650,21 +711,8 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case 'V': if (ctrl) paste(h); return 0;
                 case 'S': if (ctrl) do_save(h, shift); return 0;
                 case 'O': if (ctrl) { if (ok_to_discard(h)) do_open(h); } return 0;
-                case 'Z':
-                    if (ctrl) {
-                        const bool ok = shift ? g->doc.redo(err) : g->doc.undo(err);
-                        if (ok) { after_edit(h, false); set_status(""); }
-                        else set_status(err);
-                        InvalidateRect(h, nullptr, TRUE);
-                    }
-                    return 0;
-                case 'Y':
-                    if (ctrl) {
-                        if (g->doc.redo(err)) { after_edit(h, false); set_status(""); }
-                        else set_status(err);
-                        InvalidateRect(h, nullptr, TRUE);
-                    }
-                    return 0;
+                case 'Z': if (ctrl) do_undo_redo(h, shift); return 0;
+                case 'Y': if (ctrl) do_undo_redo(h, true); return 0;
                 case 'R':
                     if (ctrl) {
                         // the falsifier, on demand: fold the whole log and compare
@@ -687,14 +735,12 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case CmdSaveAs: do_save(h, true); break;
                 case CmdOpen: if (ok_to_discard(h)) do_open(h); break;
                 case CmdUndo:
-                    if (g->doc.undo(err)) after_edit(h, false); else set_status(err);
+                    do_undo_redo(h, false);
                     nlog("undo	%zu", g->doc.revisions());
-                    InvalidateRect(h, nullptr, TRUE);
                     break;
                 case CmdRedo:
-                    if (g->doc.redo(err)) after_edit(h, false); else set_status(err);
+                    do_undo_redo(h, true);
                     nlog("redo	%zu", g->doc.revisions());
-                    InvalidateRect(h, nullptr, TRUE);
                     break;
                 case CmdSelectAll: g->anchor = 0; move_to(h, g->doc.size(), true, false); break;
                 case CmdTop: move_to(h, 0, false, false); break;
@@ -717,14 +763,17 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     // Stage 1's falsifier, fired from inside the running window: flush whatever is
                     // pending, then report the arithmetic. bytes-in must equal bytes-out and
                     // dropped must be zero, or a percept was lost between a keystroke and the mind.
-                    if (!g->ingest) { nlog("ingest	0	0	0	0	0"); break; }
+                    if (!g->ingest) { nlog("ingest	0	0	0	0	0	0	0"); break; }
                     g->ingest->flush(auricle::fusor::now_ms());
                     const Compiler& c = g->ingest->compiler();
-                    nlog("ingest	%llu	%llu	%llu	%llu	%llu",
+                    // percepts · dropped · typed in · typed out · pushed · removed in · removed out
+                    nlog("ingest	%llu	%llu	%llu	%llu	%llu	%llu	%llu",
                          (unsigned long long)c.percepts(), (unsigned long long)g->ingest->dropped(),
                          (unsigned long long)c.typed_in(), (unsigned long long)c.typed_out(),
-                         (unsigned long long)g->ingest->pushed());
-                    set_status(c.typed_in() == c.typed_out() && g->ingest->dropped() == 0
+                         (unsigned long long)g->ingest->pushed(),
+                         (unsigned long long)c.removed_in(), (unsigned long long)c.removed_out());
+                    set_status(c.typed_in() == c.typed_out() && c.removed_in() == c.removed_out() &&
+                                       g->ingest->dropped() == 0
                                    ? "ingest: nothing lost"
                                    : "INGEST LOST A PERCEPT");
                     InvalidateRect(h, nullptr, TRUE);
@@ -761,6 +810,11 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             if (g->dragging) { g->dragging = false; ReleaseCapture(); }
             return 0;
 
+        case WM_QUERYENDSESSION:
+            // Shutdown and logoff ask, exactly as closing does; unsaved work is never lost silently
+            // and a cancelled prompt holds the session (SPEC 4.3.3).
+            return ok_to_discard(h) ? TRUE : FALSE;
+
         case WM_CLOSE:
             if (!ok_to_discard(h)) return 0;
             DestroyWindow(h);
@@ -783,6 +837,18 @@ int run_editor(const std::string& path_utf8) {
     if (const char* lp = getenv("NIB_LOG")) g->log = fopen(lp, "ab");
     load_theme(g->th);
 
+    // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow
+    // answers 96, WM_DPICHANGED is never delivered, and on a 225 % box the window is a bitmap
+    // stretched by the compositor — which is what the QC of 2026-09-04 measured. Resolved by name
+    // so the build does not hang on the SDK's version gate; on Windows before 1703 the call is
+    // simply absent and the window stays system-DPI.
+    {
+        using SetCtx = BOOL(WINAPI*)(HANDLE);
+        if (HMODULE u = GetModuleHandleW(L"user32.dll"))
+            if (auto f = reinterpret_cast<SetCtx>(GetProcAddress(u, "SetProcessDpiAwarenessContext")))
+                f(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)));   // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    }
+
     const HINSTANCE hinst = GetModuleHandleW(nullptr);
     WNDCLASSW wc{};
     wc.lpfnWndProc = proc;
@@ -791,9 +857,17 @@ int run_editor(const std::string& path_utf8) {
     wc.lpszClassName = L"nibWindow";
     RegisterClassW(&wc);
 
-    HWND h = CreateWindowExW(0, wc.lpszClassName, L"nib", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    // A driven window must never take the keyboard. The driver posts its messages straight to the
+    // handle, so it needs no focus — and a test window that steals the foreground eats whatever
+    // the operator is typing in the meantime, which is exactly what happened on 2026-09-04:
+    // fragments of a sentence being typed to another program turned up in the scratch files.
+    const bool driven = getenv("NIB_DRIVER") != nullptr;
+    HWND h = CreateWindowExW(driven ? WS_EX_NOACTIVATE : 0, wc.lpszClassName, L"nib",
+                             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              CW_USEDEFAULT, CW_USEDEFAULT, 900, 640, nullptr, nullptr, hinst, nullptr);
     if (!h) return 1;
+    // the initial size was asked for in logical pixels; now that WM_CREATE has read the DPI, scale it
+    SetWindowPos(h, nullptr, 0, 0, px(900), px(640), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     if (!path_utf8.empty()) {
         const std::wstring wp = widen(path_utf8);
@@ -802,7 +876,7 @@ int run_editor(const std::string& path_utf8) {
         else { g->path = wp; set_status("new file"); set_title(h); }   // a path that is not there yet is a new file
     }
 
-    ShowWindow(h, SW_SHOW);
+    ShowWindow(h, driven ? SW_SHOWNOACTIVATE : SW_SHOW);
     UpdateWindow(h);
 
     MSG msg;

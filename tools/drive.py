@@ -47,7 +47,11 @@ class Nib:
 
     def __init__(self, exe, path, log):
         self.log = log
-        env = dict(os.environ, NIB_LOG=log)
+        # NIB_DRIVER makes the window no-activate: posted messages still arrive, the keyboard never
+        # does. Without it a test window takes the foreground and eats whatever the operator is
+        # typing elsewhere — which is how fragments of an unrelated sentence reached the scratch
+        # files on 2026-09-04.
+        env = dict(os.environ, NIB_LOG=log, NIB_DRIVER="1")
         self.proc = subprocess.Popen([exe, "--edit", path], env=env)
         # Bind to the window belonging to THIS process. FindWindow by class alone will happily
         # return a leftover from a previous case, or the operator's own editor — which made two
@@ -163,6 +167,14 @@ def main():
     print(LF + "typing and saving")
     target, log = scratch("one.txt"), scratch("one.log")
     n = Nib(a.exe, target, log)
+    # The process must be per-monitor DPI aware (SPEC 4.1.2). The QC of 2026-09-04 measured it
+    # PROCESS_DPI_UNAWARE: GetDpiForWindow answered 96 and WM_DPICHANGED was dead code.
+    aw = ctypes.c_int(-1)
+    try:
+        ctypes.windll.shcore.GetProcessDpiAwareness(ctypes.c_void_p(int(n.proc._handle)), ctypes.byref(aw))
+    except Exception:
+        pass
+    check(aw.value == 2, "the process is per-monitor DPI aware (awareness %d, want 2)" % aw.value)
     n.type("hello world" + LF + "second line" + LF)
     row = n.save()
     check(row is not None, "the save command reached the window and the log says so: %s" % (row,))
@@ -197,6 +209,11 @@ def main():
     n.save()
     check(read_bytes(target) == ("HELLO" + LF + "second line" + LF).encode(),
           "a burst of typing: %r" % read_bytes(target))
+    # what the compiler has seen so far: the undo below must move the removed-bytes counters
+    ni0 = n.count("ingest")
+    n.cmd("ingest")
+    irow0 = n.wait_for("ingest", ni0)
+    rin0 = int(irow0[6]) if irow0 else -1
     nu = n.count("undo")
     n.cmd("undo")
     urow = n.wait_for("undo", nu)
@@ -212,6 +229,14 @@ def main():
     n.save()
     check(read_bytes(target) == ("HELLO" + LF + "second line" + LF).encode(),
           "and one redo put the whole burst back: %r" % read_bytes(target))
+    # The undo removed HELLO (5 bytes) and the redo removed "hello world" (11): both are percepts.
+    # The QC of 2026-09-04 watched an undo empty the document while these counters stood still.
+    ni1 = n.count("ingest")
+    n.cmd("ingest")
+    irow1 = n.wait_for("ingest", ni1)
+    rin1, rout1 = (int(irow1[6]), int(irow1[7])) if irow1 else (-1, -2)
+    check(rin1 == rin0 + 16, "the undo and the redo were perceived as removals: %d -> %d removed bytes (want +16)" % (rin0, rin1))
+    check(rin1 == rout1, "and every removed byte left the compiler: in %d == out %d" % (rin1, rout1))
 
     # ---- 4 · backspace and delete, posted as bare virtual keys --------------------------
     print(LF + "backspace and delete")
@@ -246,10 +271,11 @@ def main():
     irow = n.wait_for("ingest", ni)
     check(irow is not None, "the window reports its ingest arithmetic: %s" % (irow,))
     if irow is not None:
-        percepts, dropped, tin, tout, pushed = (int(x) for x in irow[1:6])
+        percepts, dropped, tin, tout, pushed, rin, rout = (int(x) for x in irow[1:8])
         check(percepts > 0, "typing produced percepts (%d)" % percepts)
         check(tin == tout,
               "every byte that entered the compiler left it: in %d == out %d" % (tin, tout))
+        check(rin == rout, "and every removed byte too: in %d == out %d" % (rin, rout))
         check(dropped == 0, "and none were dropped on the way to the ring (%d)" % dropped)
         check(pushed == percepts,
               "every percept reached the ring: %d pushed of %d" % (pushed, percepts))
@@ -295,8 +321,25 @@ def main():
           "a path that did not exist was created on save: %r" % (made,))
     n4.close()
 
+    # ---- 9 · an astral character arrives as two WM_CHARs, and must land as one -----------
+    # Windows delivers an emoji as a high surrogate then a low one. Converting either alone
+    # produces U+FFFD, which is how the QC of 2026-09-04 found a smile on disk as two question
+    # marks. An unpaired half is dropped, never substituted.
+    print(LF + "an emoji, as Windows delivers it")
+    emoji, log5 = scratch("emoji.txt"), scratch("five.log")
+    n5 = Nib(a.exe, emoji, log5)
+    u32.PostMessageW(n5.hwnd, WM_CHAR, 0xD83D, 0)
+    u32.PostMessageW(n5.hwnd, WM_CHAR, 0xDE00, 0)
+    u32.PostMessageW(n5.hwnd, WM_CHAR, 0xDE00, 0)    # a stray low half: nothing may come of it
+    time.sleep(0.1)
+    n5.save()
+    got = read_bytes(emoji)
+    check(got == b"\xf0\x9f\x98\x80",
+          "two surrogate WM_CHARs became one four-byte character, and the stray half was dropped: %r" % got)
+    n5.close()
+
     if not a.keep:
-        for p in (target, crlf, fresh, log, log2, log3, log4):
+        for p in (target, crlf, fresh, emoji, log, log2, log3, log4, log5):
             try:
                 os.remove(p)
             except OSError:

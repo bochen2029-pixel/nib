@@ -1,8 +1,9 @@
 # nib — ROADMAP
 
-*Rev 0.4 · 2026-09-03. Each stage carries a **falsifier**: the observation that would say the stage
+*Rev 0.5 · 2026-09-04. Each stage carries a **falsifier**: the observation that would say the stage
 failed. A stage is not done because its code exists; it is done when its falsifier has been fired
-at and did not go off. Dates are the day a stage went green on this box.*
+at and did not go off. Dates are the day a stage went green on this box — by git: every stage
+below went green on 2026-09-04, though revs 0.1–0.4 of this file said 09-03 for the first four.*
 
 **Legend** — ✔ done · ◑ in progress · ○ not started · ⨯ deliberately not doing
 
@@ -12,13 +13,15 @@ at and did not go off. Dates are the day a stage went green on this box.*
 
 | act | stage | state | version |
 |---|---|---|---|
-| **I** | 0a · the changeset port, read half | ✔ 2026-09-03 | 0.1.0 |
-| **I** | 0b · the write half | ✔ 2026-09-03 | 0.2.0 |
-| **I** | 0c · the editor shell | ✔ 2026-09-03 | 0.3.0 |
-| **I** | 0d · save, selection, the theme | ✔ 2026-09-03 | 0.4.0 |
+| **I** | 0a · the changeset port, read half | ✔ 2026-09-04 | 0.1.0 |
+| **I** | 0b · the write half | ✔ 2026-09-04 | 0.2.0 |
+| **I** | 0c · the editor shell | ✔ 2026-09-04 | 0.3.0 |
+| **I** | 0d · save, selection, the theme | ✔ 2026-09-04 | 0.4.0 |
 | **I** | 0e · the window driver | ✔ 2026-09-04 | 0.4.1 |
 | **I** | 1a · ingest — the compiler and PadSource | ✔ 2026-09-04 | 0.5.0 |
 | **I** | 1b · a resident that only holds | ✔ 2026-09-04 | 0.6.0 |
+| **I** | the QC pass — two criticals, the runtime gate, six Stage 2 breakers | ✔ 2026-09-04 | 0.6.1 |
+| **I** | 1c · the wire — the resident in the window, the gutter, the AI switch, the tape | ○ | |
 | **I** | 2 · emission, with floor control | ○ | |
 | **I** | 3 · un-saying, made visible | ○ | |
 | **I** | 4 · the two switches, and the paired record | ○ | |
@@ -28,11 +31,20 @@ at and did not go off. Dates are the day a stage went green on this box.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**120 checks green in the exe, and 22 more from the window driver.** The exe links kernel32,
-user32, gdi32, comdlg32 — no network DLL, enforced at build — plus llama.cpp and ggml, all three
-**delay-loaded**. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
+**144 checks green in the exe, and 27 more from the window driver** (2026-09-04, three identical
+driver runs). The exe links kernel32, user32, gdi32, comdlg32 — no network DLL, enforced at build —
+plus llama.cpp and ggml, all three **delay-loaded**, which the build now asserts rather than
+assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
 `--ingest` and the editor still run on a machine with no model and no card. That is CLAUDE.md's
-rule that a battery needing a 9B is a battery that stops being run.
+rule that a battery needing a 9B is a battery that stops being run. `nib --about` loads the
+backends by name and prints the runtime module gate's verdict — 56 modules, no network DLL —
+without loading a model.
+
+**Operator ruling, 2026-09-04: the shipped product autodiscovers on the LAN by default**, toggled
+off, never absent. The build order below is unchanged — the resident half carries the thesis and
+the editor must be sound before either the network or emission stands on it — but Act II is no
+longer "after Stage 5": Stages 6 and 7 land before the week of real work, so that the week runs on
+the build that ships.
 
 ---
 
@@ -189,6 +201,48 @@ start** if GPU layers were asked for and no GPU backend came up, unless `--allow
 Why emission is disabled here: it is the cheapest possible way to find out whether the resident
 perceives sanely, and it cannot embarrass itself while you are finding out.
 
+### ✔ The QC pass · 0.6.1
+
+The review of 2026-09-04 (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`) read every line, re-ran
+the oracles from a scratch copy, and found that **everything that was checked was correct, and
+everything that was not checked was where the bugs were** — in each case one level below where
+the falsifier looked. Fixed, each with a check that would have caught it:
+
+- **Two criticals in the editor.** A Down-arrow then a Backspace over an accented character
+  destroyed it (columns were bytes, the painter counted UTF-16 units) and `Ctrl+R` still read
+  byte-exact, because the log recorded the cut faithfully. Any emoji typed became two U+FFFD (two
+  surrogate `WM_CHAR`s converted alone). Columns are characters now, `Doc::splice` snaps to
+  sequence boundaries, surrogates pair, and a thousand random edits at random byte offsets over a
+  multi-byte alphabet leave valid UTF-8 after every one.
+- **The Act I network law held for the exe and not the process.** The backend loader pulled
+  `ggml-rpc.dll` — which imports ws2_32 — from `C:/llama.cpp` at `--resident` time, past the build
+  gate. Backends are loaded by name now, the resident refuses to start if a network module is in
+  the process, and `nib --about` prints the receipt.
+- **Six things Stage 2 would have walked into:** undo, redo and open bypassed ingest (an undo
+  emptied the document while the conservation identity read green); the self-echo filter guarded
+  a lane no seat uses; ticks fired a full probe round, which the estate forbids; the resident
+  dropped words silently at the context wall and then judged clauses the trunk never saw;
+  `Doc::apply` left the undo stacks pointing at text it had changed; a long deletion's tail chunks
+  reached the trunk as newly typed text.
+- **And the window was DPI-unaware**, so SPEC 4.1.2 was false as built on a 225 % box.
+
+*Falsifier: the oracles green with every new check, and `--about` refusing when `ggml-rpc.dll` is
+loaded.* — 144 in the exe, 27 from the driver, three identical runs; the gate passes with real
+backends loaded. **One incident, kept:** the driver's windows took the foreground and ate part of
+a sentence the operator was typing to another program; a driven window is created no-activate
+now (CLAUDE.md rule 12).
+
+### ○ Stage 1c — the wire
+
+The resident on its own thread inside the window; judgments back over a second ring; the gutter
+mark whose brightness is the last boundary's margin (a real internal state, the only permitted
+signal); the AI switch, where off unloads the model and returns the card; the tape in the family's
+format, verified by `glance --verify`; resume by re-folding the tape. The first moment the
+operator writes with something present, before a single word is emitted.
+
+*Falsifier: keystroke-to-repaint moves measurably with the resident on; a judgment's clause is not
+byte-identical to the compiled percept; AI-off leaves VRAM held.*
+
 ### ○ Stage 2 — emission, with floor control
 
 The resident writes in its own blocks. An emission targeting a block a human has touched within the
@@ -241,7 +295,10 @@ Nothing in Act II rescues a failure here.
 
 ## Act II — the LAN
 
-Only after Stage 5. See `docs/ASSEMBLY.md` §3 for why OT with a host, and not CRDT.
+**On by default in the shipped product** (operator ruling, 2026-09-04): the pad finds its peers on
+the local subnet unless the toggle says otherwise, and the toggle is on the status line and the
+tape. Built after Stage 4 and before Stage 5, so that the week runs on the build that ships. See
+`docs/ASSEMBLY.md` §3 for why OT with a host, and not CRDT.
 
 ### ○ Stage 6 — discovery
 
