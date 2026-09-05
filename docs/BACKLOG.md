@@ -141,6 +141,22 @@ follows is what is still open.
   say-it-once first, then focus-as-a-lane, then two typed lanes, then gear 2, then speech, then
   vision — and none of it before Stage 4 and the week of real work.
 
+## On the checklist by the operator's word (2026-09-05, evening)
+
+- **The screen saver — the resident holds the floor** (`docs/BRAINSTORMS_2026-09-05.md` §4). An
+  Easter-egg mode in which the resident keeps talking on its own line about whatever is in the
+  pad, and the human's typing elsewhere is the interruption: the seat ignores it (the re-probe
+  holds), pauses to watch (the re-probe flips and the sentence dies), or keeps going and changes
+  the subject on its next sentence (composed off a trunk that now holds the human's words). Nearly
+  all of it exists — the Stage 3 seam, the forming plane, own speech through the document. Missing:
+  a want that renews itself after the seat's own sentence, and the per-block floor (Stage 2's open
+  item). The standing instruction arrives as world (`[bo] Watcher, talk to me about anything until
+  I interrupt.`), never as a prompt, because the mandates are inside the serve hash. It is a
+  switch on the tape, not a timer. It is also an instrument: the monologue horizon — sentences said
+  before the manners refuse everything — is a number the next tune is scored on. The null is the
+  CLI, `--resident --emit --saver`, an evening; the window version is the third position of
+  Stage 4's switch. Not before Stage 4.
+
 ## For the estate, not for nib (read in K5 on 2026-09-05; the kernel is in flux, so noted, not filed)
 
 - K5 loads backends with `ggml_backend_load_all_from_path` (fusord.cpp:1395), which pulls

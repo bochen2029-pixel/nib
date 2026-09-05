@@ -350,10 +350,109 @@ not rescue it. That is the null, and it is an evening's work against what exists
 
 ---
 
-## The order, across all three
+## 4 · The screen saver: the resident holds the floor
+
+**The question** (added the same evening, from a voice note; on the checklist, not to be built now).
+An Easter egg: a screen-saver mode in which the resident kernel is spun up with one standing
+instruction — just start typing. It talks about whatever, without stopping, because by definition
+it can. The human can interrupt at any time, and "interrupt" means: move the caret to a different
+line and start typing. Etherpad is concurrent character by character, so both can be typing into
+the pad at once on different lines (and either could overwrite the other, if they wanted to troll).
+The resident sees the human typing and decides what to do: ignore it and keep going; pause and
+watch what the human is doing; or keep typing on its own line while the human types on theirs, and
+change what it is talking about in response — the way a person would.
+
+**The answer.**
+
+*What it is, in nib's words.* Everything nib has built so far has one polarity: silence is the
+default, the seat speaks on evidence at a boundary, and the hand holds the floor by moving. The
+screen saver inverts the polarity: **the resident holds the floor by default, and the human's
+typing is the interruption.** That is the same floor problem seen from the other chair, and it is
+worth having for that reason alone — the floor rule was written for a resident that must not write
+into the human's sentence; this mode asks what the resident does when the human writes into *its*
+session. And the three positions on the initiative axis fall out cleanly: TURN-BASED speaks when
+asked, RESIDENT speaks on evidence, the SAVER speaks unless stopped. Stage 4's switch has a third
+position waiting for it, and the same discipline applies — same seat, same seed, same sampler,
+only the trigger differs — so a flip into and out of the saver is still a paired sample.
+
+*What already exists.* Nearly all of it, which is the surprise. The seam of Stage 3 drains intake
+after every generated token; a human line that lands mid-sentence is on the trunk before the next
+token; the speaking seat is re-probed on a fresh fork of the updated trunk and the sentence dies if
+the margin flips or the world settles the point. Read those as the three verbs the note asks for:
+
+| the note says | the mechanism, already built |
+|---|---|
+| ignore it and keep going | the re-probe comes back positive; the sentence continues to its close |
+| pause and see what the human is doing | the re-probe comes back at or below zero; the sentence is killed mid-word, the seat holds until the human's next boundary |
+| keep typing while the human types, and change the subject | the sentence finishes (it was conditioned on the world at fork time); the *next* one is composed off a trunk that now holds the human's words, so it is about them if the seat judges so |
+
+The forming plane renders the sentence as it is sampled; own speech commits through the document
+once a sentence closes; the human's caret and the resident's insertion point are two positions in
+one op log, which Act I's single serialiser interleaves for free — the concurrency the note
+attributes to Etherpad is, in nib, the fact that every character is a changeset and the editor
+thread is the only writer. (Act II needs `follow` for two *machines*; two hands on one machine
+need nothing.)
+
+*What is missing, and it is two things.* First, **a want that renews itself.** Today a want is
+born at a boundary and dies when it is composed; in the saver, the end of the resident's own
+sentence is a boundary at which the same seat wants again, unless the world has just spoken. That
+is one rule in `speak_wants`, and it is the whole of "keeps talking". Second, **the per-block
+floor** (`docs/BACKLOG.md`, Stage 2's open item): the saver composes *while* the hand moves, so the
+global refusal has to become the one the spec always meant — never into a block the human is
+touching, freely into its own. The commit-time gate already tests the span; the compose-time gate
+is what changes.
+
+*What it must not do, and the laws that say so.*
+
+- **The seed is byte-frozen, so the standing instruction cannot be a prompt.** "Just start typing
+  about anything" is a *mandate*, and the mandates are inside the serve hash: change one and the
+  resident refuses to start (rule 10). The instruction has to arrive as **world**, on the human's
+  lane — `[bo] Watcher, talk to me about anything until I interrupt.` — which is a direct address,
+  the SPEAKER's own mandate, and off-distribution for nothing. What the saver then talks about is
+  what is in the pad; an empty pad talks about the address line, and a page of the operator's notes
+  talks about the notes, which is the more interesting screen saver anyway. A seat with a different
+  disposition (a NARRATOR) is a retune, not a runtime.
+- **Rule 5 holds absolutely.** The resident types at the sampler's cadence and no other. Its
+  "pause to see what you are doing" is a real re-probe that came back negative; its "ignore" is a
+  real one that came back positive. A saver that inserted a hesitation because a human was typing
+  would be a demo that stopped being evidence, and this mode is the one most tempting to fake.
+- **Rule 6 holds in the file.** The resident's paragraphs begin `[SEAT] `; the human's are bare;
+  nobody reading the pad afterwards wonders who was talking to whom.
+- **It is a switch, not a tick.** A screen saver starts when the human has been away, and nib
+  already knows that — `[tick +300s]` is world. But ticks never trigger a probe round (anti-turn
+  exemption 4), and a mode that woke on a timer would be the poll reborn. The saver is a state,
+  entered by a key and recorded on the tape like the AI switch and wrap (rule 8), and the status
+  line says SAVER while it is on. An idle-time entry is a *policy* over that switch, decided later
+  and recorded the same way.
+- **The manners are the part that will fail first, and that is the point.** The seats perseverate:
+  one long session composed fourteen sentences of which eight were the same two lines. A monologue
+  is the harshest possible test of that disposition, and the harness will refuse repeat after
+  repeat until the seat has nothing new to say. So the saver is also an instrument: **the monologue
+  horizon** — sentences said before the manners refuse everything — is a number the next tune can
+  be scored on, and the saver's tape is a disposition soak accruing from an Easter egg.
+
+*Where it is unusual.* Nobody ships a text editor whose idle state is a mind thinking aloud on the
+page in its own paragraph, while you type in yours, with the interruption negotiated by judgment
+rather than by a send key. The closest things are voice assistants that keep talking until barged
+in (Moshi's full-duplex stance), and those have no page. On a page the human can *edit* the
+monologue — delete a sentence of it, and that is a percept on the human's lane, which the resident
+perceives as its own words being thrown out. That feedback loop is the label valve of the review's
+§5.4, delivered by the screen saver at a rate a working session never reaches.
+
+**The null, and the order.** In the CLI first: `--resident --emit --saver` — after every emission
+the same seat wants again; measure the monologue horizon on this box, on an empty file and on the
+README. It needs the self-renewing want and nothing else, an evening against what exists. Then the
+window: the switch, the per-block floor, the resident's block at the end of the document and the
+human anywhere else. None of it before Stage 4, whose third switch position this is.
+
+---
+
+## The order, across all four
 
 Fix say-it-once first, because a machine repeating itself is tolerable in a refused tape row and
-intolerable out loud. Then focus-as-a-lane as the null for attention. Then two typed lanes for the
-crisscross. Then gear 2, composition only, one target, deadlined by the floor. Then speech. Then
-vision, cheap detectors only. None of it before Stage 4 and the week of real work; all of it
-after the week has said whether one person alone leaves the thing switched on.
+intolerable out loud — and the screen saver's monologue horizon is the instrument that measures it.
+Then focus-as-a-lane as the null for attention. Then two typed lanes for the crisscross. Then the
+screen saver in the window, as the third position of Stage 4's switch. Then gear 2, composition
+only, one target, deadlined by the floor. Then speech. Then vision, cheap detectors only. None of it
+before Stage 4 and the week of real work; all of it after the week has said whether one person
+alone leaves the thing switched on.
