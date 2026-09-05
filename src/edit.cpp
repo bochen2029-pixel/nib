@@ -100,6 +100,7 @@ struct View {
     size_t left_col = 0;       // horizontal scroll in characters — used only when wrap is off
     int cols = 80;             // the wrap width in characters, from the client width; rebuilt on resize
     bool wrap = true;          // word wrap; the operator's key is Alt+Z, and it is on the tape
+    bool driven = false;       // NIB_DRIVER: no keyboard reaches this window, only posted messages
     bool dragging = false;
 
     std::wstring path;         // "" = untitled
@@ -918,7 +919,12 @@ void set_wrap(HWND h, bool on) {
     g->left_col = 0;
     relayout(h);
     scroll_to_caret(h);
-    nlog("wrap	%d", on ? 1 : 0);
+    {   // the geometry, so a wrap that looks wrong can be read rather than guessed at
+        RECT rc;
+        GetClientRect(h, &rc);
+        nlog("wrap	%d	dpi %d	cw %d	client %ld	cols %d	rows %zu", on ? 1 : 0, g->dpi, g->cw,
+             (long)rc.right, g->cols, g->ridx.count());
+    }
     set_status(std::string("word wrap ") + (on ? "on" : "off"));
     InvalidateRect(h, nullptr, TRUE);
 }
@@ -1499,7 +1505,14 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
         case WM_CHAR: {
             const wchar_t c = (wchar_t)wp;
-            if (GetKeyState(VK_CONTROL) & 0x8000) return 0;   // Ctrl chords are handled in WM_KEYDOWN
+            // Ctrl chords are handled in WM_KEYDOWN, and the control characters they also produce
+            // are dropped by the `c < 0x20` test below. This second guard is for a real keyboard
+            // only: `GetKeyState` answers for the THREAD, and a driven window has no keyboard of
+            // its own, so what it reads is whichever modifier the person at the machine happens to
+            // be holding in some other program. On 2026-09-05 that swallowed five consecutive
+            // characters out of a driven window's typing, and the document was silently short.
+            // Third face of the same hazard: CLAUDE.md rule 12 and the incident of 2026-09-04.
+            if (!g->driven && (GetKeyState(VK_CONTROL) & 0x8000)) return 0;
             g->key_qpc = qpc();
             if (c == '\r') { g->high = 0; insert_text(h, "\n"); return 0; }
             if (c == '\t') { g->high = 0; insert_text(h, "    "); return 0; }
@@ -1775,6 +1788,7 @@ int run_editor(const std::string& path_utf8) {
     // the operator is typing in the meantime, which is exactly what happened on 2026-09-04:
     // fragments of a sentence being typed to another program turned up in the scratch files.
     const bool driven = getenv("NIB_DRIVER") != nullptr;
+    g->driven = driven;
     HWND h = CreateWindowExW(driven ? WS_EX_NOACTIVATE : 0, wc.lpszClassName, L"nib",
                              WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              CW_USEDEFAULT, CW_USEDEFAULT, 900, 640, nullptr, nullptr, hinst, nullptr);

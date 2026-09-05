@@ -4,6 +4,14 @@
 turn.** A plain-text editor for Windows in which a resident mind writes beside you in real time —
 and later, on a LAN, other people do too.
 
+![nib: a human sentence, and two seats answering it in their own blocks](docs/nib.png)
+
+*Not a mock-up. The human typed the last sentence; the two `[SEAT]` lines were written by a 9B model
+running locally, during that run, while the file was open. The bars in the left margin are the
+gutter: each one's brightness is the strongest margin by which a seat wanted to speak at that line.
+The bottom rows are the status line — the switch, the three seats' margins, the boundary count, the
+window used, and `0 B egress`, which is structurally true and not a promise.*
+
 > **Status: 0.9.0 · Stages 0a–2 built and green (2026-09-05). It speaks.** A seat whose margin
 > clears zero composes one sentence and writes it as its own block, after the line it is about,
 > prefixed with its name — and it will not write while your hand is moving. Pausing is how you
@@ -70,6 +78,41 @@ is on the status line and the tape like the other two. No cloud model in Act I o
 resident never writes into a paragraph you are touching. Nothing simulates a human tell that does
 not correspond to a real internal event — no fake hesitation, no invented typos, no "thinking…"
 that is not thinking. It is never ambiguous who is on the other end.
+
+## Building it
+
+Windows, Visual Studio 2022 (or any MSVC with `cl` on the path), C++20. One command:
+
+```
+build.bat
+```
+
+`/W4 /WX`, zero warnings, static CRT, one exe, no package manager and no framework. Two gates run
+in the build itself and fail it: no network DLL may appear among the dependents, and the three
+llama.cpp DLLs must be delay-loaded and appear nowhere else. The editor, the changeset library and
+the whole test battery build and run **without a model and without a GPU** — llama.cpp is needed
+only when you switch the resident on.
+
+```
+nib.exe --selftest      213 checks: the changeset port against Etherpad's own vectors, the op log,
+                        the compiler's byte conservation, word wrap, the tape's hash chain
+python tools/drive.py   30 more, by driving a real window through its message seam
+nib.exe --edit FILE     the editor
+nib.exe --about         what this build is: the serve hash, the backends by name, the module gate
+```
+
+To give it a mind you need `llama.cpp` built with CUDA at `C:/llama.cpp`, its headers and import
+libraries at `C:/auricle/third_party/llama.cpp`, and a GGUF the seed was tuned for. Then
+`Ctrl+Shift+A` in the window, or:
+
+```
+nib.exe --resident FILE --emit     what each seat wanted to say, and what it said
+```
+
+Keys: `Ctrl+S` save · `Ctrl+O` open · `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo, by burst ·
+`Ctrl+R` fold the whole edit log and check it replays byte-exact · `Alt+Z` word wrap ·
+`Ctrl+Shift+A` the resident. Colours, font, the model, the window size and the floor are all data
+in `nib.theme` beside the exe.
 
 ## Where it sits
 

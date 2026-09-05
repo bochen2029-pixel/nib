@@ -740,3 +740,39 @@
   re-probed on a fresh fork when a percept lands, the line killed mid-word on a flipped margin or
   on the world settling the point, the killed remainder generated silently for the tape) and the
   forming plane that makes the withdrawal visible.
+
+## 2026-09-05 (midday) · the screenshot, and the two traps it walked into
+
+- The operator asked for a public MIT repository. Taking a picture for it found two things, one
+  real and one a phantom, and the phantom is the more useful lesson.
+- REAL, and it had been there since Stage 0e: a DRIVEN WINDOW COULD LOSE A KEYSTROKE. WM_CHAR began
+  with `if (GetKeyState(VK_CONTROL) & 0x8000) return 0;` - a guard for a real keyboard, where a
+  Ctrl chord is handled in WM_KEYDOWN. But GetKeyState answers for the THREAD, and a driven window
+  has no keyboard of its own, so what it reads is whichever modifier the person at the machine
+  happens to be holding in another program. During the first screenshot run five consecutive
+  characters vanished out of a typed sentence: "mysql 5, so I am" reached the document as
+  "mysqlo I am", and the tape's own changeset rows proved the characters never reached Doc::splice
+  at all. Typing into a driven window with the resident off is byte-exact at every pace tried
+  (four runs), so the loss needed the operator's hand as well as nib's. The guard now applies only
+  when the window is not driven; the control characters a Ctrl chord also produces are dropped by
+  the `c < 0x20` test that follows, which was doing the real work all along. This is the third
+  face of the 2026-09-04 incident: first nib's driver typed into the operator's windows, then the
+  operator's window took nib's keystrokes, and now the operator's MODIFIER took them.
+- The AI driver case now asserts that every byte it typed reached the document. It never did -
+  the wrap case asserted byte-exactness with the resident off, and this class of loss hid in the
+  gap between them.
+- PHANTOM, and it cost twenty minutes: the first good screenshot showed long lines running off the
+  right edge and no status line, which reads exactly like word wrap being broken. It was not. nib
+  is per-monitor DPI aware; the capture script and the driver were not, so Windows VIRTUALIZED
+  their view of the window - GetWindowRect answered 887 where nib correctly saw 1997 physical
+  pixels - and PrintWindow rendered a 1997-pixel window into an 887-pixel bitmap and clipped it.
+  The window had been wrapping correctly the whole time. The rule for the estate: A DPI-UNAWARE
+  PROCESS MEASURING A DPI-AWARE WINDOW IS TOLD A LIE, and the lie is self-consistent, so it looks
+  like a bug in the thing being measured. Both tools call SetProcessDpiAwarenessContext now.
+- What let me tell them apart in minutes rather than hours: nib now prints its own geometry
+  (`wrap <on> dpi <n> cw <n> client <n> cols <n> rows <n>`) when the wrap switch moves. nib said
+  client 1997; the OS told my script 887; the disagreement was the answer. An instrument that
+  reports what the program believes, beside what the system believes, is worth its four lines.
+- The picture in the README is a real run: the human types a contradiction, the SKEPTIC catches it
+  against what the file established earlier, the SENTINEL flags the irreversible action, and both
+  write in their own blocks while the gutter shows how much each seat wanted to speak.

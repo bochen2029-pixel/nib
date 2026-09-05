@@ -95,6 +95,21 @@ each load the 9B; two at once with llama-server resident do not fit in 16 GB. Ru
 sequentially, and expect the probe cost to move by a factor of 2.7 with what else the card is doing
 (ROADMAP, Stage 1c). Never kill a nib window to free the card: it may hold unsaved text.
 
+**1.11 A DPI-unaware process measuring a DPI-aware window is told a lie, and the lie is
+self-consistent.** nib is per-monitor aware. A Python or PowerShell helper that is not gets
+virtualized rectangles — `GetWindowRect` answered 887 where nib correctly saw 1997 physical
+pixels — so a screen capture rendered a 1997-pixel window into an 887-pixel bitmap and clipped it,
+which read exactly like a word-wrap bug in nib (2026-09-05, twenty minutes). Call
+`SetProcessDpiAwarenessContext(-4)` first in any tool that measures, sizes or captures nib's
+window. nib prints its own geometry when the wrap switch moves; when the two disagree, the
+unaware one is wrong.
+
+**1.12 A driven window must not read the thread's key state.** `GetKeyState` answers for the
+thread, and a driven window has no keyboard, so it reads whatever modifier the operator is holding
+in another program — which silently swallowed five characters out of a driven window's typing on
+2026-09-05. Fixed in `WM_CHAR`; the lesson generalises to any guard that consults global input
+state on behalf of a window that receives none.
+
 **1.10 A crash inside a DLL says nothing unless you make it.** An hour went into
 `ggml-cuda.cu:103: CUDA error` on 2026-09-05 because llama's log callback swallowed errors along
 with progress. Three instruments exist now and cost nothing: llama and ggml errors always reach

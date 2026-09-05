@@ -468,7 +468,18 @@ def main():
             # write while the hand is moving, and it must write once the hand has paused.
             ne = n6.count("emit")
             n6.cmd("bottom")
-            n6.type_paced("And the users table can go, we do not need it any more. ")
+            typed_here = "And the users table can go, we do not need it any more. "
+            n6.type_paced(typed_here)
+            # Every byte typed with the resident running must be in the document. Until 2026-09-05
+            # this case never checked, and a driven window really was losing characters when the
+            # operator held a modifier in another program (edit.cpp, WM_CHAR).
+            n6.cmd("ingest")
+            time.sleep(0.3)
+            doc_now = read_bytes(doc6).decode("utf-8", "replace") if os.path.exists(doc6) else ""
+            n6.save()
+            doc_now = read_bytes(doc6).decode("utf-8", "replace")
+            check(typed_here in doc_now,
+                  "every byte typed while the resident was running reached the document (%d chars)" % len(typed_here))
             early = [l for l in n6.lines()[ne:] if l and l[0] == "emit"]
             check(not early, "nothing was written into the document while the hand was still typing: %s" % (early,))
             erow = n6.wait_for("emit", ne, timeout=45)   # the floor opens 2 s after the last keystroke
