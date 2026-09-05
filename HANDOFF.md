@@ -38,15 +38,15 @@ rescues that, and the finding gets published beside the laws it bought.
 
 | | |
 |---|---|
-| version | **0.10.0**, commit `e9cdbd9`, branch `main`, working tree clean |
+| version | **0.10.1** (the read of 0.10.0's first remediation; see `docs/BACKLOG.md`, first section), branch `main` |
 | public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 22 commits through this handoff |
 | stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3 — **all green, every falsifier fired at** |
 | next | **Stage 4** — the two switches and the paired record |
-| oracles | `--selftest` **213** · `tools/drive.py` **30** · `tools/drive.py --ai` **65** |
+| oracles | `--selftest` **219** · `tools/drive.py` **30** · `tools/drive.py --ai` **65** |
 
 ```bash
 build.bat                          # /W4 /WX, zero warnings, two gates
-nib.exe --selftest                 # 213 passed, 0 failed        (no model, no GPU)
+nib.exe --selftest                 # 219 passed, 0 failed        (no model, no GPU)
 python tools/drive.py              # 30 passed, 0 failed         (no model, no GPU)
 python tools/drive.py --ai         # 65 passed, 0 failed         (needs the card, ~6 min)
 nib.exe --about                    # the serve pin, the backends by name, the module gate
@@ -154,7 +154,7 @@ model and no card.
 | `src/wire.h/.cpp` | The resident on its own thread inside the window. Two rings out (judgments, emissions), a forming *state*, the floor gate, the checkpoint, `fold_log` and `fold_tape`. |
 | `src/tape.h/.cpp` | The family's append-only hash-chained record: BLAKE2b-256, canonical JSON, six keys a row. Ported from fray, which is glance's, which is REGISTRAR's. Torn-row recovery. Also SHA-256 (the model's hash) and the atomic file helpers. |
 | `src/edit.cpp` | The Win32/GDI window. Every edit goes through `Doc::splice`. Per-monitor DPI, word wrap, the gutter, two status rows, the forming plane, the floor's second gate, block placement, the driver seam. |
-| `src/selftest.cpp` | The oracle: 213 checks, none of which need a model. |
+| `src/selftest.cpp` | The oracle: 219 checks, none of which need a model. |
 | `src/nib.cpp` | The console verbs. |
 | `tools/drive.py` | The window battery: posts messages, reads artefacts, never synthesises input and never looks at the screen. |
 | `tools/snap.py` | Gitignored snapshots with an MD5 manifest (§10). |

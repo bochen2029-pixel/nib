@@ -982,7 +982,10 @@ void refuse_emission(const EmitRow& r, const char* why) {
 }
 
 void commit_emission(HWND h, const EmitRow& r) {
-    // the clause it depends on, carried forward to the text as it stands now
+    // the clause it depends on, carried forward to the text as it stands now. A revision of 0 is
+    // no revision: the wire no longer holds the span this want was judged at, and a block with no
+    // dep has nowhere honest to go — until 2026-09-05 it went after the document's first line.
+    if (r.rev == 0) { refuse_emission(r, "span-unknown"); return; }
     size_t a = r.a, b = r.b;
     if (!transform_span(r.rev, a, b)) { refuse_emission(r, "span-edited"); return; }
     // THE FLOOR, checked again at the moment of writing. The thread refused to compose while the

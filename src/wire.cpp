@@ -19,6 +19,24 @@ static uint64_t ms_since(const std::chrono::steady_clock::time_point& t0) {
 
 void Wire::set_state(WireState s) { state_.store((int)s, std::memory_order_release); }
 
+// ---- the span memory --------------------------------------------------------------------------
+void SpanMemory::remember(uint32_t boundary, uint64_t rev, uint32_t a, uint32_t b) {
+    if (boundary == 0) return;                          // boundaries are 1-based; 0 is "unknown"
+    if (count_ > 0 && boundary == newest_) return;      // the three seats of one boundary: once
+    slots_[at_] = Span{ boundary, a, b, rev };
+    at_ = (at_ + 1) % kDepth;
+    ++count_;
+    newest_ = boundary;
+}
+
+bool SpanMemory::find(uint32_t boundary, uint64_t& rev, uint32_t& a, uint32_t& b) const {
+    if (boundary != 0)
+        for (const Span& s : slots_)
+            if (s.boundary == boundary) { rev = s.rev; a = s.a; b = s.b; return true; }
+    rev = 0; a = 0; b = 0;
+    return false;
+}
+
 std::string Wire::detail() const { std::lock_guard<std::mutex> g(mu_); return detail_; }
 std::string Wire::session_body() const { std::lock_guard<std::mutex> g(mu_); return session_; }
 std::string Wire::model_hash() const { std::lock_guard<std::mutex> g(mu_); return model_hash_; }
@@ -221,31 +239,27 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     };
     // The span each boundary judged, so that an emission composed later can say which bytes of the
     // document it depends on. A want waits for the floor, so the span cannot be read off "the
-    // current clause" by the time it is spoken; a few boundaries of history is all it takes.
-    struct Span { uint32_t boundary, a, b; uint64_t rev; };
-    Span spans[16]{};
-    size_t span_at = 0;
-    auto remember_span = [&](uint32_t boundary, uint64_t rev) {
-        spans[span_at++ % 16] = Span{ boundary, span_a, span_b, rev };
-    };
-    auto span_of = [&](uint32_t boundary, uint64_t& rev, uint32_t& a, uint32_t& b) {
-        for (const Span& s : spans)
-            if (s.boundary == boundary) { rev = s.rev; a = s.a; b = s.b; return; }
-        rev = 0; a = 0; b = 0;
-    };
+    // current clause" by the time it is spoken (SpanMemory, wire.h: one entry per boundary, 64 deep).
+    SpanMemory spans;
+    auto remember_span = [&](uint32_t boundary, uint64_t rev) { spans.remember(boundary, rev, span_a, span_b); };
+    auto span_of = [&](uint32_t boundary, uint64_t& rev, uint32_t& a, uint32_t& b) { spans.find(boundary, rev, a, b); };
     // The seam, handed to the resident for the duration of a sentence: the world lands on the
-    // trunk between two generated tokens, and the half-written line goes out to be rendered.
+    // trunk between two generated tokens, and the half-written line goes out to be rendered —
+    // anchored to the span of the boundary the WANT arose at, which is the span the finished
+    // block will land on, so the sentence forms where it will live.
     struct WireSeam : Seam {
         Wire* w;
         std::function<bool()> step;
-        uint64_t rev = 0;
-        uint32_t a = 0, b = 0;
+        const SpanMemory* spans = nullptr;
         bool drain() override {
             bool whole = false;
             while (step()) whole = true;   // everything on the ring, not one percept
             return whole;
         }
-        void forming(int seat, const std::string& text, bool active) override {
+        void forming(int seat, uint64_t boundary, const std::string& text, bool active) override {
+            uint64_t rev = 0;
+            uint32_t a = 0, b = 0;
+            if (spans) spans->find((uint32_t)boundary, rev, a, b);
             {
                 std::lock_guard<std::mutex> g(w->form_mu_);
                 w->forming_active_ = active;
@@ -360,7 +374,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
                     WireSeam s;
                     s.w = this;
                     s.step = step;
-                    span_of((uint32_t)res.boundaries(), s.rev, s.a, s.b);
+                    s.spans = &spans;
                     res.speak_wants(&s);
                     ship_emissions();
                     publish();

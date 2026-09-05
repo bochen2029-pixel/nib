@@ -1361,6 +1361,29 @@ int run_selftest() {
         }
     }
 
+    section("the span memory - one entry per boundary, and a want older than it is not placed at line 1");
+    {
+        // Until 2026-09-05 the wire remembered a span once per SEAT in a 16-slot ring: five
+        // boundaries of memory, and a want older than that composed with span zero, whose block
+        // then landed after the document's first line. The memory is a struct now, so this can be
+        // fired at without a model: three seats per boundary count once, the depth is boundaries
+        // and not judgments, and a boundary that has fallen out is reported as unknown.
+        SpanMemory sm;
+        for (uint32_t b = 1; b <= 100; ++b)
+            for (int seat = 0; seat < 3; ++seat) sm.remember(b, 10 + b, b * 10, b * 10 + 5);   // the three seats of one boundary
+        check(sm.held() == SpanMemory::kDepth, ssprintf("100 boundaries judged by three seats: %zu held, the depth is boundaries not judgments", sm.held()));
+        uint64_t rev = 0;
+        uint32_t a = 0, b = 0;
+        check(sm.find(100, rev, a, b) && rev == 110 && a == 1000 && b == 1005, "the newest boundary is found with its revision and span");
+        const uint32_t oldest = 100 - (uint32_t)SpanMemory::kDepth + 1;
+        check(sm.find(oldest, rev, a, b) && rev == 10 + oldest, ssprintf("and so is boundary %u, the oldest still held", oldest));
+        check(!sm.find(oldest - 1, rev, a, b) && rev == 0 && a == 0 && b == 0, ssprintf("boundary %u has fallen out and is reported unknown, never as span zero", oldest - 1));
+        check(!sm.find(0, rev, a, b), "boundary 0 is never a boundary");
+        SpanMemory one;
+        one.remember(7, 3, 40, 60); one.remember(7, 3, 40, 60); one.remember(7, 3, 40, 60);
+        check(one.held() == 1 && one.find(7, rev, a, b) && a == 40 && b == 60, "three seats of one boundary occupy one slot");
+    }
+
     section("refusals");
     {
         std::string err;

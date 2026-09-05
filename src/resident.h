@@ -89,7 +89,9 @@ struct Abort {
 struct Seam {
     virtual ~Seam() = default;
     virtual bool drain() = 0;
-    virtual void forming(int seat, const std::string& text, bool active) = 0;
+    // `boundary` is the boundary the WANT arose at — the clause the sentence is about — so the
+    // caller can anchor the forming words to the same span the finished block will land on.
+    virtual void forming(int seat, uint64_t boundary, const std::string& text, bool active) = 0;
 };
 
 // A line a seat composed and the manners refused to say twice. Counted and recorded, never
@@ -248,11 +250,13 @@ public:
 private:
     void judge(const char* reason, float bscore, std::vector<Judgment>& out);
     // Compose one sentence on a fork of the trunk. Returns false if it produced nothing OR if the
-    // world took it back mid-word, in which case an Abort was recorded.
-    bool speak(int seat, float margin, const std::string& about, Emission& out, Seam* seam);
+    // world took it back mid-word, in which case an Abort was recorded. `boundary` is the want's:
+    // the boundary whose clause the sentence is about, which every row of the record carries so
+    // that the span an emission depends on is the span it was judged at, not the newest one.
+    bool speak(int seat, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam);
     float probe_one(int seat);   // one seat, one fork of the trunk as it stands NOW
     // The manners ladder. True when the line may be said; otherwise it is recorded as suppressed.
-    bool allowed_to_say(int seat, float margin, const std::string& say, const std::string& about);
+    bool allowed_to_say(int seat, uint64_t boundary, float margin, const std::string& say, const std::string& about);
     void flush_own_speech();   // the seats' lines onto the trunk, once the world's line has closed
     bool ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out);
     bool room_for(size_t ntok);

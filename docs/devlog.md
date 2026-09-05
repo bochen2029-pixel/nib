@@ -897,3 +897,40 @@
   speech through the document, with the fold attributing by author and the CLI feeding its own
   lines back; the manners in the checkpoint's sidecar; the refusal SPEC 6.2.11.3 promises. Then
   Stage 4.
+
+## 2026-09-05 (evening) · 0.10.1 - the span memory, and the want's own boundary
+
+- The wire's span ring is a struct now (SpanMemory, wire.h): one entry per boundary, idempotent
+  across the three seats of one, 64 boundaries deep, pure. Six checks fire at it with no model:
+  a hundred boundaries judged by three seats hold sixty-four, the oldest held is found with its
+  revision and span, the one before it is reported unknown and never as span zero, boundary 0 is
+  never a boundary, three seats of one boundary occupy one slot. A want whose boundary has fallen
+  out is refused by the editor with `span-unknown` instead of being placed after the document's
+  first line.
+- Every row a want produces carries the WANT's boundary. speak_wants runs only when the ring is
+  empty and the floor is open, so `boundaries_` at that moment is the last boundary judged, not
+  the one whose clause the seat is answering; the emission, the abort and the suppression all
+  carried it, the emit row's dep span was therefore the newest clause, the `span-edited` refusal
+  tested the wrong bytes, and the forming plane was anchored to the same wrong span. The boundary
+  rides through speak, allowed_to_say and the seam's forming call now. Proof in the un-say
+  window's own log: `abort 5 SKEPTIC 5.06 -1.35 margin_flipped` - boundary 5 is the claim's own
+  last boundary, where before it would have read the newest.
+- Green: --selftest 219/0; drive.py 30/0, three runs. drive.py --ai twice: 57 passed and 1 failed
+  the first time - the un-say case, "no abort in five attempts" - then 65/0 on the second run with
+  the abort on the first attempt (+5.06 -> -1.35, margin_flipped, the counterfactual " established
+  - it's postgres 16, not mysql 5." on the tape). The first run's miss is the race the devlog of
+  Stage 3 names, on a card holding llama-server at 8 GB: the load went 8172 -> 15220 -> 8415 MiB
+  and fit, with a gigabyte to spare. A red --ai run is worth re-running once before it is believed,
+  and it was.
+- FOUND IN THE LOG, filed for its own commit: the first sentence typed after a pause is judged at
+  a TIMEOUT boundary at its sixth token. `judgment 3 SKEPTIC 5.24 t "Actually the staging
+  database is mysql"`, then `b` on "5", then `b` on "and always has been." - three boundaries and
+  nine probes for one sentence. The resident's flush clock (`last_flush_ms_`, the 1500 ms of the
+  pre-registered law) runs from the LAST JUDGMENT, and in a pad a percept arrives whole and is
+  decoded in one burst, so the clock can only ever have expired before the percept began: the `t`
+  path never fires on a stalled clause here, only on the first six tokens of the first percept
+  after a gap longer than a second and a half - which is every sentence after every pause. The
+  compiler already implements the stall timeout at the source (`quiet_ms`, 500 ms); the resident's
+  is the same law at the wrong grain. The fix is to start the clock at the percept, so a `t` means
+  the decode itself stalled; it changes the boundary population and not a margin, and the CLI's
+  margins run is the measurement to take before and after.

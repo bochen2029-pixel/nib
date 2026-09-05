@@ -676,7 +676,7 @@ float Resident::probe_one(int m) {
 // One sentence, on a fork of the trunk as it stands, with a hard cap. The fork is dropped before
 // this returns: nothing a seat says reaches the trunk here — that happens at the end of the line
 // (flush_own_speech), so a seat's words are never spliced into the middle of somebody else's.
-bool Resident::speak(int m, float margin, const std::string& about, Emission& out, Seam* seam) {
+bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam) {
     if (!p_ || !p_->smp || !ctx_) return false;
     const uint64_t t0 = wall_ms();
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);
@@ -709,7 +709,7 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
             ++toks;
             // the forming plane: the words appear as they are sampled, and they are not in the
             // document while they do
-            if (seam) { seam->forming(m, say, true); aired = say; }
+            if (seam) { seam->forming(m, boundary, say, true); aired = say; }
         } else {
             killed += piece;   // sampled in silence, so the tape holds what would have been said
         }
@@ -745,7 +745,7 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
             aborted = true;
             why = settled ? "settled_by_world" : "margin_flipped";
             by = settled ? newest : std::string();
-            if (seam) seam->forming(m, std::string(), false);   // the words are withdrawn, now
+            if (seam) seam->forming(m, boundary, std::string(), false);   // the words are withdrawn, now
         }
     }
     --gen_depth_;
@@ -755,7 +755,7 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
     if (aborted) {
         Abort a;
         a.wall_ms = wall_ms();
-        a.boundary = boundaries_;
+        a.boundary = boundary;   // the want's, so the record's span is the clause it was about
         a.seat = m;
         a.margin = margin;
         a.margin_after = m_after;
@@ -776,10 +776,10 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
         if (!aired.empty()) pending_commits_.push_back(std::string("\n[") + kSeats[m].name + "] " + aired + " —");
         return false;
     }
-    if (seam) seam->forming(m, std::string(), false);
+    if (seam) seam->forming(m, boundary, std::string(), false);
     if (say.empty()) return false;
     out.wall_ms = wall_ms();
-    out.boundary = boundaries_;
+    out.boundary = boundary;   // the want's (see the header): the dep span is the judged clause's
     out.seat = m;
     out.margin = margin;
     out.say = say;
@@ -793,11 +793,11 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
 // The manners ladder. A line that clears it is said and remembered; a line that does not is
 // RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
 // that held its tongue and a harness that lost a sentence has to stay visible on the tape.
-bool Resident::allowed_to_say(int m, float margin, const std::string& say, const std::string& about) {
+bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about) {
     auto deny = [&](const char* why, const std::string& by) {
         Suppressed s;
         s.wall_ms = wall_ms();
-        s.boundary = boundaries_;
+        s.boundary = boundary;   // the want's; the manners' own clock below stays the current count
         s.seat = m;
         s.margin = margin;
         s.say = say;
@@ -940,8 +940,8 @@ void Resident::speak_wants(Seam* seam) {
         }
         w.live = false;
         Emission e;
-        if (!speak(m, w.margin, w.clause, e, seam)) continue;
-        if (!allowed_to_say(m, w.margin, e.say, w.clause)) continue;
+        if (!speak(m, w.boundary, w.margin, w.clause, e, seam)) continue;
+        if (!allowed_to_say(m, w.boundary, w.margin, e.say, w.clause)) continue;
         emissions_.push_back(e);
         ++emitted_;
         // and because it REALLY said it, it is part of the world: the line joins the trunk on the

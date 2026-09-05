@@ -68,6 +68,24 @@ using EmitRing = ::auricle::SpscRing<EmitRow, 64>;
 
 enum class WireState : int { Off = 0, Loading, Ready, Stopping, Error };
 
+// The span each boundary judged, remembered so that an emission composed later — a want waits for
+// the floor, and may wait up to its time to live — can say which bytes of the document it depends
+// on. ONE entry per boundary, whatever the seat count, 64 boundaries deep. Until 2026-09-05 this
+// was a 16-slot ring written once per SEAT, so it held five boundaries; a want older than that
+// composed with span zero, the transform passed trivially, and its block landed after the
+// document's first line. Pure, so --selftest fires at it without a model.
+struct SpanMemory {
+    struct Span { uint32_t boundary = 0; uint32_t a = 0, b = 0; uint64_t rev = 0; };
+    static constexpr size_t kDepth = 64;
+    void remember(uint32_t boundary, uint64_t rev, uint32_t a, uint32_t b);   // idempotent per boundary
+    bool find(uint32_t boundary, uint64_t& rev, uint32_t& a, uint32_t& b) const;   // false: not held (rev, a, b are zeroed)
+    size_t held() const { return count_ < kDepth ? count_ : kDepth; }
+private:
+    Span slots_[kDepth]{};
+    size_t at_ = 0, count_ = 0;
+    uint32_t newest_ = 0;
+};
+
 // What the thread reports after a checkpoint; the editor writes the sidecar from it.
 struct CkptResult {
     bool ok = false;

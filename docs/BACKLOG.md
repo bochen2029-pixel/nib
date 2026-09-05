@@ -7,16 +7,17 @@ it lands (named with its version in the ROADMAP) or when it is deliberately not 
 ## Found 2026-09-05 (evening) by reading every source at 0.10.0
 
 Every falsifier that was fired at held; these are one level below where the falsifiers look, which
-is the shape the review of 09-04 named. Ranked. The first three are the remediation of this
-evening, in this order; the rest wait their turn.
+is the shape the review of 09-04 named. Ranked. The remediation of this evening takes them in
+this order, a commit each; the rest wait their turn.
 
-- **A late want's block lands after line 1.** The wire remembers a judged span once per seat, so
-  three times per boundary, in a 16-slot ring (`src/wire.cpp`, `remember_span` and the loop at
-  `step`), which is five boundaries of memory. A seat that wanted to speak and then held through
-  five more sentences before the hand paused gets span zero when its want is composed; the
-  transform passes trivially on an empty span at revision 0, and `commit_emission` (`src/edit.cpp`)
-  places the block after the document's first line. Medium; the ring should remember once per
-  boundary and hold more of them, and the memory should be a struct the selftest can fire at.
+**Landed in 0.10.1:** the span memory (one entry per boundary, 64 deep, a struct the selftest
+fires at; a want whose boundary has fallen out is refused with `span-unknown`, never placed after
+line 1) and the want's own boundary on every row it produces, with the forming plane anchored to
+the same span. Until then the wire remembered a span once per SEAT in a 16-slot ring — five
+boundaries of memory — and the emission, the abort, the suppression and the forming plane all
+carried the *newest* boundary rather than the want's, so the emit row's dep span was the newest
+clause and not the one the line was about, and the `span-edited` refusal tested the wrong bytes.
+
 - **The fold does not know who wrote what.** `fold_log` ignores `Rev.author` and `fold_tape` never
   reads the row's `author`; both replay every revision on the hand's lane. A seed or twin fold over
   a document that already holds `[SKEPTIC] …` blocks feeds the trunk `[bo] [SKEPTIC] …` — the human
@@ -37,10 +38,6 @@ evening, in this order; the rest wait their turn.
   it, so a restore can never replay a line the trunk already holds. What the thread still commits
   on its own is the aired prefix of an abort, which is never a document revision, flushed before
   every checkpoint.
-- **The forming sentence and its committed block can appear in different places.** The seam is
-  anchored to the span of the *latest* boundary (`span_of(res.boundaries())` in `Wire::run`) while
-  the emit row uses the want's own boundary; a want from an earlier boundary forms after one line
-  and lands after another. Low; the forming call should carry the want's boundary.
 - **A block inserted above the caret is not seen by the compiler's pending span**, so the next
   keystroke reads as a jump and closes the clause early. Cannot happen while `floor_ms` (2000)
   exceeds `quiet_ms` (500), because the pending clause was flushed by the quiet before any seat may
@@ -49,6 +46,15 @@ evening, in this order; the rest wait their turn.
 - **SPEC 6.2.11.3 promises a refusal when the checkpoint's tape row is in no tape;** `fold_on_ready`
   degrades to a diff-only fold with an `err` field on the `fold` row instead. `decide_restore`
   should walk the tapes before the model loads and refuse into the twin, as the clause says.
+- **The first sentence after a pause is judged at a timeout boundary at its sixth token** (found
+  in the un-say window's log during 0.10.1's battery: `judgment 3 SKEPTIC 5.24 t "Actually the
+  staging database is mysql"`, then `b` on "5", then `b` on the rest — three boundaries and nine
+  probes for one sentence). The resident's 1500 ms flush clock runs from the last judgment; in a
+  pad a percept arrives whole and is decoded in one burst, so the clock has always already expired
+  when a percept begins after a gap, and the `t` path fires on the first six tokens of every
+  sentence after every pause and never on a stalled clause. The compiler's `quiet_ms` is the stall
+  timeout at the right grain. Start the clock at the percept; measure the CLI's margins run before
+  and after (boundaries and probes move, margins do not).
 - **A clause whose judgment includes a deletion percept can carry a span whose end precedes its
   start** (`step` takes `span_b` from a deletion's empty span). Edge; a deletion closes its own
   clause in every measured run.
