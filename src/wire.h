@@ -60,6 +60,7 @@ struct EmitRow {
     char     stop;         // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
     float    margin_after; // the margin when the seam asked again, for an abort
     int      probes;       // re-probes taken inside the sentence
+    char     trigger;      // what opened the floor: 'p' pause · 'k' key · 's' stop (Emission::trigger); 0 for a suppression
     char     why[32];      // "" said it · resolved · repeat · refractory · stale · abort:<cause>
     char     say[512];     // what was said, or for an abort what reached the surface
     char     killed[384];  // an abort's silent remainder: what would have been said
@@ -149,6 +150,19 @@ public:
     void note_human_edit(uint64_t ms) { human_ms_.store(ms, std::memory_order_release); }
     void set_floor_ms(int64_t ms) { floor_ms_.store(ms, std::memory_order_relaxed); }
 
+    // STAGE 4 — the two switches (SPEC 6.1.2). The MODE is the floor policy and nothing else:
+    // RESIDENT (0) composes the live wants when the hand has paused; TURN-BASED (1) composes them
+    // only when the hand presses the key. The key works in both — in RESIDENT it is a yield. The
+    // resident itself knows no mode; this is the one place the two arms differ, so a flip is a
+    // paired sample with exactly one variable. Judgments run in both arms (the shadow record: in
+    // TURN-BASED a want the key never came for goes `stale`, and that row says what the resident
+    // would have done). The emit switch is live: off frees the sampler on the thread.
+    void set_mode(int mode) { mode_.store(mode, std::memory_order_relaxed); }
+    int  mode() const { return mode_.load(std::memory_order_relaxed); }
+    void ask() { ask_.store(true, std::memory_order_release); }
+    void set_emit(bool on) { emit_want_.store(on, std::memory_order_release); }
+    int  wants_live() const { return wants_live_.load(std::memory_order_relaxed); }
+
     // THE FORMING PLANE (SPEC 6.4.1). The half-written sentence, as it is sampled. It is a STATE
     // and not a stream: the editor reads the newest one it can and renders that, and a frame it
     // never saw is a frame nobody missed, because the terminal event — said, or taken back — is
@@ -183,6 +197,10 @@ private:
     EmitRing emit_;
     std::atomic<uint64_t> human_ms_{0};
     std::atomic<int64_t> floor_ms_{0};
+    std::atomic<int> mode_{0};
+    std::atomic<bool> ask_{false};
+    std::atomic<bool> emit_want_{true};
+    std::atomic<int> wants_live_{0};
     std::atomic<uint64_t> forming_gen_{0};
     mutable std::mutex form_mu_;
     bool forming_active_ = false;

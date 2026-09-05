@@ -58,6 +58,15 @@ decode of a percept itself stalled.
   un-saying were structurally absent; SPEC 11.1 said 201 checks; SPEC 8.1.2 said there was no emit
   path yet; the handoff counted its own commit out.
 
+## Landed in 0.11.0 (Stage 4a, 2026-09-05)
+
+The mode switch RESIDENT / TURN-BASED as the wire's floor policy and nothing else (`Ctrl+Shift+T`,
+a `switch` row, the status line, `arm` on the session row); the key (`Ctrl+Enter`, an `ask` row,
+`trigger: k` on every row it produces; in RESIDENT a yield); the emit switch, live (`Ctrl+Shift+E`,
+the sampler constructed and freed on the thread — the item "`emit` has no key" leaves this file);
+`trigger` on every `emit`, `refused` and `abort` row; judgments in shadow during TURN-BASED. What
+is still open of Stage 4 is the replay twin, `nib --twin` (SPEC 6.1.6), and the scaffold table.
+
 ## Landed in 0.8.0 (Stage 1d, 2026-09-05)
 
 Word wrap with its toggle · the checkpoint beside the document with its sidecar, the restore and
@@ -82,9 +91,6 @@ follows is what is still open.
 
 ## Still open from Stage 2 (2026-09-05)
 
-- **`emit` has no key.** It is a theme setting; the AI switch has `Ctrl+Shift+A` and wrap has
-  `Alt+Z`. Stage 4 gives it one, because a toggle that is flipped during real work is a paired
-  sample and belongs on the status line and the tape like the others.
 - **The floor is global, not per block.** The wire refuses to compose while the hand has moved
   anywhere in the document, where the spec says "a block that has received a human keystroke".
   Stricter than required and therefore safe, but it means writing in one paragraph silences a seat

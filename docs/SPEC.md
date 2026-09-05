@@ -219,7 +219,9 @@ status row, the resident's: the switch's state (off, loading, on, stopping, erro
 the model, the three seats' last margins, the boundary count, the context used of the window, the
 spool depth when the mind is behind, how many percepts a late-joining resident never saw, a loud
 `DROPPED` or `WINDOW FULL`, and `0 B egress`. Every word of it is a state that exists; nothing on it
-animates or pretends (rule 5). The mode is Stage 4's; until then the session row says `room`.
+animates or pretends (rule 5). **Since Stage 4 (0.11.0)** the row also reads `RESIDENT` or
+`TURN-BASED` (6.1.2); the session row's `mode: room` says nib is a room and not `--pure`, and its
+`arm` names the floor policy at load.
 
 4.4.3 **The gutter [BUILT 2026-09-04].** Beside each line whose text a seat has judged, a mark whose
 brightness is the strongest seat margin at the last boundary in that line, saturating from −6 to
@@ -481,10 +483,44 @@ held in the process. The trunk's state MAY persist on disk beside the document, 
 6.1.2 **RESIDENT / TURN-BASED.** The seat, the seed, the sampler and the mandate MUST be identical
 across the toggle. **Only the trigger may differ**: evidence at a thought boundary, versus an
 explicit keystroke. Any other difference makes the toggle a preference instead of an experiment.
+**[BUILT 2026-09-05, Stage 4a, 0.11.0]** — the mode is the wire's floor policy and nothing else.
+A margin above zero records a want in both arms (6.3.2.1); in RESIDENT the wants are composed when
+the hand has paused for the floor window, in TURN-BASED only when the hand presses the key
+(6.1.4). One call composes them (`speak_wants`), one code path, two triggers; the resident itself
+has no mode, so the seat, the seed, the sampler, the manners, the cap and the seam (6.4) cannot
+differ between the arms by construction. Judgments run in both arms — in TURN-BASED they are the
+shadow record: a want the key never came for goes `stale` (6.3.2.1), and that row says what the
+resident would have done. `Ctrl+Shift+T` flips it; the flip is a `switch` row; the status line
+reads `RESIDENT` or `TURN-BASED`; the session row names the arm at load. **The honest limitation,
+printed with every table:** nib's pairs are observational, not matched-input — the human types
+different things in the two modes, and the mode changes what they type. The matched-input half is
+the replay twin (6.1.6).
 
 6.1.3 Every transition of either switch MUST be recorded on the tape with its timestamp. So MUST
 every other state that changes what the person sees or what the mind holds: word wrap (§4.7.3) is
 a `switch` row for the same reason.
+
+6.1.4 **The key [BUILT 2026-09-05, 0.11.0].** `Ctrl+Enter`. In TURN-BASED it is the one trigger:
+the seats compose what they wanted to say the moment it is pressed, whatever the hand was doing,
+and a line the key composed is refused at the second gate (6.3.2.3) only if the hand moved *after*
+the key, because the key is the yield and the pause it stands in for is not required of it. In
+RESIDENT it is a yield: the same composition, without waiting for the pause. If no seat wants to
+speak, nothing is said and the `ask` row says so: the turn-based arm has the resident's gate and
+differs from it only in *when* it may speak, never in whether it wants to. The key puts nothing on
+the trunk — a bare address would be stream content the tune never saw — and every row a
+key-triggered composition produces carries `trigger: k`.
+
+6.1.5 **The emit switch, live [BUILT 2026-09-05, 0.11.0].** `Ctrl+Shift+E`. Off frees the sampler on
+the resident's thread and drops the live wants; on constructs it. At every instant "no sampler
+exists" and "it may not write" are one fact (6.3), and the flip is a `switch` row.
+
+6.1.6 **The replay twin [SPECIFIED, Stage 4b].** `nib --twin TAPE` re-drives a tape's world through
+a turn-based policy offline on the same weights — a fresh context per wake, the seed and the human's
+percepts so far prefilled in the serve format, one judgment per wake, the same cue, sampler, cap
+and manners — and prints, wake by wake, what the twin did beside what the resident did at the
+boundaries inside that turn, with the gap between them, the percepts the twin was blind to while
+it composed, and the table of which scaffold was in play in which arm (D1's parity clause, made
+printable). This is the matched-input half of the twin race: both arms see the same bytes.
 
 ### 6.2 The loop
 
@@ -820,7 +856,12 @@ said: `floor`, `span-edited`, `resolved`, `repeat`, `repeat_other`, `refractory`
 surface and what it would have said), `end`, `save`, `resume`, `warn`, `error`, `session_close`. A
 hold is a judgment row whose margins are all at or below zero, or a `refused` row whose reason is
 `stale` (a want the floor never opened for, §6.3.2.1); there is no separate `hold` row. `emit`
-arrived with Stage 2 and `abort` with Stage 3 (2026-09-05).
+arrived with Stage 2 and `abort` with Stage 3 (2026-09-05). **Stage 4 (0.11.0):** `switch` rows
+for `mode` (`resident` ↔ `turn`) and `emit`; an `ask` row per key press (the mode, how many wants
+were live, whether a resident was there to ask); and every `emit`, `refused` and `abort` row carries
+`trigger` — `p` the pause, `k` the key, `s` the switch going off, `o` the CLI — the paired record's
+one variable. The session row carries `arm` (the floor policy at load), `emit`, `gen_cap`,
+`gen_min` and the sampler chain, so a reader can check the two arms share them.
 
 8.1.3 A reader of the tape MUST be able to determine which machine was on the other end at any
 moment in the session. **[BUILT]** — the `session` row, written when the model is loaded, and the

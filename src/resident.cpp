@@ -681,7 +681,7 @@ float Resident::probe_one(int m) {
 // One sentence, on a fork of the trunk as it stands, with a hard cap. The fork is dropped before
 // this returns: nothing a seat says reaches the trunk here — that happens at the end of the line
 // (flush_own_speech), so a seat's words are never spliced into the middle of somebody else's.
-bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam) {
+bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam, char trigger) {
     if (!p_ || !p_->smp || !ctx_) return false;
     const uint64_t t0 = wall_ms();
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);
@@ -772,6 +772,7 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
         a.gen_ms = wall_ms() - t0;
         a.toks = toks;
         a.probes = probes;
+        a.trigger = trigger;
         aborts_.push_back(std::move(a));
         ++aborted_;
         // It really did say the part that reached the surface, so the mind hears that much of
@@ -792,7 +793,33 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
     out.gen_ms = wall_ms() - t0;
     out.toks = toks;
     out.stop = stop;
+    out.trigger = trigger;
     return true;
+}
+
+// ---- Stage 4: the emit switch, live -------------------------------------------------------------
+void Resident::set_emit(bool on) {
+    if (!p_) { cfg_.emit = on; return; }   // not started: the flag is the config the start reads
+    if (on == (p_->smp != nullptr)) { cfg_.emit = on; return; }
+    if (on) {
+        p_->smp = llama_sampler_chain_init(llama_sampler_chain_default_params());
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_min_p(0.05f, 1));
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_temp(0.7f));
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_dist(11));
+    } else {
+        llama_sampler_free(p_->smp);
+        p_->smp = nullptr;
+        for (Want& w : want_) w.live = false;   // a want with no mouth to compose it is no want
+    }
+    cfg_.emit = on;
+}
+
+bool Resident::emitting() const { return p_ && p_->smp; }
+
+int Resident::wants_live() const {
+    int n = 0;
+    for (const Want& w : want_) if (w.live) ++n;
+    return n;
 }
 
 // The manners ladder as a pure check, so that --selftest fires at it with no model and a restored
@@ -833,7 +860,7 @@ const char* Resident::manners_allows(int m, const std::string& say, const std::s
 // The manners ladder. A line that clears it is said and remembered; a line that does not is
 // RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
 // that held its tongue and a harness that lost a sentence has to stay visible on the tape.
-bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about) {
+bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about, char trigger) {
     std::string by;
     const char* why = manners_allows(m, say, about, by);
     if (why[0]) {
@@ -846,6 +873,7 @@ bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std:
         s.clause = about;
         s.why = why;
         s.by = by;
+        s.trigger = trigger;     // the record says what opened the floor even for a line not said
         supp_.push_back(std::move(s));
         ++suppressed_;
         return false;
@@ -986,7 +1014,7 @@ bool Resident::wants_pending() const {
 // The floor has opened: compose what each seat still wants to say, oldest seat first, and let the
 // manners decide whether it is said. A want the floor never opened for inside its time to live is
 // dropped, because the instant it was about has gone.
-void Resident::speak_wants(Seam* seam) {
+void Resident::speak_wants(Seam* seam, char trigger) {
     if (!cfg_.emit || !ctx_ || failed() || window_full_) return;
     for (int m = 0; m < 3; ++m) {
         Want& w = want_[m];
@@ -1000,14 +1028,15 @@ void Resident::speak_wants(Seam* seam) {
             s.margin = w.margin;
             s.clause = w.clause;
             s.why = "stale";
+            s.trigger = trigger;
             supp_.push_back(std::move(s));
             ++suppressed_;
             continue;
         }
         w.live = false;
         Emission e;
-        if (!speak(m, w.boundary, w.margin, w.clause, e, seam)) continue;
-        if (!allowed_to_say(m, w.boundary, w.margin, e.say, w.clause)) continue;
+        if (!speak(m, w.boundary, w.margin, w.clause, e, seam, trigger)) continue;
+        if (!allowed_to_say(m, w.boundary, w.margin, e.say, w.clause, trigger)) continue;
         emissions_.push_back(e);
         ++emitted_;
         // The line is NOT committed to the trunk here (it was, through 0.10.1). It is said only

@@ -27,14 +27,15 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **I** | 2 · emission, with floor control | ✔ 2026-09-05 | 0.9.0 |
 | **I** | 3 · un-saying, made visible | ✔ 2026-09-05 | 0.10.0 |
 | **I** | the read of 0.10.0 — the span memory, own speech through the document, the manners across the switch | ✔ 2026-09-05 | 0.10.1–0.10.3 |
-| **I** | 4 · the two switches, and the paired record | ○ | |
+| **I** | 4a · the two switches, and the key | ✔ 2026-09-05 | 0.11.0 |
+| **I** | 4b · the replay twin, `nib --twin` | ○ | |
 | **I** | 5 · **a week of real work** — the falsifier for the whole idea | ○ | |
 | **II** | 6 · discovery | ○ | |
 | **II** | 7 · rooms | ○ | |
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**236 checks green in the exe, 30 more from the window driver, and 68 with the resident switched on
+**236 checks green in the exe, 30 more from the window driver, and 76 with the resident switched on
 inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
 gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
 llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
@@ -523,17 +524,41 @@ The same evening filed four brainstorms with their nulls (`docs/BRAINSTORMS_2026
 as a lane, the two-gear escalation, vision as a floor sensor, and the screen saver in which the
 resident holds the floor. None before Stage 4.
 
-### ○ Stage 4 — the two switches, and the paired record
+### ✔ Stage 4a — the two switches, and the key · 0.11.0
 
-AI on/off; RESIDENT / TURN-BASED. Both on the status line, both on the tape.
+AI on/off (since 1c) and RESIDENT / TURN-BASED, both on the status line, both on the tape. The
+mode is the wire's floor policy and nothing else: in RESIDENT the seats' wants are composed when
+the hand has paused, in TURN-BASED only when the hand presses `Ctrl+Enter`; one call composes them
+in both arms, and the resident itself has no mode. Every `emit`, `refused` and `abort` row carries
+`trigger` — `p` the pause, `k` the key, `s` the switch going off — the paired record's one
+variable; the judgments run in both arms, so a want the key never came for goes `stale` and says
+what the resident would have done. The emit switch is live (`Ctrl+Shift+E`), and the session row
+names its `arm`.
 
 *Falsifier: the two modes differ in seat, seed or sampler — at which point the toggle is a
-preference and not an experiment.*
+preference and not an experiment; or a scaffold present in one arm and absent from the other.*
+— Cannot fire by construction (the resident has no mode; SPEC 6.1.2), so the driver fires at the
+mechanism: in TURN-BASED a 3.5 s pause composed nothing while the judgments ran on, and the key
+composed the live want with `trigger: k` — the SKEPTIC's Pacific line again, which the manners
+refused as a repeat, the perseveration measured once more with the key doing its job. 76 checks
+with the resident on, on a free card (4077 → 11195 → 4323 MiB); a red run on a card another
+session's resident held is in the devlog.
 
 **This stage is worth more than livability.** It is the twin race instrumented in the product: the
 estate's one number that matters next is a resident against a maximally-good turn-based twin on
 identical weights, and every flip of that toggle during real work is a paired sample with exactly
-one variable.
+one variable — observational, not matched-input, and printed as such.
+
+### ○ Stage 4b — the replay twin
+
+`nib --twin TAPE` (SPEC 6.1.6): the matched-input half. A fresh context per wake, the seed and the
+human's percepts so far prefilled in the serve format, one judgment per wake through the pinned
+probe, the same cue, sampler, cap and manners; then, wake by wake, what the twin did beside what
+the resident did at the boundaries inside that turn, the gap, the percepts the twin was blind to
+while it composed, and the scaffold table (D1's parity clause, printable).
+
+*Falsifier: a twin that inherits fewer scaffolds than the resident; a gap printed without the blind
+count and the observational caveat beside it.*
 
 ### ○ Stage 5 — a week of real work
 

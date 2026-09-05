@@ -38,17 +38,17 @@ rescues that, and the finding gets published beside the laws it bought.
 
 | | |
 |---|---|
-| version | **0.10.3** (the read of 0.10.0's remediation, landed as 0.10.1–0.10.3; see `docs/BACKLOG.md`, first section), branch `main` |
+| version | **0.11.0** — Stage 4a, the two switches and the key; the read of 0.10.0's remediation landed as 0.10.1–0.10.3 (`docs/BACKLOG.md`, first section); branch `main` |
 | public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 22 commits through this handoff |
-| stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3 — **all green, every falsifier fired at** |
-| next | **Stage 4** — the two switches and the paired record |
-| oracles | `--selftest` **236** · `tools/drive.py` **30** · `tools/drive.py --ai` **68** |
+| stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3, 4a — **all green, every falsifier fired at** |
+| next | **Stage 4b** — the replay twin, `nib --twin` (SPEC 6.1.6); then Stage 5, the week |
+| oracles | `--selftest` **236** · `tools/drive.py` **30** · `tools/drive.py --ai` **76** |
 
 ```bash
 build.bat                          # /W4 /WX, zero warnings, two gates
 nib.exe --selftest                 # 236 passed, 0 failed        (no model, no GPU)
 python tools/drive.py              # 30 passed, 0 failed         (no model, no GPU)
-python tools/drive.py --ai         # 65 passed, 0 failed         (needs the card, ~6 min)
+python tools/drive.py --ai         # 76 passed, 0 failed         (needs the card, ~1 min when it is free)
 nib.exe --about                    # the serve pin, the backends by name, the module gate
 ```
 
@@ -254,24 +254,35 @@ only when the falsifier has been fired at and did not go off.
 | 2 | it writes in its own blocks, and not while you type | **nothing written while the hand moved**; a line written once it paused |
 | 3 | a sentence begun can be taken back | `+5.06 → −1.77`; neither the aired prefix nor the killed remainder in the file |
 
-### Next: Stage 4 — the two switches, and the paired record
+### Stage 4a — the two switches, and the key · 0.11.0
 
-AI on/off (built) and **RESIDENT / TURN-BASED** (not built). The seat, the seed, the sampler and the
-mandate MUST be identical across the toggle; **only the trigger may differ** — evidence at a thought
-boundary, versus an explicit keystroke. Any other difference makes the toggle a preference instead
-of an experiment.
+AI on/off (built since 1c) and **RESIDENT / TURN-BASED** (built 2026-09-05). The mode is the wire's
+floor policy and nothing else: in RESIDENT the seats' wants are composed when the hand has paused,
+in TURN-BASED only when the hand presses `Ctrl+Enter`. One call composes them in both arms; the
+resident itself has no mode, so the seat, the seed, the sampler, the manners, the cap and the seam
+cannot differ between the arms by construction. Every `emit`, `refused` and `abort` row carries
+`trigger` — `p` the pause, `k` the key, `s` the switch going off — which is the paired record's one
+variable, and the judgments run in both arms, so in TURN-BASED a want the key never came for goes
+`stale` and says what the resident would have done. `Ctrl+Shift+T` flips it, `Ctrl+Shift+E` is the
+emit switch (live: the sampler is freed on the thread), the session row names its `arm`.
 
 *Falsifier: the two modes differ in seat, seed or sampler; or a scaffold present in one arm and
-absent from the other.*
+absent from the other.* — Cannot fire by construction; the driver fires at the mechanism instead:
+in TURN-BASED a 3.5 s pause composes nothing while judgments keep running, and the key composes
+the live want with `trigger: k`.
 
-**This stage is worth more than livability.** It is the estate's twin race instrumented inside the
-product: the one number the corpus has called decisive for a year and has never run. Every flip
-during real work is a paired sample with exactly one variable. The review's §5.5 adds two things
-worth building: keep the boundary judgments running **in shadow** during TURN-BASED (so every
-period yields what the resident *would* have done beside what the twin did), and `nib --twin
-<tape>` to re-drive a recorded stream through a turn-based policy offline. And it carries an honest
-limitation to print with every table: nib's pairs are **observational, not matched-input** — the
-human types different things in the two modes, and the mode changes what they type.
+### Next: Stage 4b — the replay twin
+
+`nib --twin TAPE` (SPEC 6.1.6): a fresh context per wake, the seed and the human's percepts so far
+prefilled in the serve format, one judgment per wake through the pinned probe, the same cue,
+sampler, cap and manners, and a wake-by-wake pairing against the resident's rows on the same tape —
+the gap between them, the percepts the twin was blind to while it composed, and the scaffold table
+(D1's parity clause, printable). `src/twin.h/.cpp` is written; the resident needs `reseed`,
+`world_line` and `judge_wake`, the CLI its dispatch, `build.bat` the file, and `--selftest` the pure
+parts (the rows onto one clock, the wake policy). **This is the estate's decisive number**, run for
+the first time on a real tape of writing, and it carries an honest limitation to print with every
+table: nib's pairs are **observational, not matched-input** — the human wrote what they wrote beside
+the resident's lines, and the twin's lines were not on the page.
 
 Then **Stage 5, the week of real work** — the falsifier for the whole idea. Then Act II: discovery
 (on by default in the shipped product, by operator ruling), rooms, convergence.
@@ -357,12 +368,12 @@ Full list in `docs/BACKLOG.md`. The ones that matter:
 
 ## 12 · Resume here
 
-**If you are continuing the work:** Stage 4, per §8. Read `docs/review/LIFT_MAP_K5_2026-09-05.md`
-before touching the resident's loop, and the review's §5.5 for the shadow twin and `--twin`. The
-remediation of the read of 0.10.0 (`docs/BACKLOG.md`, first section) landed as 0.10.1–0.10.3; what
-it found and decided is in the devlog under "the read of 0.10.0" — read that entry before the
-resident's own-speech path is touched, because the design there replaced the one the K5 lift map
-describes.
+**If you are continuing the work:** Stage 4b, per §8 — `src/twin.cpp` exists and needs the three
+resident primitives named there. Read the review's §5.5 for the shadow twin and `--twin`, and the
+devlog under "the read of 0.10.0" before the resident's own-speech path is touched, because the
+design there replaced the one the K5 lift map describes. **Another session works on the screen
+saver on its own branch** (`docs/BRAINSTORMS_2026-09-05.md` §4) and shares the card: a red `--ai`
+run may be theirs, so check `nvidia-smi` before believing one.
 
 **If you are a fresh session:** read `CLAUDE.md`, then `docs/SPEC.md`, then this file's §4 and §10,
 then `build.bat && nib.exe --selftest && python tools/drive.py`. Do not run `--ai` until you have

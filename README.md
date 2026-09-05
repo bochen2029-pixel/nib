@@ -27,8 +27,9 @@ window used, and `0 B egress`, which is structurally true and not a promise.*
 > off and the mind's held state is saved; switch it on and the same mind comes back, told how long
 > it was away and shown what happened meanwhile, or else labelled the twin.
 >
-> **236 checks in the exe, 30 from the window driver and 68 more with the resident on**, run before
-> every commit. Stage 4 (the two switches, and the paired record) is next. The normative spec is
+> **236 checks in the exe, 30 from the window driver and 76 more with the resident on**, run before
+> every commit. Stage 4a, the two switches and the key, landed as 0.11.0; the replay twin (4b) is
+> next. The normative spec is
 > `docs/SPEC.md`; the stages and their falsifiers are `docs/ROADMAP.md`; the open items are
 > `docs/BACKLOG.md`; the rules are `CLAUDE.md`; the review that set the work order is
 > `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`. The name is provisional.
@@ -63,6 +64,11 @@ writing itself.
 **RESIDENT / TURN-BASED**, same weights and same seat, differing only in what makes it speak:
 evidence, or a key you press. That switch is the livability control *and* the twin race
 instrumented in the product — every flip during real work is a paired sample with one variable.
+Built in 0.11.0: `Ctrl+Shift+T` flips it, `Ctrl+Enter` is the key, and every line the resident
+writes says on the tape which trigger opened the floor. The mode is the floor policy and nothing
+else; the resident itself has no mode, so the two arms cannot differ in seat, seed or sampler by
+construction. In TURN-BASED the judgments keep running in shadow, so the tape still says what the
+resident would have done at every boundary the key never came for.
 
 ## The thing to watch for
 
@@ -132,8 +138,10 @@ nib.exe --resident FILE --emit     what each seat wanted to say, and what it sai
 
 Keys: `Ctrl+S` save · `Ctrl+O` open · `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo, by burst ·
 `Ctrl+R` fold the whole edit log and check it replays byte-exact · `Alt+Z` word wrap ·
-`Ctrl+Shift+A` the resident. Colours, font, the model, the window size and the floor are all data
-in `nib.theme` beside the exe.
+`Ctrl+Shift+A` the resident · `Ctrl+Shift+T` RESIDENT / TURN-BASED · `Ctrl+Enter` the key, which
+in TURN-BASED is the only thing that lets it speak and in RESIDENT is a yield · `Ctrl+Shift+E` may
+it write. Colours, font, the model, the window size, the floor and the mode at startup are all
+data in `nib.theme` beside the exe.
 
 ## Where it sits
 

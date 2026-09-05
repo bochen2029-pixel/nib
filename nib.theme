@@ -27,3 +27,7 @@ emit       on
 # The floor: the hand holds it while it is moving and yields it by pausing this long. A seat that
 # wants to speak waits for the pause; nothing is composed while you type (SPEC 6.3.2).
 floor_ms   2000
+# The mode at startup (Stage 4): `resident` speaks on evidence when you pause; `turn` speaks only
+# when you press Ctrl+Enter. Ctrl+Shift+T flips it live, and the flip is on the tape. Same seat,
+# same seed, same sampler either way: only the trigger differs.
+mode       resident

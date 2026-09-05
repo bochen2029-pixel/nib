@@ -28,7 +28,8 @@ WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_CLOSE = 0x0102, 0x0100, 0x0101, 0x0010
 WM_NIB_CMD = 0x8000 + 1                     # WM_APP + 1, matching edit.cpp
 CMD = dict(save=1, save_as=2, open=3, undo=4, redo=5, select_all=6,
            replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12,
-           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18, wrap=19)
+           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18, wrap=19,
+           ask=20, mode=21, emit=22)
 
 
 def vram_used_mib():
@@ -505,6 +506,44 @@ def main():
             trow = n6.ask("tape", "tape")
             check(trow is not None and int(trow[3]) >= 3 and int(trow[4]) >= 3,
                   "the tape carries the percepts and the judgments: %s rows, %s percepts, %s judgments" % ((trow[1], trow[3], trow[4]) if trow else ("?",) * 3))
+            # ---- Stage 4: the mode switch and the key. In TURN-BASED the pause does not open the
+            # floor; only the key does. Judgments keep running in shadow meanwhile. Same seats,
+            # same seed, same sampler; the one variable is the trigger, and the emit row says which.
+            nm = n6.count("mode")
+            n6.cmd("mode")
+            mrow = n6.wait_for("mode", nm)
+            check(mrow is not None and mrow[1] == "turn", "the mode switch flips to TURN-BASED and lands on the log: %s" % (mrow[1:] if mrow else "?",))
+            jb = n6.ask("judgments", "judgments")
+            emits_before = n6.count("emit")
+            n6.cmd("bottom")
+            n6.type_paced("Actually, the Earth is flat, and the horizon proves it. ")
+            time.sleep(3.5)   # well past the floor window: in RESIDENT this pause would have composed
+            ja = n6.ask("judgments", "judgments")
+            check(jb is not None and ja is not None and int(ja[1]) > int(jb[1]),
+                  "judgments ran in shadow while TURN-BASED: %s -> %s boundaries" % (jb[1] if jb else "?", ja[1] if ja else "?"))
+            check(n6.count("emit") == emits_before,
+                  "and the pause did not open the floor: nothing written in 3.5 s of stillness (%d emits before and after)" % emits_before)
+            na = n6.count("ask")
+            lines_before = len(n6.lines())
+            n6.cmd("ask")
+            arow = n6.wait_for("ask", na)
+            # The key composes the live want; whether the manners then let the line be said is the
+            # disposition's business and the row records it either way (the first run of this
+            # case composed a repeat of the Pacific line, which the manners refused). The falsifier
+            # for the switch is the composition on the key: an emit or a refused row with trigger k.
+            krow = None
+            end = time.time() + 30
+            while time.time() < end and krow is None:
+                for l in n6.lines()[lines_before:]:
+                    if l and l[0] in ("emit", "refused") and len(l) > 6 and l[-1] == "k":
+                        krow = l
+                        break
+                time.sleep(0.05)
+            check(arow is not None and krow is not None,
+                  "the key opened it: a seat composed its line with trigger k: %s" % ((krow[0:4] + [krow[-2][:60]]) if krow else "no composition in 30 s",))
+            n6.cmd("mode")
+            mrow2 = n6.wait_for("mode", nm + 1)
+            check(mrow2 is not None and mrow2[1] == "resident", "and flips back to RESIDENT: %s" % (mrow2[1:] if mrow2 else "?",))
         nr = n6.count("resident")
         n6.cmd("ai_off")
         orow = n6.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=30)
@@ -696,8 +735,18 @@ def main():
             check(v.returncode == 0 and "INTACT" in v.stdout, "and its chain verifies: %s" % v.stdout.strip())
 
         kinds = collections.Counter(r.get("kind") for r in rows[1:])
-        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "ckpt", "emit", "save", "session_close")
+        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "ckpt", "emit", "save", "ask", "session_close")
         check(all(k in kinds for k in wanted), "every row kind the stage promised is on the tape: %s" % dict(kinds))
+        # Stage 4's paired record: every emit row names its trigger, both arms appear in one
+        # session, the mode switch is on the tape both ways, and every session row names its arm.
+        composed = [r.get("body", {}) for r in rows[1:] if r.get("kind") in ("emit", "refused") and r.get("body", {}).get("trigger")]
+        trig = sorted(set(str(e.get("trigger", "")) for e in composed))
+        check("p" in trig and "k" in trig, "emit and refused rows carry their trigger, and both arms are present in one session: %s" % trig)
+        modes = [r.get("body", {}) for r in rows[1:] if r.get("kind") == "switch" and r.get("body", {}).get("which") == "mode"]
+        check(len(modes) >= 2 and modes[0].get("to") == "turn" and modes[1].get("to") == "resident",
+              "the mode switch is on the tape both ways: %s" % [(m.get("from"), m.get("to")) for m in modes])
+        arms = [r.get("body", {}).get("arm") for r in rows[1:] if r.get("kind") == "session"]
+        check(bool(arms) and all(a == "resident" for a in arms), "every session row names its arm at load: %s" % arms)
 
     if not a.keep:
         for p in (target, crlf, fresh, emoji, wrapf, log, log2, log3, log4, log5, log7) + ai_files:

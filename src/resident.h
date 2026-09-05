@@ -63,6 +63,10 @@ struct Emission {
     uint64_t gen_ms = 0;
     int      toks = 0;
     char     stop = 'c';        // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
+    // Stage 4: what opened the floor for this line — the paired record's one variable.
+    // 'p' the hand paused (RESIDENT) · 'k' the hand pressed the key (TURN-BASED, or a yield in
+    // RESIDENT) · 's' the switch went off with the want still live · 'o' the CLI, which has no hand
+    char     trigger = 'p';
 };
 
 // A sentence that was begun and taken back. Stage 3: the demonstration the project is for.
@@ -80,6 +84,7 @@ struct Abort {
     uint64_t gen_ms = 0;
     int      toks = 0;
     int      probes = 0;         // re-probes taken inside the sentence
+    char     trigger = 'p';      // what opened the floor for the sentence that died (Emission::trigger)
 };
 
 // The seam, seen from inside a generation. The resident owns the mouth; the caller owns the ring
@@ -102,7 +107,8 @@ struct Suppressed {
     uint64_t boundary = 0;
     int      seat = 0;
     float    margin = 0.0f;
-    std::string say, clause, why, by;   // why ∈ resolved · repeat · repeat_other · refractory
+    std::string say, clause, why, by;   // why ∈ resolved · repeat · repeat_other · refractory · stale
+    char     trigger = 0;               // what opened the floor for the composition the manners refused (Emission::trigger)
 };
 
 // ---- the manners, as pure functions so --selftest fires at them with no model ------------------
@@ -227,8 +233,20 @@ public:
     // what each seat WANTS and composes nothing; the caller, which is the only party that knows
     // whether the hand has paused, calls this when the floor is open. Pausing is how a person
     // yields the floor, and this is the line that makes that true.
-    void speak_wants(Seam* seam = nullptr);
+    void speak_wants(Seam* seam = nullptr, char trigger = 'p');
     bool wants_pending() const;
+    int  wants_live() const;
+
+    // STAGE 4 — the resident knows no mode. RESIDENT and TURN-BASED are the wire's floor policy
+    // (which trigger calls speak_wants: the pause, or the key) and nothing in here: the seat, the
+    // seed, the sampler, the manners, the cap and the seam are one code path for both arms, which
+    // is what makes a flip of that switch a paired sample with one variable (SPEC 6.1.2).
+    //
+    // The emit switch, live: on constructs the sampler, off frees it and drops the live wants, so
+    // at every instant "no sampler exists" and "emission is off" are the same fact (Stage 1b's
+    // property, kept as a construction).
+    void set_emit(bool on);
+    bool emitting() const;
 
     // What was said, and what the manners would not say twice, since the last call. Drained by the
     // caller after `feed`; empty unless Config::emit.
@@ -276,10 +294,10 @@ private:
     // world took it back mid-word, in which case an Abort was recorded. `boundary` is the want's:
     // the boundary whose clause the sentence is about, which every row of the record carries so
     // that the span an emission depends on is the span it was judged at, not the newest one.
-    bool speak(int seat, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam);
+    bool speak(int seat, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam, char trigger);
     float probe_one(int seat);   // one seat, one fork of the trunk as it stands NOW
     // The manners ladder. True when the line may be said; otherwise it is recorded as suppressed.
-    bool allowed_to_say(int seat, uint64_t boundary, float margin, const std::string& say, const std::string& about);
+    bool allowed_to_say(int seat, uint64_t boundary, float margin, const std::string& say, const std::string& about, char trigger);
     void flush_own_speech();   // the seats' lines onto the trunk, once the world's line has closed
     bool ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out);
     bool room_for(size_t ntok);

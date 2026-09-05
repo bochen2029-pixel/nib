@@ -71,10 +71,12 @@ struct Theme {
     bool ai = false;   // the switch's position at startup; off is the safe default on a shared card
     bool emit = true;  // Stage 2: may the resident WRITE. Nothing happens until the AI switch is on
     int floor_ms = 2000;   // the hand yields the floor by pausing this long (SPEC 6.3.2)
+    int mode = 0;          // Stage 4: 0 RESIDENT (the pause opens the floor) · 1 TURN-BASED (only the key does)
 };
 
 enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop,
-           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom, CmdWrap };
+           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom, CmdWrap,
+           CmdAsk, CmdMode, CmdEmit };   // Stage 4: the key, the mode switch, the emit switch
 constexpr UINT WM_NIB_CMD = WM_APP + 1;
 
 // A judged span, in CURRENT document coordinates, with the three seats' margins at that boundary.
@@ -130,6 +132,10 @@ struct View {
     Wire wire;
     Resident::Config rcfg;
     bool ai_wanted = false;
+    // Stage 4 — the two switches, and the key (SPEC 6.1.2, 6.1.4)
+    int mode = 0;               // 0 RESIDENT · 1 TURN-BASED: the wire's floor policy, mirrored here for the record
+    bool emit_on = true;        // may it write; the sampler exists exactly while this is true
+    uint64_t ask_ms = 0;        // when the key was last pressed: a line it composed is refused only if the hand moved after
     WireState last_state = WireState::Off;
     Tape tape;
     uint64_t t0 = 0;              // the session's origin on the steady clock; the tape's `at` is ms since it
@@ -223,6 +229,7 @@ void load_theme(Theme& t) {
         else if (k == "ai") t.ai = v == "on" || v == "1" || v == "true";
         else if (k == "emit") t.emit = !(v == "off" || v == "0" || v == "false");
         else if (k == "floor_ms") { const int n = atoi(v.c_str()); if (n >= 0) t.floor_ms = n; }
+        else if (k == "mode") t.mode = (v == "turn" || v == "turn-based") ? 1 : 0;
         else if (k == "wrap") t.wrap = !(v == "off" || v == "0" || v == "false");
     }
     fclose(f);
@@ -840,6 +847,8 @@ void start_resident() {
     g->fold_done = false;
     decide_restore();
     const View::Restore& r = g->restore;
+    g->wire.set_mode(g->mode);    // the floor policy the session row will name as its arm
+    g->rcfg.emit = g->emit_on;    // and whether a sampler is constructed at all
     g->wire.start(g->rcfg, g->ingest.get(), r.wanted ? r.bin : std::string(), r.npast, r.sha,
                   r.have && !r.wanted ? r.reason : std::string(), r.wanted ? r.manners : std::string());
     g->last_state = WireState::Loading;
@@ -955,6 +964,56 @@ void set_wrap(HWND h, bool on) {
     InvalidateRect(h, nullptr, TRUE);
 }
 
+// ---- Stage 4: the two switches, and the key -------------------------------------------------------
+// RESIDENT / TURN-BASED is the wire's floor policy and nothing else (wire.h): a flip changes which
+// trigger composes the seats' wants — the pause, or the key — and the seat, the seed, the sampler,
+// the manners and the seam are untouched, one code path for both arms. So every flip during real
+// work is a paired sample with exactly one variable (SPEC 6.1.2). It goes on the tape like the other
+// switches, on the status line, and on the session row as `arm`.
+const char* mode_name(int mode) { return mode ? "turn" : "resident"; }
+
+void mode_set(HWND h, int mode) {
+    if (mode == g->mode) return;
+    tape_row("switch", canon::obj({ { "which", canon::str("mode") }, { "from", canon::str(mode_name(g->mode)) },
+                                    { "to", canon::str(mode_name(mode)) } }), true);
+    g->mode = mode;
+    g->wire.set_mode(mode);
+    nlog("mode	%s", mode_name(mode));
+    set_status(mode ? "TURN-BASED: it speaks when you press Ctrl+Enter" : "RESIDENT: it speaks on evidence, when you pause");
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// The emit switch, live: off frees the sampler on the resident's thread, so "no sampler exists" and
+// "it may not write" stay one fact at every instant. On the tape and the status line like the others.
+void emit_set(HWND h, bool on) {
+    if (on == g->emit_on) return;
+    tape_row("switch", canon::obj({ { "which", canon::str("emit") }, { "from", canon::str(g->emit_on ? "on" : "off") },
+                                    { "to", canon::str(on ? "on" : "off") } }), true);
+    g->emit_on = on;
+    g->rcfg.emit = on;   // the next start reads it
+    g->wire.set_emit(on);
+    nlog("emit-switch	%s", on ? "on" : "off");
+    set_status(on ? "it may write" : "silent: it judges and writes nothing");
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// THE KEY (SPEC 6.1.4). In TURN-BASED it is the one trigger: the seats compose what they wanted to
+// say the moment it is pressed, whatever the hand was doing. In RESIDENT it is a yield: the same
+// composition, without waiting for the pause. If no seat wants to speak, nothing is said and the
+// row says so — the turn-based arm has the resident's gate and differs from it only in WHEN it may
+// speak, never in whether it wants to.
+void ask(HWND h) {
+    const int live = g->wire.wants_live();
+    const bool ready = g->wire.state() == WireState::Ready;
+    g->ask_ms = mono_ms();
+    if (ready) g->wire.ask();
+    tape_row("ask", canon::obj({ { "mode", canon::str(mode_name(g->mode)) }, { "wants", canon::num(live) },
+                                 { "ready", canon::boolean(ready) } }), true);
+    nlog("ask	%d	%s", live, mode_name(g->mode));
+    set_status(!ready ? "nobody to ask: the AI is off" : live ? "asked" : "asked: nothing to say");
+    InvalidateRect(h, nullptr, TRUE);
+}
+
 // ---- judgments arriving --------------------------------------------------------------------------
 void flush_pending_judgment() {
     if (g->pend.n == 0) return;
@@ -989,10 +1048,11 @@ void refuse_emission(const EmitRow& r, const char* why) {
         { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },
         { "m", canon::flt(r.margin) }, { "why", canon::str(why) },
         { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
+        { "trigger", canon::str(r.trigger ? std::string(1, r.trigger) : std::string()) },
         { "say", canon::str(r.say) },
     }), true);
     ++g->refused_rows;
-    nlog("refused	%u	%s	%.2f	%s	%s", r.boundary, seats()[r.seat].name, (double)r.margin, why, r.say);
+    nlog("refused	%u	%s	%.2f	%s	%s	%c", r.boundary, seats()[r.seat].name, (double)r.margin, why, r.say, r.trigger ? r.trigger : '-');
 }
 
 void commit_emission(HWND h, const EmitRow& r) {
@@ -1004,8 +1064,12 @@ void commit_emission(HWND h, const EmitRow& r) {
     if (!transform_span(r.rev, a, b)) { refuse_emission(r, "span-edited"); return; }
     // THE FLOOR, checked again at the moment of writing. The thread refused to compose while the
     // hand was moving; between composing and arriving there is half a second in which the hand may
-    // have started again, and a block written into that is exactly what 6.3.2 forbids.
-    if (g->last_key_ms && (int64_t)(mono_ms() - g->last_key_ms) < g->th.floor_ms) { refuse_emission(r, "floor"); return; }
+    // have started again, and a block written into that is exactly what 6.3.2 forbids. A line the
+    // KEY composed (Stage 4) is refused only if the hand moved after the key was pressed: the key is
+    // the yield, and the pause it stands in for is not required of it.
+    if (r.trigger == 'k') {
+        if (g->last_key_ms && g->ask_ms && g->last_key_ms > g->ask_ms) { refuse_emission(r, "floor"); return; }
+    } else if (g->last_key_ms && (int64_t)(mono_ms() - g->last_key_ms) < g->th.floor_ms) { refuse_emission(r, "floor"); return; }
 
     const std::string& t = g->doc.text();
     if (b > t.size()) b = t.size();
@@ -1036,8 +1100,9 @@ void commit_emission(HWND h, const EmitRow& r) {
         { "at", canon::num((int64_t)at) }, { "bytes", canon::num((int64_t)ins.size()) },
         { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
         { "stop", canon::str(std::string(1, r.stop)) }, { "say", canon::str(r.say) },
+        { "trigger", canon::str(std::string(1, r.trigger ? r.trigger : '?')) },   // Stage 4: the paired record's one variable
     }), true);
-    nlog("emit	%u	%s	%.2f	%zu	%s", r.boundary, seats()[r.seat].name, (double)r.margin, at, r.say);
+    nlog("emit	%u	%s	%.2f	%zu	%s	%c", r.boundary, seats()[r.seat].name, (double)r.margin, at, r.say, r.trigger ? r.trigger : '?');
     // the document changed under the caret without passing through edit_splice
     g->idx.build(g->doc.text());
     relayout(h);
@@ -1062,6 +1127,7 @@ void record_abort(const EmitRow& r) {
         { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
         { "aired", canon::str(r.say) }, { "killed", canon::str(r.killed) },
         { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
+        { "trigger", canon::str(std::string(1, r.trigger ? r.trigger : '?')) },
     }), true);
     ++g->abort_rows;
     nlog("abort	%u	%s	%.2f	%.2f	%s	%s	|	%s", r.boundary, seats()[r.seat].name,
@@ -1373,12 +1439,13 @@ std::string resident_line() {
         case WireState::Off: return g->stop_pending ? "AI stopping  ·  saving the trunk beside the document" : "AI off";
         case WireState::Ready: {
             const std::string boot = g->wire.boot();
-            std::string l = ssprintf("AI on%s  ·  SPEAKER %+.1f  SKEPTIC %+.1f  SENTINEL %+.1f  ·  %llu boundaries  ·  ctx %d/%d",
+            std::string l = ssprintf("AI on%s  ·  %s  ·  SPEAKER %+.1f  SKEPTIC %+.1f  SENTINEL %+.1f  ·  %llu boundaries  ·  ctx %d/%d",
                                      boot == "restored" ? " (restored)" : boot == "twin" ? " (twin)" : "",
+                                     g->mode ? "TURN-BASED" : "RESIDENT",
                                      (double)g->wire.last_margin(0), (double)g->wire.last_margin(1), (double)g->wire.last_margin(2),
                                      (unsigned long long)g->wire.boundaries(), g->wire.context_used(), g->rcfg.n_ctx);
             if (g->last_mib_free) l += ssprintf("  ·  %llu MiB free", (unsigned long long)g->last_mib_free);
-            if (g->rcfg.emit) l += ssprintf("  ·  said %llu, held %llu, took back %llu",
+            if (g->emit_on) l += ssprintf("  ·  said %llu, held %llu, took back %llu",
                                             (unsigned long long)g->emit_rows,
                                             (unsigned long long)g->refused_rows,
                                             (unsigned long long)g->abort_rows);
@@ -1688,6 +1755,9 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     if (ctrl && shift) { ai_set(h, !g->ai_wanted); return 0; }   // the AI switch
                     if (ctrl) { g->anchor = 0; move_to(h, g->doc.size(), true, false); }
                     return 0;
+                case 'T': if (ctrl && shift) mode_set(h, g->mode ? 0 : 1); return 0;   // Stage 4: RESIDENT / TURN-BASED
+                case 'E': if (ctrl && shift) emit_set(h, !g->emit_on); return 0;      // Stage 4: may it write
+                case VK_RETURN: if (ctrl) ask(h); return 0;                          // Stage 4: the key (Ctrl+Enter)
                 case 'C': if (ctrl) copy_sel(h); return 0;
                 case 'X':
                     if (ctrl && has_sel()) {
@@ -1797,6 +1867,9 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                          (unsigned long long)g->emit_rows, (unsigned long long)g->refused_rows);
                     break;
                 }
+                case CmdAsk: ask(h); break;
+                case CmdMode: mode_set(h, g->mode ? 0 : 1); break;
+                case CmdEmit: emit_set(h, !g->emit_on); break;
                 default: break;
             }
             return 0;
@@ -1888,6 +1961,9 @@ int run_editor(const std::string& path_utf8) {
     g->rcfg.n_gpu_layers = g->th.gpu_layers;
     g->rcfg.hash_cache = narrow(exe_dir()) + "\\runs\\model-hashes.txt";   // the model's SHA-256, remembered on size and mtime
     g->rcfg.emit = g->th.emit;
+    g->emit_on = g->th.emit;
+    g->mode = g->th.mode;
+    g->wire.set_mode(g->mode);
     g->wire.set_floor_ms(g->th.floor_ms);
 
     // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow

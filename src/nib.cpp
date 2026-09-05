@@ -282,7 +282,7 @@ int do_resident(int argc, char** argv) {
         }
         // The CLI has no hand to yield the floor: nobody is typing, so the floor is always open and
         // a want is composed the moment it exists. In the window the wire waits for the pause.
-        res.speak_wants();
+        res.speak_wants(nullptr, 'o');
         // what it said, and what the manners would not let it say twice. The CLI has no document
         // for a line to come back through, so it feeds each line back itself (SPEC 6.3.6).
         for (const Emission& e : res.take_emissions()) {
@@ -296,7 +296,7 @@ int do_resident(int argc, char** argv) {
         if (res.failed() || res.window_full()) break;
     }
     res.finish(js);
-    res.speak_wants();
+    res.speak_wants(nullptr, 'o');
     for (const Emission& e : res.take_emissions()) {
         printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
                (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);

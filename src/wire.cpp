@@ -62,6 +62,9 @@ void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string&
     stop_.store(false, std::memory_order_release);
     ckpt_req_.store(false, std::memory_order_release);
     human_ms_.store(0, std::memory_order_release);
+    ask_.store(false, std::memory_order_release);
+    emit_want_.store(cfg.emit, std::memory_order_release);
+    wants_live_.store(0, std::memory_order_relaxed);
     boundaries_ = 0; probes_ = 0; wanted_ = 0; ticks_ = 0; deltas_ = 0; dropped_words_ = 0;
     window_full_ = false; context_used_ = 0; load_ms_ = 0; hash_ms_ = 0; probe_ms_ = 0; cursor_rev_ = 0;
     hash_cached_ = false;
@@ -196,6 +199,11 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             { "bscore_gate", canon::flt(cfg.bscore_gate) },
             { "seats", canon::arr(mand) },
             { "mode", canon::str("room") },
+            { "arm", canon::str(mode_.load(std::memory_order_relaxed) ? "turn" : "resident") },   // Stage 4: the floor policy at load
+            { "emit", canon::boolean(cfg.emit) },
+            { "gen_cap", canon::num(cfg.gen_cap) },
+            { "gen_min", canon::num(cfg.gen_min) },
+            { "sampler", canon::str("min_p 0.05 -> temp 0.7 -> dist 11") },
             { "egress_bytes", canon::num(0) },
         });
     }
@@ -238,6 +246,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         window_full_.store(res.window_full(), std::memory_order_relaxed);
         context_used_.store(res.context_used(), std::memory_order_relaxed);
         probe_ms_.store(res.probe_ms_total(), std::memory_order_relaxed);
+        wants_live_.store(res.wants_live(), std::memory_order_relaxed);
     };
     // The span each boundary judged, so that an emission composed later can say which bytes of the
     // document it depends on. A want waits for the floor, so the span cannot be read off "the
@@ -287,6 +296,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             r.gen_ms = e.gen_ms;
             r.toks = e.toks;
             r.stop = e.stop;
+            r.trigger = e.trigger;
             r.why[0] = 0;
             const size_t n = e.say.size() < sizeof r.say - 1 ? e.say.size() : sizeof r.say - 1;
             memcpy(r.say, e.say.data(), n);
@@ -305,6 +315,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             r.probes = ab.probes;
             r.gen_ms = ab.gen_ms;
             r.toks = ab.toks;
+            r.trigger = ab.trigger;
             r.stop = 'k';
             const std::string why = "abort:" + ab.why;
             const size_t wn = why.size() < sizeof r.why - 1 ? why.size() : sizeof r.why - 1;
@@ -327,6 +338,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             r.seat = s.seat;
             r.margin = s.margin;
             r.stop = 0;
+            r.trigger = s.trigger;
             const std::string why = s.by.empty() ? s.why : s.why + ":" + s.by;
             const size_t wn = why.size() < sizeof r.why - 1 ? why.size() : sizeof r.why - 1;
             memcpy(r.why, why.data(), wn);
@@ -373,21 +385,32 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     };
     while (!stop_.load(std::memory_order_acquire)) {
         if (!step()) {
+            // the emit switch, applied here where nothing is half-perceived
+            {
+                const bool want_emit = emit_want_.load(std::memory_order_acquire);
+                if (want_emit != res.emitting()) { res.set_emit(want_emit); publish(); }
+            }
             // THE FLOOR. The ring is empty, so nothing is half-perceived; if the hand has been
             // still for the floor window, the seats compose what they still want to say. While it
             // is typing, nothing is composed at all — that is the refusal, and it costs nothing
             // because it never runs the model.
+            //
+            // STAGE 4: the mode is which trigger opens the floor, and nothing else. RESIDENT: the
+            // pause. TURN-BASED: the key, only. The key also works in RESIDENT, as a yield. One
+            // call, one code path, two triggers — the trigger rides every row the composition
+            // produces, and that is the paired record's one variable (SPEC 6.1.2).
+            const bool key = ask_.exchange(false, std::memory_order_acq_rel);
             if (res.wants_pending()) {
                 const int64_t floor = floor_ms_.load(std::memory_order_relaxed);
                 const uint64_t human = human_ms_.load(std::memory_order_acquire);
-                const bool open = floor <= 0 || human == 0 ||
-                                  (int64_t)(mono_ms() - human) >= floor;
-                if (open) {
+                const bool pause = mode_.load(std::memory_order_relaxed) == 0 &&
+                                   (floor <= 0 || human == 0 || (int64_t)(mono_ms() - human) >= floor);
+                if (key || pause) {
                     WireSeam s;
                     s.w = this;
                     s.step = step;
                     s.spans = &spans;
-                    res.speak_wants(&s);
+                    res.speak_wants(&s, key ? 'k' : 'p');
                     ship_emissions();
                     publish();
                 }
@@ -418,7 +441,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
     res.finish(js);
     // whatever a seat still wanted to say when the switch went off: the floor is moot now, and a
     // want that is never composed is a want the record would not explain
-    if (res.wants_pending()) res.speak_wants();
+    if (res.wants_pending()) res.speak_wants(nullptr, 's');
     ship_emissions();
     for (const Judgment& j : js) {
         JudgmentRow r{};

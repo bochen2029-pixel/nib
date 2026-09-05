@@ -1000,3 +1000,50 @@
   Stage 4: the two switches and the paired record - RESIDENT / TURN-BASED with the seat, the
   seed and the sampler pinned identical across the toggle, the judgments running in shadow
   during TURN-BASED, and `nib --twin` re-driving a tape through the turn-based policy offline.
+
+## 2026-09-05 (night) · 0.11.0 - Stage 4a: the two switches, and the key
+
+- RESIDENT / TURN-BASED, built as THE WIRE'S FLOOR POLICY AND NOTHING ELSE (SPEC 6.1.2). In both
+  arms a margin above zero records a want; in RESIDENT the wants are composed when the hand has
+  paused for the floor window, in TURN-BASED only when the hand presses Ctrl+Enter. One call
+  composes them (speak_wants), one code path, two triggers. The resident has no mode - there is no
+  field for one - so the seat, the seed, the sampler, the manners, the cap and the seam cannot
+  differ between the arms by construction, and a flip during real work is a paired sample with
+  exactly one variable. Judgments run in both arms: in TURN-BASED they are the shadow record, and
+  a want the key never comes for goes `stale` with a row that says what the resident would have
+  done.
+- THE KEY (SPEC 6.1.4). In TURN-BASED the one trigger; in RESIDENT a yield, the same composition
+  without the pause. It puts nothing on the trunk - a bare address would be stream content the
+  tune never saw - and if no seat wants to speak nothing is said and the `ask` row says so: the
+  turn-based arm has the resident's gate and differs from it only in WHEN it may speak, never in
+  whether it wants to. A line the key composed is refused at the second floor gate only if the hand
+  moved after the key was pressed.
+- THE EMIT SWITCH, LIVE (SPEC 6.1.5): Ctrl+Shift+E frees the sampler on the resident's thread and
+  drops the live wants, or constructs it; "no sampler exists" and "it may not write" stay one fact
+  at every instant. The item "emit has no key" leaves the backlog.
+- THE RECORD: `trigger` on every emit, refused and abort row (p the pause, k the key, s the switch
+  going off, o the CLI); `switch` rows for mode and emit; an `ask` row per key press; `arm`, `emit`,
+  `gen_cap`, `gen_min` and the sampler chain on the session row, so a reader can check the arms
+  share them. The status line reads RESIDENT or TURN-BASED; nib.theme takes `mode`.
+- THE DRIVER'S CASE, and what its first runs taught. In TURN-BASED it types a false claim, waits
+  3.5 s, and asserts that nothing was written while the judgments kept running (8 -> 9
+  boundaries); then presses the key and asserts a composition with trigger k. First run: the key
+  composed, and the SKEPTIC - asked at +4.47 about "the Earth is flat" - composed its PACIFIC line
+  again, which the manners refused as a repeat. The perseveration finding, with the key doing
+  exactly its job. But the refusal row carried no trigger, because the suppression record had
+  never been given one: my defect, fixed by carrying the trigger through allowed_to_say and the
+  stale path. The falsifier for the switch is the composition on the key, whatever the manners
+  then rule. Second run: red for five checks in the restore lives, with the card reading 15.5 GB
+  BEFORE THE CASE BEGAN - another session's resident (the screen-saver branch) was on the card;
+  the first life could not take it, the restore life took 15 s to load and judged nothing in
+  60 s. TWO SESSIONS SHARE THIS CARD NOW: nvidia-smi before believing a red run. The re-run on a
+  free card: 76 passed, 0 failed, 4077 -> 11195 -> 4323 MiB, 60 s, the triggers k, p and s all on
+  one tape.
+- A note on the shadow: in the driver's 3.5 s of TURN-BASED no want went stale (the TTL is 30 s and
+  the key came first), so the `stale` row is specified and built and not yet exercised by the
+  driver. A longer TURN-BASED spell in real work produces them; the week will.
+- Green: --selftest 236/0; drive.py 30/0, three runs; drive.py --ai 76/0.
+- NEXT is 4b, the replay twin: src/twin.h/.cpp are written (the rows onto one clock, three wake
+  policies, the per-wake reseed-and-prefill, the pairing, the blind count, the scaffold table, a
+  chained record beside the tape); the resident needs `reseed`, `world_line` and `judge_wake`, the
+  CLI its dispatch, build.bat the file, and --selftest the pure parts.
