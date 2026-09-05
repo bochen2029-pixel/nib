@@ -41,6 +41,43 @@ bool make_dirs(const std::string& path) {
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+bool file_stat(const std::string& path, uint64_t& size, uint64_t& mtime) {
+    WIN32_FILE_ATTRIBUTE_DATA d{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &d)) return false;
+    size = ((uint64_t)d.nFileSizeHigh << 32) | d.nFileSizeLow;
+    mtime = ((uint64_t)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
+    return true;
+}
+
+bool replace_file_retry(const std::string& src, const std::string& dst, bool write_through, std::string& err) {
+    DWORD last = 0;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const DWORD flags = MOVEFILE_REPLACE_EXISTING | (write_through ? MOVEFILE_WRITE_THROUGH : 0);
+        if (MoveFileExA(src.c_str(), dst.c_str(), flags)) return true;
+        last = GetLastError();
+        Sleep(5);
+    }
+    err = ssprintf("could not replace %s (error %lu after 20 tries)", dst.c_str(), (unsigned long)last);
+    return false;
+}
+
+bool write_file_atomic(const std::string& path, std::string_view bytes, std::string& err) {
+    const std::string tmp = path + ".tmp";
+    HANDLE f = CreateFileA(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { err = "cannot create " + tmp; return false; }
+    size_t put = 0;
+    bool ok = true;
+    while (put < bytes.size()) {
+        DWORD n = 0;
+        if (!WriteFile(f, bytes.data() + put, (DWORD)(bytes.size() - put), &n, nullptr)) { ok = false; break; }
+        put += n;
+    }
+    if (ok) ok = FlushFileBuffers(f) != FALSE;
+    CloseHandle(f);
+    if (!ok) { DeleteFileA(tmp.c_str()); err = "the write failed: " + tmp; return false; }
+    return replace_file_retry(tmp, path, true, err);
+}
+
 // The model file, read once end to end through CNG's SHA-256, 4 MiB at a time. A GGUF is gigabytes,
 // so this is paid on the resident's thread while the state reads Loading, and the cost is recorded
 // on the tape beside the digest rather than hidden.
@@ -79,6 +116,53 @@ bool sha256_file(const std::string& path, std::string& hex_out, uint64_t& bytes,
     CloseHandle(f);
     if (ok) hex_out = hex(out, sizeof out);
     return ok;
+}
+
+bool sha256_file_cached(const std::string& path, const std::string& cache_path, std::string& hex_out,
+                        uint64_t& bytes, std::string& err, bool& cached) {
+    cached = false;
+    uint64_t size = 0, mtime = 0;
+    if (!file_stat(path, size, mtime)) { err = "cannot stat " + path; return false; }
+    std::string text;
+    if (read_file(cache_path, text)) {
+        size_t i = 0;
+        while (i < text.size()) {
+            size_t j = text.find('\n', i);
+            if (j == std::string::npos) j = text.size();
+            std::string line = text.substr(i, j - i);
+            i = j + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            // digest \t size \t mtime \t path
+            std::vector<std::string> f;
+            size_t p = 0;
+            for (int k = 0; k < 3; ++k) {
+                const size_t t = line.find('\t', p);
+                if (t == std::string::npos) break;
+                f.push_back(line.substr(p, t - p));
+                p = t + 1;
+            }
+            if (f.size() != 3) continue;
+            f.push_back(line.substr(p));
+            if (f[3] == path && f[1] == std::to_string((unsigned long long)size) && f[2] == std::to_string((unsigned long long)mtime) && f[0].size() == 64) {
+                hex_out = f[0];
+                bytes = size;
+                cached = true;
+                return true;
+            }
+        }
+    }
+    if (!sha256_file(path, hex_out, bytes, err)) return false;
+    const size_t k = cache_path.find_last_of("\\/");
+    if (k != std::string::npos) make_dirs(cache_path.substr(0, k));
+    HANDLE h = CreateFileA(cache_path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        const std::string line = hex_out + "\t" + std::to_string((unsigned long long)size) + "\t" +
+                                 std::to_string((unsigned long long)mtime) + "\t" + path + "\n";
+        DWORD n = 0;
+        WriteFile(h, line.data(), (DWORD)line.size(), &n, nullptr);
+        CloseHandle(h);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------- BLAKE2b (RFC 7693)
@@ -255,6 +339,47 @@ std::string arr(const std::vector<std::string>& items) {
     return o + "]";
 }
 
+static void put_utf8(std::string& o, uint32_t cp) {
+    if (cp < 0x80) o += (char)cp;
+    else if (cp < 0x800) { o += (char)(0xC0 | (cp >> 6)); o += (char)(0x80 | (cp & 0x3F)); }
+    else if (cp < 0x10000) { o += (char)(0xE0 | (cp >> 12)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F)); }
+    else { o += (char)(0xF0 | (cp >> 18)); o += (char)(0x80 | ((cp >> 12) & 0x3F)); o += (char)(0x80 | ((cp >> 6) & 0x3F)); o += (char)(0x80 | (cp & 0x3F)); }
+}
+
+std::string unstr(std::string_view lit) {
+    std::string o;
+    if (lit.size() < 2 || lit.front() != '"' || lit.back() != '"') return std::string(lit);
+    for (size_t i = 1; i + 1 < lit.size(); ++i) {
+        const char c = lit[i];
+        if (c != '\\') { o += c; continue; }
+        if (i + 2 >= lit.size()) break;
+        const char e = lit[++i];
+        switch (e) {
+            case '"': o += '"'; break;
+            case '\\': o += '\\'; break;
+            case '/': o += '/'; break;
+            case 'b': o += '\b'; break;
+            case 'f': o += '\f'; break;
+            case 'n': o += '\n'; break;
+            case 'r': o += '\r'; break;
+            case 't': o += '\t'; break;
+            case 'u': {
+                if (i + 4 >= lit.size()) break;
+                uint32_t cp = (uint32_t)strtoul(std::string(lit.substr(i + 1, 4)).c_str(), nullptr, 16);
+                i += 4;
+                if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 < lit.size() && lit[i + 1] == '\\' && lit[i + 2] == 'u') {
+                    const uint32_t lo = (uint32_t)strtoul(std::string(lit.substr(i + 3, 4)).c_str(), nullptr, 16);
+                    if (lo >= 0xDC00 && lo <= 0xDFFF) { cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); i += 6; }
+                }
+                put_utf8(o, cp);
+                break;
+            }
+            default: o += e; break;
+        }
+    }
+    return o;
+}
+
 }  // namespace canon
 
 // ---------------------------------------------------------------- the chain
@@ -348,6 +473,43 @@ std::string unq(const std::string& s) {
 
 }  // namespace
 
+std::string canon::field(std::string_view object, std::string_view key) {
+    std::map<std::string, std::string> f;
+    if (!top_fields(object, f)) return {};
+    const auto it = f.find(std::string(key));
+    return it == f.end() ? std::string() : it->second;
+}
+
+bool Tape::read_rows(const std::string& path, std::vector<TapeRow>& out, std::string& err) {
+    out.clear();
+    std::string text;
+    if (!read_file(path, text)) { err = "cannot read " + path; return false; }
+    size_t i = 0;
+    bool first = true;
+    while (i < text.size()) {
+        size_t j = text.find('\n', i);
+        if (j == std::string::npos) j = text.size();
+        std::string_view line(text.data() + i, j - i);
+        i = j + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+        if (line.empty()) continue;
+        if (first) { first = false; continue; }
+        std::map<std::string, std::string> f;
+        if (!top_fields(line, f) || !f.count("seq") || !f.count("kind") || !f.count("body") || !f.count("digest")) {
+            err = ssprintf("row %zu: not a tape row", out.size());
+            return false;
+        }
+        TapeRow r;
+        r.seq = strtoull(f["seq"].c_str(), nullptr, 10);
+        r.kind = unq(f["kind"]);
+        r.at = strtoll(f["at"].c_str(), nullptr, 10);
+        r.body = f["body"];
+        r.digest = unq(f["digest"]);
+        out.push_back(std::move(r));
+    }
+    return true;
+}
+
 bool Tape::verify_text(std::string_view text, uint64_t& rows, uint64_t& bad_seq, std::string& head, std::string& err) {
     rows = 0;
     bad_seq = ~0ull;
@@ -394,10 +556,42 @@ bool Tape::open(const std::string& path, const std::string& case_id, const std::
     if (k != std::string::npos) make_dirs(path.substr(0, k));
     std::string existing;
     const bool exists = read_file(path, existing) && !existing.empty();
+    torn_bytes_ = 0;
+    bool needs_newline = false;
     if (exists) {
         uint64_t rows = 0, bad = 0;
         std::string head;
-        if (!verify_text(existing, rows, bad, head, err)) { err = path + ": " + err; return false; }
+        if (!verify_text(existing, rows, bad, head, err)) {
+            // A torn last line — no newline after it, the process died inside the write — is not a
+            // row. If everything before it verifies, the fragment is cut off, counted, and the chain
+            // continues from the last complete row; the caller writes the `warn` row. A file that
+            // fails anywhere else, or whose last line is complete and wrong, still refuses.
+            if (!existing.empty() && existing.back() != '\n') {
+                const size_t nl = existing.find_last_of('\n');
+                const size_t cut = nl == std::string::npos ? 0 : nl + 1;
+                std::string prefix = existing.substr(0, cut);
+                std::string err2;
+                if (verify_text(prefix, rows, bad, head, err2)) {
+                    torn_bytes_ = existing.size() - cut;
+                    HANDLE t = CreateFileA(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (t == INVALID_HANDLE_VALUE) { err = path + ": cannot truncate the torn row"; return false; }
+                    LARGE_INTEGER pos{};
+                    pos.QuadPart = (LONGLONG)cut;
+                    SetFilePointerEx(t, pos, nullptr, FILE_BEGIN);
+                    SetEndOfFile(t);
+                    CloseHandle(t);
+                    existing = std::move(prefix);
+                    err.clear();
+                } else {
+                    err = path + ": " + err;
+                    return false;
+                }
+            } else {
+                err = path + ": " + err;
+                return false;
+            }
+        }
+        if (!existing.empty() && existing.back() != '\n') needs_newline = true;   // a row cut exactly at its end: never append onto it
         seq_ = rows;
         head_ = head;
     } else {
@@ -407,6 +601,7 @@ bool Tape::open(const std::string& path, const std::string& case_id, const std::
     h_ = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h_ == INVALID_HANDLE_VALUE) { err = "cannot open " + path + ssprintf(" (error %lu)", (unsigned long)GetLastError()); return false; }
     path_ = path;
+    if (needs_newline) { DWORD n = 0; WriteFile(h_, "\n", 1, &n, nullptr); }
     if (!exists) {
         std::vector<std::pair<std::string, std::string>> kv = header_extra;
         kv.emplace_back("case_id", canon::str(case_id));

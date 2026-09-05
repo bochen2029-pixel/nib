@@ -28,7 +28,7 @@ WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_CLOSE = 0x0102, 0x0100, 0x0101, 0x0010
 WM_NIB_CMD = 0x8000 + 1                     # WM_APP + 1, matching edit.cpp
 CMD = dict(save=1, save_as=2, open=3, undo=4, redo=5, select_all=6,
            replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12,
-           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18)
+           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18, wrap=19)
 
 
 def vram_used_mib():
@@ -380,6 +380,31 @@ def main():
           "two surrogate WM_CHARs became one four-byte character, and the stray half was dropped: %r" % got)
     n5.close()
 
+    # ---- 11 · word wrap: toggling it never loses a byte or unseats the caret ----------------
+    # Wrap is visual, so the driver cannot see the wrapping; what it CAN prove is that turning it on
+    # and off, and moving the caret across a wrapped line, corrupts neither the text nor the log.
+    # (The operator raised this on 2026-09-05: a long line ran off the edge with no scroll.)
+    print(LF + "word wrap")
+    wrapf, log7 = scratch("wrap.txt"), scratch("seven.log")
+    n7 = Nib(a.exe, wrapf, log7)
+    longline = "the quick brown fox jumps over the lazy dog " * 5   # 220 chars, one logical line
+    n7.type(longline)
+    nb = n7.count("wrap")
+    n7.cmd("wrap"); w1 = n7.wait_for("wrap", nb)
+    n7.cmd("wrap"); w2 = n7.wait_for("wrap", nb + 1)
+    check(w1 is not None and w2 is not None and w1[1] != w2[1],
+          "the wrap switch toggles and lands on the log: %s then %s" % (w1[1] if w1 else "?", w2[1] if w2 else "?"))
+    for k in ("home", "down", "down", "up", "end"):
+        n7.key(k)
+    r = n7.ask("replay", "replay")
+    check(r is not None and r[1] == "1",
+          "the log still replays byte-exact after wrapping and moving the caret: %s" % (r[1:] if r else "?"))
+    n7.save()
+    got = read_bytes(wrapf).decode("utf-8", "replace")
+    check(got == longline,
+          "no byte was lost to wrapping: %d chars typed, %d on disk" % (len(longline), len(got)))
+    n7.close()
+
     # ---- 10 · the resident, switched on inside the window (--ai) ---------------------------
     # Stage 1c's falsifiers, fired through the seam: the resident loads on its own thread while
     # the window keeps painting; the paragraph typed BEFORE the switch is folded and judged; the
@@ -491,7 +516,7 @@ def main():
         check(all(k in kinds for k in wanted), "every row kind the stage promised is on the tape: %s" % dict(kinds))
 
     if not a.keep:
-        for p in (target, crlf, fresh, emoji, log, log2, log3, log4, log5) + ai_files:
+        for p in (target, crlf, fresh, emoji, wrapf, log, log2, log3, log4, log5, log7) + ai_files:
             try:
                 os.remove(p)
             except OSError:

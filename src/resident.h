@@ -24,6 +24,12 @@
 //   * a full window is a refusal, counted and reported, never a silent return that then judges a
 //     clause the trunk never saw;
 //   * a failed decode is a failure, reported, never a discarded return value.
+//
+// Stage 1d: THE TRUNK IS AN ASSET (SPEC 6.2.11, an idea taken from K5). Every token that lands
+// on the trunk is remembered, so the trunk's state can be saved beside the document and loaded
+// back in the next session; a resident rebuilt from the log instead is the twin, and says so.
+// And free VRAM rides every judgment, because the probe's cost on this shared card moved by a
+// factor of 2.7 with what else the card was doing (SPEC 6.2.10).
 #pragma once
 
 #include "ingest.h"
@@ -42,6 +48,7 @@ struct Judgment {
     float    margin = 0.0f;     // logit(emit) − logit(hold): > 0 wanted to speak
     float    bscore = 0.0f;     // boundary mass at the frontier that triggered the probe
     char     reason = 'b';      // 'b' boundary · 'n' token cap · 't' timeout · 'c' coarsened · 'f' final
+    uint64_t mib_free = 0;      // free VRAM on the card when the probe ran: the co-tenancy dial
     std::string clause;         // what it judged
 };
 
@@ -70,11 +77,15 @@ bool load_backends(const std::string& llama_dir, std::string& loaded, std::strin
 // DLL among them. Returns false, with `offending` filled, if one is present. Needs no model.
 bool module_gate(std::string& modules, size_t& count, std::string& offending);
 
+// Free VRAM on the first GPU device ggml knows, in MiB; 0 with no GPU. Needs the backends loaded.
+uint64_t vram_free_mib();
+
 class Resident {
 public:
     struct Config {
         std::string model = "C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf";
         std::string llama_dir = "C:/llama.cpp";
+        std::string hash_cache;   // where the model's SHA-256 is remembered on size and mtime; empty = hash every time
         int   n_ctx = 16384;      // NOT fusord's 65536: this box shares its card with llama-server.
                                   // Measured 2026-09-04: q8_0 KV is 136 MiB at 8192, 272 MiB at 16384
         int   n_gpu_layers = 99;
@@ -94,10 +105,12 @@ public:
     Resident(const Resident&) = delete;
     Resident& operator=(const Resident&) = delete;
 
-    // Loads the model and seeds the trunk. Returns false with a reason rather than throwing; a
-    // missing DLL, a missing model, a drifted seed, a network module and a CPU-only backend are
-    // all ordinary, reportable outcomes.
-    bool start(const Config& cfg, std::string& err);
+    // Loads the model and seeds the trunk — or, given a checkpoint, loads the trunk's saved state
+    // instead of the seed, provided it holds exactly `expect_npast` tokens; a checkpoint that does
+    // not load is reported and the resident seeds, as the twin. Returns false with a reason
+    // rather than throwing; a missing DLL, a missing model, a drifted seed, a network module and a
+    // CPU-only backend are all ordinary, reportable outcomes.
+    bool start(const Config& cfg, std::string& err, const std::string& restore_path = std::string(), long long expect_npast = 0);
 
     // Ingest one percept and judge if a thought closed. This is the free tail of the ingest pass
     // (SPEC 6.2.3): the model is never polled, it is decoded into and read at the frontier.
@@ -109,6 +122,10 @@ public:
     // Whatever clause is still open is a real final when the stream stops.
     void finish(std::vector<Judgment>& out);
 
+    // Save the trunk's state and token list to `path`, atomically: a temporary, a write-through
+    // replace, the previous generation kept as `.prev`. `bytes` is what was written.
+    bool checkpoint(const std::string& path, std::string& err, uint64_t& bytes);
+
     bool running() const { return ctx_ != nullptr; }
     uint64_t words() const { return words_; }
     uint64_t boundaries() const { return boundaries_; }
@@ -118,11 +135,15 @@ public:
     uint64_t ticks() const { return ticks_; }
     uint64_t probe_ms_total() const { return probe_ms_; }
     int context_used() const { return (int)npast_; }
+    long long npast() const { return npast_; }
     const std::string& model_desc() const { return model_desc_; }
     const std::string& devices() const { return devices_; }   // what ggml actually brought up
     const std::string& backends() const { return backends_; } // which DLLs were loaded, by name
     size_t module_count() const { return module_count_; }
     bool have_gpu() const { return have_gpu_; }
+    uint64_t mib_free_at_load() const { return mib_free_; }
+    const std::string& boot() const { return boot_; }            // seed · restored · twin
+    const std::string& boot_reason() const { return boot_reason_; }
 
     // The loud counts. A run with window_full() or failed() is NOT a valid record.
     bool window_full() const { return window_full_; }
@@ -147,6 +168,10 @@ private:
     std::string backends_;
     size_t module_count_ = 0;
     bool have_gpu_ = false;
+    uint64_t mib_free_ = 0;
+    std::string boot_ = "seed";
+    std::string boot_reason_;
+    std::vector<int> trunk_toks_;   // every token on the trunk, seed first: the checkpoint's token list
     std::string clause_;
     long long npast_ = 0;
     int clause_toks_ = 0;

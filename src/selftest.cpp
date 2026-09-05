@@ -521,6 +521,52 @@ int run_selftest() {
         check(ix.offset_of(0, 99, t) == 3, "a column past the end of a line clamps to its end");
     }
 
+    section("word wrap - the row index breaks lines and never a character");
+    {
+        // wrap off: one visual row per logical line
+        {
+            const std::string t = "abc\ndef\n";
+            LineIndex li; li.build(t);
+            RowIndex ri; ri.build(t, li, 80, false);
+            check(ri.count() == 3, ssprintf("wrap off: three lines are three rows (%zu)", ri.count()));
+        }
+        // wrap on: a long line tiles into rows with no gap or overlap, each within the width,
+        // broken at spaces — the falsifier is byte conservation, exactly as ingest's is
+        {
+            const std::string t = "the quick brown fox jumps over the lazy dog";
+            LineIndex li; li.build(t);
+            RowIndex ri; ri.build(t, li, 10, true);
+            bool tiles = true; size_t at = 0; std::string re;
+            for (const auto& row : ri.rows) { if (row.a != at) tiles = false; re += t.substr(row.a, row.b - row.a); at = row.b; }
+            check(tiles && re == t && at == t.size(), "the rows tile the line: no gap, no overlap, every byte once");
+            bool width_ok = true;
+            for (const auto& row : ri.rows) if (utf8_count(t, row.a, row.b - row.a) > 10) width_ok = false;
+            check(width_ok, ssprintf("no row exceeds the wrap width (%zu rows)", ri.count()));
+        }
+        // a word wider than the width hard-breaks, and never inside a UTF-8 sequence
+        {
+            const std::string t = "aa\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9zz";
+            LineIndex li; li.build(t);
+            RowIndex ri; ri.build(t, li, 4, true);
+            bool valid = true;
+            for (const auto& row : ri.rows) if (!utf8_valid(t.substr(row.a, row.b - row.a))) valid = false;
+            check(valid && ri.count() >= 3, ssprintf("a word wider than the width hard-breaks on sequence boundaries (%zu rows, valid=%d)", ri.count(), valid ? 1 : 0));
+        }
+        // offset -> (row, col) -> offset is identity at every offset of a wrapped line, which is
+        // what keeps the caret honest when Up and Down cross a soft break
+        {
+            const std::string t = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+            LineIndex li; li.build(t);
+            RowIndex ri; ri.build(t, li, 12, true);
+            bool rt = true; size_t bad = 0;
+            for (size_t o = 0; o <= t.size(); ++o) {
+                const size_t r = ri.row_of(o), c = ri.col_of(o, t);
+                if (ri.offset_of(r, c, t) != o) { rt = false; bad = o; break; }
+            }
+            check(rt, ssprintf("offset -> row/col -> offset is identity across a wrapped line (first miss at %zu)", bad));
+        }
+    }
+
     section("ingest - the seam's measured facts");
     {
         using namespace auricle::fusor;

@@ -57,6 +57,7 @@ struct Theme {
     COLORREF sel = RGB(0x16, 0x32, 0x4a);
     std::wstring font = L"Consolas";
     int pt = 11;
+    bool wrap = true;   // word wrap at startup; Alt+Z toggles it, and the state is on the tape
     // the hand and the mind
     std::string lane = "bo";
     std::string model = "C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf";
@@ -67,7 +68,7 @@ struct Theme {
 };
 
 enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop,
-           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom };
+           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom, CmdWrap };
 constexpr UINT WM_NIB_CMD = WM_APP + 1;
 
 // A judged span, in CURRENT document coordinates, with the three seats' margins at that boundary.
@@ -85,10 +86,14 @@ struct EditRec { uint64_t rev; size_t start, ndel, ins; };
 struct View {
     Doc doc;
     LineIndex idx;
+    RowIndex ridx;             // the visual rows: one per line with wrap off, several when a line wraps
     size_t caret = 0;          // byte offset into the document
     size_t anchor = 0;         // the other end of the selection; == caret means no selection
-    size_t want_col = 0;       // the column the caret aims for while moving vertically
-    size_t top_line = 0;       // the first line painted
+    size_t want_col = 0;       // the VISUAL column the caret aims for while moving vertically (within its row)
+    size_t top_row = 0;        // the first visual row painted
+    size_t left_col = 0;       // horizontal scroll in characters — used only when wrap is off
+    int cols = 80;             // the wrap width in characters, from the client width; rebuilt on resize
+    bool wrap = true;          // word wrap; the operator's key is Alt+Z, and it is on the tape
     bool dragging = false;
 
     std::wstring path;         // "" = untitled
@@ -178,6 +183,7 @@ void load_theme(Theme& t) {
         else if (k == "n_ctx") { const int n = atoi(v.c_str()); if (n >= Resident::kMinCtx) t.n_ctx = n; }
         else if (k == "gpu_layers") t.gpu_layers = atoi(v.c_str());
         else if (k == "ai") t.ai = v == "on" || v == "1" || v == "true";
+        else if (k == "wrap") t.wrap = !(v == "off" || v == "0" || v == "false");
     }
     fclose(f);
 }
@@ -337,17 +343,40 @@ std::string sel_text() {
 // the caret moves by whole characters, so the two arithmetics must agree — when they did not, a
 // Down-arrow could land the caret inside a UTF-8 sequence and the next Backspace removed one byte
 // of it, which the replay check could not see because the log recorded the cut faithfully.
+// The LOGICAL column, characters from the line's start — for the status line. Distinct from the
+// VISUAL column (characters from the row's start), which is what vertical movement preserves.
 size_t col_of(size_t offset) { return g->idx.col_of(offset, g->doc.text()); }
 
+// The wrap width in characters, from the client width less the gutter and the margins. Rebuilt on
+// every resize and DPI change, because a column is arithmetic only while the width is known.
+void relayout(HWND h) {
+    RECT rc;
+    GetClientRect(h, &rc);
+    const int usable = rc.right - (px(kPad) + px(kGutter)) - px(kPad);
+    g->cols = usable / g->cw > 0 ? usable / g->cw : 1;
+    g->ridx.build(g->doc.text(), g->idx, (size_t)g->cols, g->wrap);
+    if (g->ridx.count() && g->top_row >= g->ridx.count()) g->top_row = g->ridx.count() - 1;
+}
+
 void scroll_to_caret(HWND h) {
-    const size_t line = g->idx.line_of(g->caret);
+    const size_t r = g->ridx.row_of(g->caret);
     const int rows = visible_lines(h);
-    if (line < g->top_line) g->top_line = line;
-    else if (line >= g->top_line + (size_t)rows) g->top_line = line - (size_t)rows + 1;
+    if (r < g->top_row) g->top_row = r;
+    else if (r >= g->top_row + (size_t)rows) g->top_row = r - (size_t)rows + 1;
+    // wrap off: the view scrolls sideways to keep the caret in sight; wrap on: never sideways
+    if (!g->wrap) {
+        const size_t vc = g->ridx.col_of(g->caret, g->doc.text());
+        const size_t cols = (size_t)g->cols;
+        if (vc < g->left_col) g->left_col = vc;
+        else if (vc >= g->left_col + cols) g->left_col = vc - cols + 1;
+    } else {
+        g->left_col = 0;
+    }
 }
 
 void after_edit(HWND h, bool caret_from_doc) {
     g->idx.build(g->doc.text());
+    relayout(h);
     if (caret_from_doc) {
         const size_t c = (size_t)g->doc.last_caret();
         g->caret = c <= g->doc.size() ? c : g->doc.size();
@@ -475,17 +504,19 @@ void del_forward(HWND h) {
 void move_to(HWND h, size_t offset, bool extend, bool keep_want_col) {
     g->caret = offset > g->doc.size() ? g->doc.size() : offset;
     if (!extend) g->anchor = g->caret;
-    if (!keep_want_col) g->want_col = col_of(g->caret);
+    if (!keep_want_col) g->want_col = g->ridx.col_of(g->caret, g->doc.text());   // the VISUAL column
     scroll_to_caret(h);
     InvalidateRect(h, nullptr, TRUE);
 }
 
+// Up and Down move by VISUAL rows and keep the visual column, so a wrapped line reads like any
+// other run of lines and the caret does not jump a screen when it crosses a soft break.
 void move_vertical(HWND h, int delta, bool extend) {
-    const size_t line = g->idx.line_of(g->caret);
-    int64_t target = (int64_t)line + delta;
+    const size_t row = g->ridx.row_of(g->caret);
+    int64_t target = (int64_t)row + delta;
     if (target < 0) target = 0;
-    if (target >= (int64_t)g->idx.count()) target = (int64_t)g->idx.count() - 1;
-    move_to(h, g->idx.offset_of((size_t)target, g->want_col, g->doc.text()), extend, true);
+    if (target >= (int64_t)g->ridx.count()) target = (int64_t)g->ridx.count() - 1;
+    move_to(h, g->ridx.offset_of((size_t)target, g->want_col, g->doc.text()), extend, true);
 }
 
 void move_horizontal(HWND h, int delta, bool extend) {
@@ -506,12 +537,13 @@ void move_horizontal(HWND h, int delta, bool extend) {
 
 size_t offset_at_point(int mx, int my) {
     const int x = mx - px(kPad) - px(kGutter), y = my - px(kPad);
-    const int64_t row = y / g->ch;
-    int64_t line = (int64_t)g->top_line + (row < 0 ? 0 : row);
-    if (line < 0) line = 0;
-    if (line >= (int64_t)g->idx.count()) line = (int64_t)g->idx.count() - 1;
-    const int64_t col = x > 0 ? (x + g->cw / 2) / g->cw : 0;
-    return g->idx.offset_of((size_t)line, (size_t)(col < 0 ? 0 : col), g->doc.text());
+    const int64_t rr = y / g->ch;
+    int64_t row = (int64_t)g->top_row + (rr < 0 ? 0 : rr);
+    if (row < 0) row = 0;
+    if (g->ridx.count() && row >= (int64_t)g->ridx.count()) row = (int64_t)g->ridx.count() - 1;
+    int64_t col = x > 0 ? (x + g->cw / 2) / g->cw : 0;
+    col += (int64_t)g->left_col;   // wrap off scrolls sideways; wrap on leaves left_col at 0
+    return g->ridx.offset_of((size_t)row, (size_t)(col < 0 ? 0 : col), g->doc.text());
 }
 
 // ---- the clipboard ---------------------------------------------------------------------------
@@ -618,6 +650,23 @@ void ai_set(HWND h, bool on) {
     g->ai_wanted = on;
     if (on) { start_resident(); set_status("AI: loading " + model_name()); }
     else { stop_resident(); set_status("AI off - the model is unloaded, the card is returned"); }
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// ---- the wrap switch -----------------------------------------------------------------------------
+// Word wrap is a state that changes what is seen, so it goes on the tape like the AI switch, and it
+// is on the status line while it is off (a long line running off the edge with no sign is the bug
+// the operator hit on 2026-09-05). The break arithmetic is RowIndex; here we only flip and relayout.
+void set_wrap(HWND h, bool on) {
+    if (on == g->wrap) return;
+    tape_row("switch", canon::obj({ { "which", canon::str("wrap") }, { "from", canon::str(g->wrap ? "on" : "off") },
+                                    { "to", canon::str(on ? "on" : "off") } }), true);
+    g->wrap = on;
+    g->left_col = 0;
+    relayout(h);
+    scroll_to_caret(h);
+    nlog("wrap	%d", on ? 1 : 0);
+    set_status(std::string("word wrap ") + (on ? "on" : "off"));
     InvalidateRect(h, nullptr, TRUE);
 }
 
@@ -760,8 +809,9 @@ void load_into(HWND h, const std::wstring& path, std::string raw) {
     g->path = path;
     g->saved_rev = g->doc.revisions();
     g->caret = g->anchor = 0;
-    g->top_line = 0;
+    g->top_row = 0;
     g->idx.build(g->doc.text());
+    relayout(h);
     g->marks.clear();
     g->edits.clear();
     g->pend.n = 0;
@@ -912,22 +962,28 @@ void paint(HWND h) {
     const int x0 = px(kPad) + px(kGutter), y0 = px(kPad);
     const std::string& t = g->doc.text();
     const size_t lo = sel_lo(), hi = sel_hi();
+    const int lshift = g->wrap ? 0 : (int)g->left_col * g->cw;   // wrap off scrolls sideways
+    const size_t cr = g->ridx.row_of(g->caret);
 
     for (int r = 0; r < rows; ++r) {
-        const size_t line = g->top_line + (size_t)r;
-        if (line >= g->idx.count()) break;
-        const size_t a = g->idx.start[line];
-        const size_t len = g->idx.line_len(line, t);
+        const size_t ri = g->top_row + (size_t)r;
+        if (ri >= g->ridx.count()) break;
+        const Row& row = g->ridx.rows[ri];
+        const size_t a = row.a, b = row.b, len = b - a;
         const int y = y0 + r * g->ch;
+        const bool first_of_line = ri == 0 || g->ridx.rows[ri - 1].line != row.line;
+        const bool last_of_line = g->ridx.last_of_line(ri);
+        const size_t line_a = g->idx.start[row.line];
+        const size_t line_end = line_a + g->idx.line_len(row.line, t);
 
-        // the gutter: the strongest want among the seats that judged this line, as brightness.
-        // Margins mean something only near contention (the deep tail measures phrasing, not
-        // judgment), so the scale saturates: nothing below -6, everything above +2.
-        {
+        // the gutter, once per logical line on its first visual row: the strongest want among the
+        // seats that judged it, as brightness. Margins mean something only near contention, so the
+        // scale saturates: nothing below -6, everything above +2.
+        if (first_of_line) {
             float best = -1e9f;
             bool any = false;
             for (const Mark& m : g->marks) {
-                if (m.b < a || m.a > a + len) continue;
+                if (m.b < line_a || m.a > line_end) continue;
                 for (int s = 0; s < 3; ++s) if (m.have[s] && m.margin[s] > best) { best = m.margin[s]; any = true; }
             }
             if (any) {
@@ -941,13 +997,16 @@ void paint(HWND h) {
             }
         }
 
-        // the selection band for this line, drawn under the glyphs
-        if (has_sel() && hi > a && lo < a + len + 1) {
+        // the selection band for this visual row, drawn under the glyphs. The half-cell past the
+        // end marks a newline inside the selection, and only on the line's last row — a soft break
+        // is not a newline and gets no gap.
+        if (has_sel() && hi > a && lo < b + 1) {
             const size_t s = lo > a ? lo - a : 0;
-            const size_t e = hi < a + len ? hi - a : len;
-            const bool spans_newline = hi > a + len;
-            const int sx = x0 + (int)utf8_count(t, a, s) * g->cw;
-            const int ex = x0 + (int)utf8_count(t, a, e > s ? e : s) * g->cw + (spans_newline ? g->cw / 2 : 0);
+            const size_t e = hi < b ? hi - a : len;
+            const bool spans_newline = last_of_line && hi > line_end;
+            int sx = x0 + (int)utf8_count(t, a, s) * g->cw - lshift;
+            const int ex = x0 + (int)utf8_count(t, a, e > s ? e : s) * g->cw + (spans_newline ? g->cw / 2 : 0) - lshift;
+            if (sx < x0) sx = x0;
             if (ex > sx) {
                 RECT band{ sx, y, ex, y + g->ch };
                 HBRUSH sb = CreateSolidBrush(selbg);
@@ -959,19 +1018,19 @@ void paint(HWND h) {
         if (len) {
             SetTextColor(dc, fg);
             const std::wstring w = widen(t.substr(a, len));
-            TextOutW(dc, x0, y, w.c_str(), (int)w.size());
+            if (!g->wrap) IntersectClipRect(dc, x0, y0, rc.right, rc.bottom);   // keep shifted text off the gutter
+            TextOutW(dc, x0 - lshift, y, w.c_str(), (int)w.size());
+            if (!g->wrap) SelectClipRgn(dc, nullptr);
         }
-    }
 
-    // the caret, drawn rather than a system caret so it cannot drift from the model
-    const size_t cl = g->idx.line_of(g->caret);
-    if (cl >= g->top_line && cl < g->top_line + (size_t)rows) {
-        const int cx = x0 + (int)utf8_count(t, g->idx.start[cl], g->caret - g->idx.start[cl]) * g->cw;
-        const int cy = y0 + (int)(cl - g->top_line) * g->ch;
-        RECT car{ cx, cy, cx + px(2), cy + g->ch };
-        HBRUSH cb = CreateSolidBrush(g->th.accent);
-        FillRect(dc, &car, cb);
-        DeleteObject(cb);
+        // the caret on this row, drawn rather than a system caret so it cannot drift from the model
+        if (ri == cr) {
+            const int cx = x0 + (int)utf8_count(t, a, g->caret - a) * g->cw - lshift;
+            RECT car{ cx, y, cx + px(2), y + g->ch };
+            HBRUSH cb = CreateSolidBrush(g->th.accent);
+            FillRect(dc, &car, cb);
+            DeleteObject(cb);
+        }
     }
 
     // the status lines: the document's, then the resident's
@@ -988,10 +1047,10 @@ void paint(HWND h) {
         _snprintf_s(ing, sizeof ing, _TRUNCATE, "  %llu percepts%s",
                     (unsigned long long)g->ingest->compiler().percepts(),
                     g->ingest->dropped() ? "  DROPPED" : "");
-    _snprintf_s(buf, sizeof buf, _TRUNCATE, "nib  %llu:%llu%s  %llu chars  %llu revisions%s%s  %s",
+    _snprintf_s(buf, sizeof buf, _TRUNCATE, "nib  %llu:%llu%s  %llu chars  %llu revisions%s%s%s  %s",
                 (unsigned long long)(line + 1), (unsigned long long)(col_of(g->caret) + 1), sel,
                 (unsigned long long)g->doc.size(), (unsigned long long)g->doc.revisions(),
-                dirty() ? "  unsaved" : "", ing, g->status.c_str());
+                dirty() ? "  unsaved" : "", g->wrap ? "" : "  no-wrap", ing, g->status.c_str());
     const std::wstring sw = widen(buf);
     TextOutW(dc, px(kPad), rc.bottom - px(kPad) - g->ch, sw.c_str(), (int)sw.size());
     const std::wstring rw = widen(resident_line());
@@ -1024,8 +1083,10 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
         case WM_CREATE:
             g->dpi = (int)GetDpiForWindow(h);
+            g->wrap = g->th.wrap;
             make_font(h);
             g->idx.build(g->doc.text());
+            relayout(h);
             set_title(h);
             if (getenv("NIB_COMPILE")) {
                 // the driver's seam: compile with no model in the process (Stage 1a's battery)
@@ -1055,6 +1116,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         case WM_DPICHANGED: {
             g->dpi = HIWORD(wp);
             make_font(h);
+            relayout(h);
             const RECT* r = (const RECT*)lp;
             SetWindowPos(h, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
             InvalidateRect(h, nullptr, TRUE);
@@ -1063,7 +1125,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
         case WM_PAINT: paint(h); return 0;
         case WM_ERASEBKGND: return 1;
-        case WM_SIZE: scroll_to_caret(h); InvalidateRect(h, nullptr, TRUE); return 0;
+        case WM_SIZE: relayout(h); scroll_to_caret(h); InvalidateRect(h, nullptr, TRUE); return 0;
 
         case WM_CHAR: {
             const wchar_t c = (wchar_t)wp;
@@ -1159,6 +1221,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case CmdSelectAll: g->anchor = 0; move_to(h, g->doc.size(), true, false); break;
                 case CmdTop: move_to(h, 0, false, false); break;
                 case CmdBottom: move_to(h, g->doc.size(), false, false); break;   // the driver's windows are visible, and a click in one is the operator's
+                case CmdWrap: set_wrap(h, !g->wrap); break;
                 case CmdHome: move_to(h, g->idx.start[g->idx.line_of(g->caret)], false, false); break;
                 case CmdEnd: {
                     const size_t l = g->idx.line_of(g->caret);
@@ -1230,9 +1293,9 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
         case WM_MOUSEWHEEL: {
             const int delta = GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
-            const int64_t top = (int64_t)g->top_line - delta * 3;
-            g->top_line = top < 0 ? 0 : (size_t)top;
-            if (g->top_line >= g->idx.count()) g->top_line = g->idx.count() - 1;
+            const int64_t top = (int64_t)g->top_row - delta * 3;
+            g->top_row = top < 0 ? 0 : (size_t)top;
+            if (g->ridx.count() && g->top_row >= g->ridx.count()) g->top_row = g->ridx.count() - 1;
             InvalidateRect(h, nullptr, TRUE);
             return 0;
         }
@@ -1253,6 +1316,10 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONUP:
             if (g->dragging) { g->dragging = false; ReleaseCapture(); }
             return 0;
+
+        case WM_SYSKEYDOWN:
+            if (wp == 'Z') { set_wrap(h, !g->wrap); return 0; }   // Alt+Z: word wrap, the operator's key
+            break;
 
         case WM_QUERYENDSESSION:
             // Shutdown and logoff ask, exactly as closing does; unsaved work is never lost silently

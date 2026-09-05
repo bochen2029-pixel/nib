@@ -9,6 +9,7 @@
 fray.ini
 obj/
 runs/
+versions/
 build-dependents.txt
 build-delay.txt
 build-imports.txt

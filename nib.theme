@@ -9,6 +9,8 @@ accent     #2196f3
 selection  #16324a
 font       Consolas
 font_pt    11
+# Word wrap at startup. Alt+Z toggles it live, and the state is on the status line and the tape.
+wrap       on
 # The hand: the lane the trunk sees this person's words on. v11 was tuned on [bo]; a second
 # person on the same binary is a different file with a different lane.
 lane       bo

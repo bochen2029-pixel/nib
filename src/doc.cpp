@@ -224,6 +224,78 @@ bool Doc::replay(std::string& out, std::string& err) const {
     return true;
 }
 
+bool Doc::text_at(size_t rev, std::string& out, std::string& err) const {
+    if (rev >= log_.size()) { out = text_; return true; }
+    out.clear();
+    for (size_t i = 0; i < rev; ++i) {
+        std::string next;
+        if (!apply_to_text(log_[i].cs, out, next, err)) {
+            err = "fold failed at revision " + std::to_string(i) + ": " + err;
+            return false;
+        }
+        out = std::move(next);
+    }
+    return true;
+}
+
+// ---- RowIndex ----------------------------------------------------------------------------------
+void RowIndex::build(const std::string& text, const LineIndex& idx, size_t width, bool wrap) {
+    rows.clear();
+    if (width == 0) width = 1;
+    for (size_t l = 0; l < idx.count(); ++l) {
+        const size_t a = idx.start[l];
+        const size_t end = a + idx.line_len(l, text);
+        if (!wrap) { rows.push_back(Row{ l, a, end }); continue; }
+        size_t row_a = a, off = a, count = 0, last_space = 0;
+        while (off < end) {
+            const size_t len = utf8_seq_len((unsigned char)text[off]);
+            if (count == width) {
+                // the row is full: break after the last space in it, or inside the run if it has none
+                const size_t cut = last_space > row_a ? last_space : off;
+                rows.push_back(Row{ l, row_a, cut });
+                row_a = cut;
+                count = utf8_count(text, cut, off - cut);
+                last_space = 0;
+            }
+            if (text[off] == ' ' || text[off] == '\t') last_space = off + 1;
+            off += len;
+            if (off > end) off = end;
+            ++count;
+        }
+        rows.push_back(Row{ l, row_a, end });
+    }
+    if (rows.empty()) rows.push_back(Row{ 0, 0, 0 });
+}
+
+size_t RowIndex::row_of(size_t offset) const {
+    // the last row whose start is <= offset
+    size_t lo = 0, hi = rows.size();
+    while (hi - lo > 1) {
+        const size_t mid = lo + (hi - lo) / 2;
+        if (rows[mid].a <= offset) lo = mid; else hi = mid;
+    }
+    if (offset >= rows[lo].b && !last_of_line(lo) && offset == rows[lo].b) return lo + 1;
+    return lo;
+}
+
+size_t RowIndex::col_of(size_t offset, const std::string& text) const {
+    const size_t r = row_of(offset);
+    const size_t a = rows[r].a;
+    return offset > a ? utf8_count(text, a, offset - a) : 0;
+}
+
+size_t RowIndex::offset_of(size_t row, size_t col, const std::string& text) const {
+    if (rows.empty()) return 0;
+    if (row >= rows.size()) row = rows.size() - 1;
+    const size_t a = rows[row].a, b = rows[row].b;
+    size_t off = a;
+    for (size_t c = 0; c < col && off < b; ++c) {
+        off += utf8_seq_len((unsigned char)text[off]);
+        if (off > b) off = b;
+    }
+    return off;
+}
+
 // ---- LineIndex ---------------------------------------------------------------------------------
 void LineIndex::build(const std::string& text) {
     start.clear();

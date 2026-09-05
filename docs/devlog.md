@@ -532,3 +532,43 @@
 - NEXT is Stage 1d, the trunk as an asset: the checkpoint beside the document, the resume tick, the
   hash cache, VRAM on the row, torn-row recovery, word wrap. Then Stage 2 on K5's seam, with the
   lift map refreshed first.
+
+## 2026-09-05 (before dawn) · Stage 1d, part one - word wrap, the library half of the checkpoint, and a write that was cut
+
+- INCIDENT, and the rule it bought. Between the 0.7.0 commit at 03:11 and 03:29 this session wrote
+  the library half of Stage 1d across util, tape, doc, ingest, resident and wire - one file every
+  half minute, in dependency order - and the last write, src/wire.cpp, was cut mid-token inside
+  fold_tape. The turn that wrote them was then dropped from the session's own context: fourteen
+  minutes later it found a tree it could not account for, with identifiers only it would have
+  chosen (expect_npast, CkptResult, stop_async, RawEvent, Mode::Hist), and spent ten minutes
+  proving there was no second writer before believing the mtimes. The operator's ruling:
+  VERSIONED EDITS from now on. An existing source is never rewritten whole; changes are surgical
+  edits that fail atomically on a mismatch; only new files are written whole; every green step is
+  committed; and tools/snap.py copies the sources, tools and docs into versions/<stamp>-<label>/
+  with an MD5 manifest, gitignored, before a risky step and after every green commit. A backup
+  git can reset away is not a backup. CLAUDE.md carries the rule.
+- What the cut left, read line by line before anything was built on it, and kept on merit: the
+  atomic file helpers (write-then-replace with the rename retried, K5's F3), the hash cache on
+  size and mtime, torn-row recovery in Tape::open (the fragment is cut off, counted, the chain
+  continues; anything else still refuses), read_rows with a JSON string decoder that reads a
+  changeset row back without a JSON library, Doc::text_at, the RowIndex, Compiler::tick and the
+  clock resync, the pad's three modes (Live; Raw, queueing the hand's calls while the model loads;
+  Hist, compiling history) so that a document's past and what was typed during the load reach the
+  trunk in the order they happened, Resident::checkpoint and the restore inside start() guarded by
+  the token count, free VRAM on every judgment, and the wire's stop_async / request_checkpoint /
+  take_checkpoint with the cursor revision. fold_tape and rows_after were finished by hand:
+  the tape's rows after a checkpoint's bound row, replayed against the text the checkpoint was
+  taken at, an `open` row perceived as a diff, sessions chained so the clock never runs backwards,
+  and the chain of tape files followed back through `resume` rows.
+- WORD WRAP, wired. The RowIndex existed in the document layer and nothing in the window used
+  it - which is exactly what the operator's screenshot showed. The painter, the caret, the mouse,
+  Up and Down and the wheel read visual rows now; the gutter mark sits on a line's first row; the
+  selection band knows a soft break is not a newline; Alt+Z toggles, the driver has a command for
+  it, nib.theme has `wrap on`, the state is a `switch` row on the tape and `no-wrap` on the status
+  line while it is off, and with wrap off the view scrolls sideways to keep the caret in sight.
+  The falsifier is byte conservation again: the rows tile the line with no gap and no overlap, no
+  row is wider than the width, a word wider than the width breaks on a sequence boundary and never
+  inside a character, and offset -> row/col -> offset is the identity at every offset of a wrapped
+  line. The driver types a 220-character line, toggles wrap twice, walks the caret across it and
+  saves: the log replays byte-exact and the bytes on disk are the bytes typed.
+- Version 0.7.1 is the wrap; the checkpoint becomes reachable from the window in 0.8.0.

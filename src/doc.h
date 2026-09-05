@@ -78,6 +78,8 @@ public:
 
     // Fold the whole log from the empty document. The falsifier: this must equal `text()`.
     bool replay(std::string& out, std::string& err) const;
+    // The text as it stood after revision `rev` (0 = empty). A checkpoint's sidecar carries it.
+    bool text_at(size_t rev, std::string& out, std::string& err) const;
 
     // Where the last edit landed, for the caret: the offset just past the inserted text.
     int64_t last_caret() const { return last_caret_; }
@@ -120,6 +122,27 @@ struct LineIndex {
     size_t offset_of(size_t line, size_t col, const std::string& text) const;   // clamps to the line; never inside a sequence
     size_t col_of(size_t offset, const std::string& text) const;          // characters from the line start
     size_t line_len(size_t line, const std::string& text) const;          // in bytes, without the newline
+};
+
+// Word wrap (Stage 1d, by the operator's word): a document line becomes one or more ROWS of at
+// most `width` characters, broken after a space where the line offers one and inside a long run
+// where it does not. With wrap off every line is one row and the view scrolls sideways instead.
+// Pure arithmetic over the text and the line index, so the selftest can fire at it without a
+// window; the painter, the caret and the mouse all read rows and nothing else.
+struct Row {
+    size_t line;      // the document line this row belongs to
+    size_t a, b;      // the row's bytes [a, b), never including the newline
+};
+struct RowIndex {
+    std::vector<Row> rows;
+    void build(const std::string& text, const LineIndex& idx, size_t width, bool wrap);
+    size_t count() const { return rows.size(); }
+    // The row an offset is shown on. At a soft break the caret belongs to the row that starts
+    // there, as every editor has it; at a line's end it stays on the line's last row.
+    size_t row_of(size_t offset) const;
+    size_t col_of(size_t offset, const std::string& text) const;                // characters from the row's start
+    size_t offset_of(size_t row, size_t col, const std::string& text) const;    // clamps to the row; never inside a sequence
+    bool last_of_line(size_t row) const { return row + 1 >= rows.size() || rows[row + 1].line != rows[row].line; }
 };
 
 }  // namespace nib

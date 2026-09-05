@@ -12,6 +12,11 @@
 // every coefficient goes on it (SPEC 8.1.2), and a reader can always tell which machine was on
 // the other end (8.1.3). The chain is what makes "the tape is the proof" a sentence with teeth:
 // `nib --verify` and `glance --verify` both read it, and a flipped byte names its row.
+//
+// Stage 1d: a torn last line — the mark of a crash inside a write — is not a row. It is skipped,
+// counted, and the chain continues from the last complete row; the caller writes the `warn` row
+// (K5's F6). Anything else that fails to verify still refuses to open. And the rows can be read
+// back (`read_rows`), which is how a checkpoint's cursor finds what happened after it.
 #pragma once
 #include "util.h"
 
@@ -51,12 +56,25 @@ std::string flt(double v);                                   // Python repr: sho
 std::string boolean(bool v);
 std::string obj(std::vector<std::pair<std::string, std::string>> kv);   // values are already-serialized fragments; keys sorted by bytes
 std::string arr(const std::vector<std::string>& items);
+// reading back: a JSON string literal (quotes and escapes) to bytes, and one top-level field of an
+// object as its raw fragment ("" if absent) — enough to read a changeset row without a JSON library
+std::string unstr(std::string_view literal);
+std::string field(std::string_view object, std::string_view key);
 }  // namespace canon
+
+struct TapeRow {
+    uint64_t seq = 0;
+    std::string kind;
+    int64_t at = 0;
+    std::string body;      // the raw canonical fragment
+    std::string digest;
+};
 
 class Tape {
 public:
     // Open for appending. A new file gets the header; an existing one is verified first and the
-    // chain continues from its head (a broken chain refuses to open — say so, do not paper over it).
+    // chain continues from its head. A torn last line is skipped and counted (`torn_bytes`); a
+    // broken chain anywhere else refuses to open — say so, do not paper over it.
     bool open(const std::string& path, const std::string& case_id, const std::vector<std::pair<std::string, std::string>>& header_extra, std::string& err);
     // Append one row. The chain advances in memory at once; the bytes wait in a buffer until
     // `flush`, which writes them and pushes them to the disk — so a keystroke never pays for a
@@ -70,6 +88,7 @@ public:
     std::string head() const { return head_; }
     uint64_t rows() const { return seq_; }
     std::string path() const { return path_; }
+    uint64_t torn_bytes() const { return torn_bytes_; }
 
     static std::string payload(uint64_t seq, const std::string& kind, int64_t at, const std::string& body_canonical);
     static std::string digest(const std::string& prev, const std::string& payload);
@@ -77,6 +96,8 @@ public:
     // Walk a file: rows verified, the first bad seq (or ~0), the head digest. False on any break.
     static bool verify_file(const std::string& path, uint64_t& rows, uint64_t& bad_seq, std::string& head, std::string& err);
     static bool verify_text(std::string_view text, uint64_t& rows, uint64_t& bad_seq, std::string& head, std::string& err);
+    // Read every row of a file (unverified: the caller verified at open). False if a line is not a row.
+    static bool read_rows(const std::string& path, std::vector<TapeRow>& out, std::string& err);
 
 private:
     HANDLE h_ = INVALID_HANDLE_VALUE;
@@ -84,6 +105,7 @@ private:
     std::string head_ = std::string(64, '0');
     std::string buf_;
     uint64_t seq_ = 0;
+    uint64_t torn_bytes_ = 0;
 };
 
 }  // namespace nib

@@ -131,6 +131,13 @@ public:
     // End of stream, or a lane change: whatever is pending is real and must not be discarded.
     void flush(uint64_t now_ms, std::vector<Percept>& out);
 
+    // A tick the caller has measured itself — the resume tick (SPEC 5.1.9.2): how long the world
+    // went on while the resident was away, told to it before anything that happened meanwhile.
+    void tick(uint64_t gap_s, uint64_t now_ms, std::vector<Percept>& out);
+    // After a replay whose clock was not this one's: the next gap is measured from now, so the
+    // first live percept does not read as a silence the length of the replay's whole history.
+    void resync_clock(uint64_t now_ms) { last_percept_ms_ = now_ms; last_input_ms_ = now_ms; }
+
     bool has_pending() const { return !pending_.empty(); }
     size_t pending_size() const { return pending_.size(); }
 
@@ -209,11 +216,23 @@ public:
     // fold_begin and fold_end nothing is shipped; fold_end ships the LAST percepts that fit
     // `budget_bytes` and counts the rest as skipped, loudly — a window is only so long, and until
     // the molt (Stage 2) a resident that joins a long document joins it part-way, and says so.
+    //
+    // Stage 1d: the model loads for seconds, and the hand keeps typing. Between fold_begin and
+    // fold_end the live calls are QUEUED raw, not compiled; the history is compiled between
+    // fold_history_begin and fold_history_end (the switch-on knows what history only once the
+    // model has said whether it restored); and fold_end compiles the queue AFTER the history, so
+    // the trunk sees the document's past and then what was typed during the load, in the order it
+    // happened, with the clock the compiler saw.
     void fold_begin();
+    void fold_history_begin();
+    void fold_history_end();
     void fold_end(size_t budget_bytes);
+    void tick(uint64_t gap_s, uint64_t now_ms);          // compiled at once (into the fold while folding)
+    void resync_clock(uint64_t now_ms) { comp_.resync_clock(now_ms); }
     uint64_t fold_shipped() const { return fold_shipped_; }
     uint64_t fold_skipped() const { return fold_skipped_; }
     uint64_t fold_skipped_bytes() const { return fold_skipped_bytes_; }
+    size_t fold_queued() const { return raw_.size(); }
 
     // The resident's own seats. A delta on one of these lanes MUST NOT be fed back (SPEC 5.1.6):
     // in a pad the resident writes into the buffer it reads, so the filter lives here, at the
@@ -250,7 +269,9 @@ private:
     std::deque<Percept> spool_;
     std::vector<Percept> shipped_;      // for the tape
     std::vector<Percept> fold_;         // held between fold_begin and fold_end
-    bool folding_ = false;
+    struct RawEvent { char op; std::string lane, text; uint64_t ms; size_t pos; uint64_t rev; };   // 't' typed · 'r' removed · 'i' idle · 'f' flush
+    std::deque<RawEvent> raw_;          // the live calls queued during a fold
+    enum class Mode { Live, Raw, Hist } mode_ = Mode::Live;
     uint64_t next_id_ = 1;
     uint64_t pushed_ = 0, dropped_ = 0, echoes_ = 0, trunc_lanes_ = 0;
     uint64_t fold_shipped_ = 0, fold_skipped_ = 0, fold_skipped_bytes_ = 0;

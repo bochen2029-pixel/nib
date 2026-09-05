@@ -1,5 +1,6 @@
 // nib · resident.cpp — the mind that only holds. Lifted from fusord.cpp; see resident.h.
 #include "resident.h"
+#include "util.h"
 
 #include <windows.h>
 #define PSAPI_VERSION 2   // K32EnumProcessModules lives in kernel32: no new import for the gate
@@ -187,6 +188,14 @@ bool module_gate(std::string& modules, size_t& count, std::string& offending) {
     return offending.empty();
 }
 
+uint64_t vram_free_mib() {
+    ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+    if (!d) return 0;
+    size_t f = 0, t = 0;
+    ggml_backend_dev_memory(d, &f, &t);
+    return (uint64_t)(f >> 20);
+}
+
 // ---- the llama handles ---------------------------------------------------------------------
 struct Resident::Impl {
     llama_model* mdl = nullptr;
@@ -243,7 +252,7 @@ Resident::~Resident() {
     ctx_ = nullptr;
 }
 
-bool Resident::start(const Config& cfg, std::string& err) {
+bool Resident::start(const Config& cfg, std::string& err, const std::string& restore_path, long long expect_npast) {
     cfg_ = cfg;
     if (cfg_.n_ctx < kMinCtx) {
         err = "n_ctx " + std::to_string(cfg_.n_ctx) + " is below the minimum of " + std::to_string(kMinCtx);
@@ -360,12 +369,49 @@ bool Resident::start(const Config& cfg, std::string& err) {
 
     // No sampler is created. Stage 1b cannot produce a token even by accident.
 
-    const std::string seed = std::string(SEED_SYS) + SEED_EXAMPLES + SEED_OPEN;
-    const auto stoks = tk(p_->vocab, seed, true);
-    if (!dec(p_->ctx, stoks, TRUNK, 0, false)) { err = "seeding the trunk failed"; return false; }
-    npast_ = (long long)stoks.size();
+    mib_free_ = vram_free_mib();
+
+    // The trunk is an asset (SPEC 6.2.11): given a checkpoint, the held state comes back instead
+    // of the seed — if it loads, and if it holds exactly the tokens its sidecar says it holds. A
+    // resident that seeds because the checkpoint would not load is the twin, and says so.
+    bool restored = false;
+    if (!restore_path.empty()) {
+        std::vector<llama_token> buf((size_t)cfg_.n_ctx);
+        size_t n = 0;
+        const size_t got = llama_state_seq_load_file(p_->ctx, restore_path.c_str(), TRUNK, buf.data(), buf.size(), &n);
+        if (got == 0 || n == 0) boot_reason_ = "the checkpoint did not load";
+        else if ((long long)n != expect_npast) boot_reason_ = ssprintf("the checkpoint holds %zu tokens and its sidecar says %lld", n, expect_npast);
+        else {
+            trunk_toks_.assign(buf.begin(), buf.begin() + (std::ptrdiff_t)n);
+            npast_ = (long long)n;
+            restored = true;
+            boot_ = "restored";
+        }
+        if (!restored) llama_memory_seq_rm(p_->mem, TRUNK, -1, -1);
+    }
+    if (!restored) {
+        const std::string seed = std::string(SEED_SYS) + SEED_EXAMPLES + SEED_OPEN;
+        const auto stoks = tk(p_->vocab, seed, true);
+        if (!decode(stoks, TRUNK, 0, false)) { err = "seeding the trunk failed"; return false; }
+        npast_ = (long long)stoks.size();
+        boot_ = restore_path.empty() ? "seed" : "twin";
+    }
     last_flush_ms_ = wall_ms();
     ctx_ = p_->ctx;
+    return true;
+}
+
+bool Resident::checkpoint(const std::string& path, std::string& err, uint64_t& bytes) {
+    bytes = 0;
+    if (!p_ || !p_->ctx) { err = "no resident to checkpoint"; return false; }
+    const std::string tmp = path + ".tmp", prev = path + ".prev";
+    DeleteFileA(tmp.c_str());
+    bytes = llama_state_seq_save_file(p_->ctx, tmp.c_str(), TRUNK, trunk_toks_.data(), trunk_toks_.size());
+    if (bytes == 0) { err = "the state file was not written"; DeleteFileA(tmp.c_str()); return false; }
+    // the previous generation is kept, and a failed rename is a reported failure (K5's F3)
+    std::string e2;
+    if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) replace_file_retry(path, prev, false, e2);
+    if (!replace_file_retry(tmp, path, true, err)) { DeleteFileA(tmp.c_str()); return false; }
     return true;
 }
 
@@ -398,6 +444,7 @@ bool Resident::decode(const std::vector<int>& toks, int seq, long long pos, bool
         if (failure_.empty()) failure_ = "llama_decode failed at position " + std::to_string(pos);
         return false;
     }
+    if (seq == TRUNK) trunk_toks_.insert(trunk_toks_.end(), toks.begin(), toks.end());   // the checkpoint's list is exact
     return true;
 }
 
@@ -407,6 +454,7 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
     if (reason[0] == 'c') ++coarsened_;   // degradation must be COUNTED, not inferred
 
     const uint64_t t0 = wall_ms();
+    const uint64_t mf = vram_free_mib();   // the co-tenancy dial, read beside the cost it explains
     for (int m = 0; m < 3; ++m) {
         llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
         llama_memory_seq_cp(p_->mem, TRUNK, DECIDE, -1, -1);
@@ -421,6 +469,7 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
         j.margin = l[p_->emit_tok] - l[p_->hold_tok];
         j.bscore = bscore;
         j.reason = reason[0];
+        j.mib_free = mf;
         j.clause = clause_;
         if (j.margin > 0.0f) ++wanted_;
         out.push_back(std::move(j));

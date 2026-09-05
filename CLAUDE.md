@@ -86,6 +86,16 @@ they are the price of the exception.
 
 ## Build and test discipline
 
+- **Versioned edits, by operator ruling (2026-09-05).** An existing source file is never rewritten
+  whole: change it with surgical edits that fail atomically on a mismatch, write only NEW files
+  whole, and commit at every green step so that no more than one step is ever at risk. The
+  ruling was bought with an incident: on 2026-09-05 a whole-file write of `src/wire.cpp` was cut
+  mid-token and the turn that wrote it was dropped from the writer's context, leaving a file that
+  ended inside a function and a session that did not know it had written it (devlog).
+  **And snapshots:** `python tools/snap.py <label>` copies every source, tool and document into
+  `versions/<stamp>-<label>/` with an MD5 manifest, outside git's reach (gitignored). Take one
+  before a step that touches several files and one after every green commit; `--diff <dir>`
+  names what moved since. A backup git can reset away is not a backup.
 - `--selftest` before every commit; stages and their falsifiers are BLUEPRINT §6.
 - The editor is testable without a GPU: Stage 0 is the buffer, the op log and replay, with no
   model in the process at all. **Every stage below Stage 2 must stay runnable with `--no-model`,**
