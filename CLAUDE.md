@@ -14,6 +14,12 @@ writing code, and read these before writing a line of the loop:
   daemon refuses to start if the hash moves. That refusal comes with us.
 - `C:\auricle\src\fabric\fabric.h` — propose/dispose, the hash-chained tape, contradicts∩dep.
 - `C:\auricle\src\app\blackbox.cpp` — the tape as the deliverable; the trace as the proof.
+- `C:\fusor1\converge\src\fusord.cpp` — **K5, the converged kernel** (2026-09-04, after the one
+  above, and in flux in another session). Same seed, same pin. **Operator ruling, 2026-09-05: a
+  source of ideas, not of bytes.** Steal its concepts (the trunk is an asset; a judgment is about
+  now; the seam that drains intake while a seat speaks), lift nothing from it verbatim while it
+  moves, refactor nothing already built to match it, and never let anything taken from it move
+  the hash.
 
 ## The one job
 

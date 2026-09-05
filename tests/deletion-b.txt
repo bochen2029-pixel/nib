@@ -1,0 +1,5 @@
+The staging database is postgres 16, everyone aligned on that last week.
+We agreed the retry limit is three, so the client backs off after the third failure.
+The staging database is mysql 5, so the migration script needs the mysql dialect.
+Sorry, I mean postgres 16 of course, the migration script is fine as it is.
+Lunch is at noon in the small room.

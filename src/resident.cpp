@@ -416,6 +416,7 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
         const float* l = llama_get_logits_ith(p_->ctx, -1);
         Judgment j;
         j.wall_ms = wall_ms();
+        j.boundary = boundaries_;
         j.seat = m;
         j.margin = l[p_->emit_tok] - l[p_->hold_tok];
         j.bscore = bscore;
@@ -491,9 +492,17 @@ void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
         return;
     }
 
-    // One percept is one bracketed line on the trunk, exactly as fusord reads a Delta.
+    // One percept is one bracketed line on the trunk, exactly as fusord reads a Delta: a LINE,
+    // with no newline of its own. fusord's source strips the '\n' (and a '\r') before the Delta is
+    // made (source.h, emit_line); the pad's compiler keeps the newline in the percept because it
+    // conserves bytes, so it comes off here, at the serve boundary. Without this the trunk saw
+    // "text.\n\n[SEAT" — a double newline before the probe — and Stage 1b's margins were measured
+    // on that off-by-one-byte format (found 2026-09-04 by the first in-window run).
+    std::string line = text;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    if (line.empty()) return;
     const auto pre = tk(p_->vocab, std::string("\n[") + lane + "] ", false);
-    if (!room_for(pre.size())) { dropped_words_ += count_words(text); return; }
+    if (!room_for(pre.size())) { dropped_words_ += count_words(line); return; }
     if (!decode(pre, TRUNK, npast_, true)) return;
     npast_ += (long long)pre.size();
     read_frontier();
@@ -501,19 +510,29 @@ void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
     size_t p = 0;
     bool first = true;
     bool whole = true;
-    while (p < text.size()) {
-        size_t q = text.find(' ', p);
-        if (q == std::string::npos) q = text.size();
+    while (p < line.size()) {
+        size_t q = line.find(' ', p);
+        if (q == std::string::npos) q = line.size();
         if (q > p) {
-            const std::string w = text.substr(p, q - p);
+            const std::string w = line.substr(p, q - p);
+            // The word joins the clause BEFORE it is decoded and the frontier read. fusord appends
+            // it after the probe (fusord.cpp:740), which lags the label one word behind the trunk:
+            // a 'b' fired by "Earth." was labelled "ocean on", and the lone "Earth." left in the
+            // clause was then re-judged by the line's 'f' at the SAME trunk position — bit-identical
+            // margins, three probes for nothing, on every sentence (measured 2026-09-05: 19
+            // boundaries and 57 probes for 8 sentences). The trunk's bytes and the probe frame are
+            // untouched, so the pin and the calibration are too; only the label and the duplicate
+            // go. A departure from the 08-12 kernel this file lifted from, and a convergence with
+            // the one that came after it: K5 (C:/fusor1/converge/src/fusord.cpp, feed_word) made
+            // the same change on 2026-09-04 for the same measured reason, found independently.
+            clause_ += (clause_.empty() ? "" : " ") + w;
             if (!ingest_word(first ? w : " " + w, backlog, out)) {
                 // the window filled, or a decode failed, mid-percept: the rest of this percept was
                 // never perceived, and a clause the trunk only half saw is not judged
-                dropped_words_ += count_words(text.substr(p));
+                dropped_words_ += count_words(line.substr(p));
                 whole = false;
                 break;
             }
-            clause_ += (clause_.empty() ? "" : " ") + w;
             first = false;
         }
         p = q + 1;

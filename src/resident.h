@@ -37,6 +37,7 @@ namespace nib {
 // One seat's verdict at one thought boundary. This is the whole output of Stage 1b.
 struct Judgment {
     uint64_t wall_ms = 0;
+    uint64_t boundary = 0;      // which boundary this is, 1-based; the three seats of one share it
     int      seat = 0;          // index into the three MINDS
     float    margin = 0.0f;     // logit(emit) − logit(hold): > 0 wanted to speak
     float    bscore = 0.0f;     // boundary mass at the frontier that triggered the probe
@@ -74,7 +75,8 @@ public:
     struct Config {
         std::string model = "C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf";
         std::string llama_dir = "C:/llama.cpp";
-        int   n_ctx = 8192;       // NOT fusord's 65536: this box shares its card with llama-server
+        int   n_ctx = 16384;      // NOT fusord's 65536: this box shares its card with llama-server.
+                                  // Measured 2026-09-04: q8_0 KV is 136 MiB at 8192, 272 MiB at 16384
         int   n_gpu_layers = 99;
         bool  kv_q8 = true;
         bool  verbose = false;    // llama's own log

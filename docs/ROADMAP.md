@@ -1,9 +1,10 @@
 # nib — ROADMAP
 
-*Rev 0.5 · 2026-09-04. Each stage carries a **falsifier**: the observation that would say the stage
+*Rev 0.6 · 2026-09-05. Each stage carries a **falsifier**: the observation that would say the stage
 failed. A stage is not done because its code exists; it is done when its falsifier has been fired
 at and did not go off. Dates are the day a stage went green on this box — by git: every stage
-below went green on 2026-09-04, though revs 0.1–0.4 of this file said 09-03 for the first four.*
+below Stage 1c went green on 2026-09-04, though revs 0.1–0.4 of this file said 09-03 for the first
+four; Stage 1c went green in the small hours of 2026-09-05.*
 
 **Legend** — ✔ done · ◑ in progress · ○ not started · ⨯ deliberately not doing
 
@@ -21,8 +22,9 @@ below went green on 2026-09-04, though revs 0.1–0.4 of this file said 09-03 fo
 | **I** | 1a · ingest — the compiler and PadSource | ✔ 2026-09-04 | 0.5.0 |
 | **I** | 1b · a resident that only holds | ✔ 2026-09-04 | 0.6.0 |
 | **I** | the QC pass — two criticals, the runtime gate, six Stage 2 breakers | ✔ 2026-09-04 | 0.6.1 |
-| **I** | 1c · the wire — the resident in the window, the gutter, the AI switch, the tape | ○ | |
-| **I** | 2 · emission, with floor control | ○ | |
+| **I** | 1c · the wire — the resident in the window, the gutter, the AI switch, the tape | ✔ 2026-09-05 | 0.7.0 |
+| **I** | 1d · the trunk as an asset — the checkpoint beside the document, word wrap | ○ | |
+| **I** | 2 · emission, with floor control — on K5's seam | ○ | |
 | **I** | 3 · un-saying, made visible | ○ | |
 | **I** | 4 · the two switches, and the paired record | ○ | |
 | **I** | 5 · **a week of real work** — the falsifier for the whole idea | ○ | |
@@ -31,13 +33,13 @@ below went green on 2026-09-04, though revs 0.1–0.4 of this file said 09-03 fo
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**144 checks green in the exe, and 27 more from the window driver** (2026-09-04, three identical
-driver runs). The exe links kernel32, user32, gdi32, comdlg32 — no network DLL, enforced at build —
-plus llama.cpp and ggml, all three **delay-loaded**, which the build now asserts rather than
-assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
+**176 checks green in the exe, 27 more from the window driver, and 41 with the resident switched on
+inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
+gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
+llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
 `--ingest` and the editor still run on a machine with no model and no card. That is CLAUDE.md's
 rule that a battery needing a 9B is a battery that stops being run. `nib --about` loads the
-backends by name and prints the runtime module gate's verdict — 56 modules, no network DLL —
+backends by name and prints the runtime module gate's verdict — 57 modules, no network DLL —
 without loading a model.
 
 **Operator ruling, 2026-09-04: the shipped product autodiscovers on the LAN by default**, toggled
@@ -232,21 +234,116 @@ backends loaded. **One incident, kept:** the driver's windows took the foregroun
 a sentence the operator was typing to another program; a driven window is created no-activate
 now (CLAUDE.md rule 12).
 
-### ○ Stage 1c — the wire
+### ✔ Stage 1c — the wire · 0.7.0
 
-The resident on its own thread inside the window; judgments back over a second ring; the gutter
-mark whose brightness is the last boundary's margin (a real internal state, the only permitted
-signal); the AI switch, where off unloads the model and returns the card; the tape in the family's
-format, verified by `glance --verify`; resume by re-folding the tape. The first moment the
-operator writes with something present, before a single word is emitted.
+`src/wire.h/.cpp`, `src/tape.h/.cpp`, `src/util.h`, and `edit.cpp` rewritten around them. The
+resident on its own thread inside the window; percepts out and judgments back over two lock-free
+rings, with the revision and byte span of what was judged; the gutter mark whose brightness is the
+strongest margin at the last boundary in the line; the AI switch (`Ctrl+Shift+A`), where on folds
+the document's history through the compiler and loads the model while the window keeps painting,
+and off joins the thread, unloads the model and returns the card; the tape in the family's format
+beside the document, verified by `nib --verify` and `glance --verify`; the model named by SHA-256 on
+the session row; a latency instrument in the paint path. The first moment the operator writes with
+something present, before a single word is emitted.
 
 *Falsifier: keystroke-to-repaint moves measurably with the resident on; a judgment's clause is not
-byte-identical to the compiled percept; AI-off leaves VRAM held.*
+byte-identical to the compiled percept; AI-off leaves VRAM held.* — **Fired at on 2026-09-05. The
+second and third did not go off; the first needed a number, and has one now.**
+
+| measured, 2026-09-04/05 | resident off | resident on |
+|---|---|---|
+| keystroke → painted, p50, two runs | 607 · 605 µs (129 keys) | 1189 · 455 µs (164 · 166 keys, typed while the mind was judging) |
+| keystroke → painted, p95, two runs | 1115 · 1094 µs | 1709 · 1037 µs (2912 µs in an earlier run over 54 keys) |
+| VRAM used: before / loaded / after off, two runs | 5716 · 6291 MiB | 12727 / 5959 · 13334 / 6548 MiB |
+| model load on the resident's thread | | 5.7–8.1 s |
+| the model's SHA-256, 6.64 GB | | 17.1 s, 388 MB/s |
+
+The instrument cannot separate on from off: the resident-on p50 landed 0.6 ms above the off figure
+in one run and 0.15 ms below it in the next, so the difference is inside the run-to-run spread, and
+every figure is under a fifth of a 60 Hz frame. "Measurably" was the wrong word for a falsifier;
+the threshold is stated now as p95 under 8 ms with the resident on, and the worst p95 seen is
+2.9 ms. The judgment's clause is the compiled percept
+byte for byte — the tape's `judgment` rows carry the clause beside the `percept` rows they span, and
+the driver reads the SKEPTIC's catch off the log with the clause in it. And the card comes back.
+
+**Two silent defects in the judged record, found by the wire and fixed:**
+
+- **Every sentence cost two boundaries.** The lifted loop appended a word to the clause after the
+  probe that word triggered, so a `b` fired by "Earth." was labelled "ocean on", and the lone
+  "Earth." left behind was re-judged by the line's `f` at the same trunk position — bit-identical
+  margins, three probes for nothing. The word joins the clause first now. The margins script fell
+  from 19 boundaries and 57 probes to 11 and 33 with every catch intact. K5 (below) made the same
+  change on 09-04 for the same measured reason; found independently.
+- **A double newline before every probe.** The compiler keeps a percept's newline because it
+  conserves bytes, and the resident decoded it; fusord's source strips it before a Delta exists.
+  Stripped at the serve boundary now. Stage 1b's table was measured on the wrong format; re-measured
+  on the right one, every catch moved by under a logit:
+
+| the stream, corrected format | SPEAKER | SKEPTIC | SENTINEL |
+|---|---|---|---|
+| "Actually, the Pacific is the smallest ocean on Earth." | −6.20 | **+5.93** | −5.46 |
+| "I am going to drop the users table to free up some disk space." | +0.32 | +5.11 | **+5.43** |
+| "We agreed last week that the retry limit was three, so I set it to twelve." | −3.39 | **+5.09** | +5.82 |
+| "The coffee machine in the kitchen was refilled this morning." | −6.90 | −6.57 | −7.06 |
+
+**The measurements the review asked for (§6.2), on the GPU, 2026-09-05.** Identical prefixes give
+identical logits, so in an A/B the difference is the manipulation and nothing else.
+
+- **Deletions move the margins, a little, and the marker costs a boundary.** A scripted stream with
+  a removed line against the same stream without it: the following margins move by under a logit
+  in no consistent direction (the correction line SKEPTIC +2.66/+2.81 against +1.91/+3.09; the lunch
+  line +3.45 against +2.85); the removed claim re-fires the SKEPTIC at +4.87 against +5.83 for the
+  claim itself; and `(removed)` closes a thought of its own at boundary mass 0.95, three probes on
+  one word. The marker does not neutralise a claim; its wording stays open (SPEC 14.9).
+- **Ticks are perceived and cost no probes.** A 3600 s tick before a line against no tick: the three
+  boundaries after it shift by at most 0.42 logits, mostly toward speaking, nothing crosses zero,
+  21 probes in both arms.
+- **KV at 16k is cheap; the fold is not.** q8_0 KV: 136 MiB at 8192, 272 MiB at 16384, so 16k is the
+  default. Switching on over the README (4.2 KB, 749 words) costs 39 s: 94 percepts, 104 boundaries,
+  312 probes, 12.7 s of probing, about 35 ms a word of decode. At the 50 KB fold budget that is
+  minutes, and it is Stage 1d's problem.
+- **The probe's cost is the card's.** 118–123 ms per boundary for three seats on a quiet card;
+  312–327 ms on the same binary an hour earlier with llama-server busy. A factor of 2.7 from
+  co-tenancy alone; the number prints beside the card's state from Stage 1d on.
+- **The T sweep was not run.** It needs a real typing tape; the synthetic cadence never pauses.
+- **Modules after the backends load: 57, none of them network** (`nib --about`).
+
+**Read during the stage:** `C:\fusor1\converge\src\fusord.cpp`, K5, the convergence of the two
+fusord lineages that came after the 08-12 kernel this project lifted from — written on the evening
+of 09-04 while nib's review ran, in flux in another session, same pin. By operator ruling a source of
+ideas and not of bytes. Taken for the plan: a judgment is always about now, because the model's
+recurrent state cannot be rewound (SPEC 6.2.8); the trunk is an asset and a resident rebuilt from
+its log is the twin (SPEC 6.2.11, Stage 1d); the seam Stage 2 lifts (SPEC 6.3.4); free VRAM beside
+every probe; torn-row recovery. What nib has that K5 lacks is in `docs/BACKLOG.md`.
+
+**One trap in the driver, kept:** the AI case never saved, its close hit the unsaved-changes prompt,
+the process was killed after eight seconds and the tape ended without `session_close`. It saves
+first now. A tape without `session_close` means what it says.
+
+### ○ Stage 1d — the trunk as an asset
+
+The checkpoint beside the document: the trunk's KV and token list saved atomically at switch-off
+and at quiet, with a sidecar carrying the model's SHA-256, the serve hash, the token count, the
+document revision, the tape head and the last percept's wall time; restored at switch-on when
+every field agrees, else the fold and the label *twin*; the resume tick for the wall gap; the
+model's hash cached on size and mtime; free VRAM on every judgment row; torn-row recovery in the
+tape; word wrap with a toggle, by the operator's word (`docs/BACKLOG.md`). The switch becomes cheap
+to flip, which Stage 4 needs.
+
+*Falsifier: a restored resident's first margins differ from a no-restart control by more than the
+run's margin noise (K5's T8); a checkpoint that loads against a swapped model or a moved document;
+a crash inside a checkpoint that leaves no loadable generation; a torn tape that silences a
+session; a line that leaves the window without a scroll or a wrap.*
 
 ### ○ Stage 2 — emission, with floor control
 
 The resident writes in its own blocks. An emission targeting a block a human has touched within the
 floor window is refused before it is composed.
+
+**Lifts K5's seam, not the 08-12 blind window** (SPEC 6.3.4): intake drained after every generated
+token, the speaking seat re-probed on a fresh fork when a whole percept lands, the line killed on a
+flipped margin or an acceptance, the killed remainder and the aired prefix on the tape, own speech
+committed after the world's line closes. The lift map's line ranges are refreshed against K5 first.
 
 *Falsifier: one emission lands inside a block a human touched inside the floor window; or forming
 text survives a save or a crash.*
@@ -358,6 +455,10 @@ thinking. The resident's holds are real silences and its aborts are real retract
 enough, and faking it is the exact place a demo stops being evidence.
 
 ⨯ **Rich text, plugins, a browser build, accounts, telemetry.**
+
+⨯ **Adopting K5 wholesale, or refactoring what is built to match it.** Operator ruling, 2026-09-05:
+the converged kernel is in flux in another session; its concepts are taken as concepts and checked
+against the pin; its bytes are not lifted while they move.
 
 ---
 

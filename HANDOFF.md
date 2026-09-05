@@ -18,6 +18,15 @@ to resume.**
 > 144 passed, `drive.py` 27 passed** (2026-09-04). §5's "resume here" now means **Stage 1c** per the
 > review's §8 P1, then Stage 2. And by operator ruling the shipped product autodiscovers on the
 > LAN by default (CLAUDE.md rule 2, SPEC 9.1.1).
+>
+> **Addendum, 2026-09-05.** **Stage 1c landed as 0.7.0** — the wire, the tape, the AI switch, the
+> gutter, spans, the latency instrument, the model's SHA-256 (ROADMAP, Stage 1c, with every
+> number). Oracles: **`--selftest` 176, `drive.py` 27, `drive.py --ai` 41.** Two more files a cold
+> start must read: `docs/BACKLOG.md` (open items, word wrap first) and
+> `C:\fusor1\converge\src\fusord.cpp` — **K5, the converged kernel**, which post-dates everything
+> §3 says about the substrate: same pin, in flux, by operator ruling a source of ideas and not of
+> bytes (CLAUDE.md). §5's "resume here" now means **Stage 1d** (the trunk as an asset), then
+> Stage 2 on K5's seam with the lift map refreshed first. §4.3–4.6 are updated below.
 
 ---
 
@@ -62,6 +71,11 @@ absence caused real harm: **hash-manifest `_upload/` BEFORE touching anything**,
 `wrangler` ships the whole assets directory and will publish other people's unfinished files. This
 session published another session's draft backups that way and had to un-publish them.
 
+**1.9 One model on the card at a time.** `drive.py --ai`, `nib --resident` and any `--script` run
+each load the 9B; two at once with llama-server resident do not fit in 16 GB. Run them
+sequentially, and expect the probe cost to move by a factor of 2.7 with what else the card is doing
+(ROADMAP, Stage 1c). Never kill a nib window to free the card: it may hold unsaved text.
+
 ---
 
 ## 2 · How these repositories are written
@@ -98,7 +112,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.6.0 · the active work · Stages 0a–1b · 120 + 22 checks · the mind holds** |
+| **nib** | `C:\nib` | **0.7.0 · the active work · Stages 0a–1c · 176 + 27 + 41 checks · the mind holds, inside the window** |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.
@@ -108,7 +122,10 @@ The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five 
 exist and are built: `C:\auricle\src\fusor\fusord.cpp` (the resident loop),
 `C:\auricle\src\fusor\source.h` (**the intake seam — read this before writing `PadSource`**),
 `C:\auricle\src\fabric\fabric.h` (the hash-chained tape), `C:\auricle\src\overlay\hud.cpp` (words
-projected on screen). `C:\auricle\build\Release\` holds working binaries.
+projected on screen). `C:\auricle\build\Release\` holds working binaries. **And since 2026-09-04
+there is K5**, `C:\fusor1\converge\src\fusord.cpp`: the converged kernel, same pin, in flux in
+another session — ideas, not bytes (CLAUDE.md); what nib took from it is named in SPEC 6.2.8,
+6.2.11 and 6.3.4.
 
 **Etherpad's source is on disk** at `C:\etherpad-develop` (Node/TypeScript). nib ports its
 changeset library rather than bundling its server; the reasoning is in `C:\nib\docs\ASSEMBLY.md`.
@@ -142,13 +159,15 @@ amnesia, and a resident does not have amnesia; the interaction is the prompt.
 5. `C:\nib\docs\BLUEPRINT.md` — the design and the intent.
 6. `C:\nib\docs\devlog.md` — what happened, in order, with the traps.
 
-### 4.3 Built and green — 144 checks in the exe, 27 in the driver
+### 4.3 Built and green — 176 checks in the exe, 27 in the driver, 41 with the resident on
 
 ```
-C:\nib\build.bat               /W4 /WX, gates: no network DLL among the dependents; llama delay-loaded
-C:\nib\nib.exe --selftest      144 passed, 0 failed
-python C:/nib/tools/drive.py   27 passed, 0 failed   (the window, driven by messages, never focused)
-C:\nib\nib.exe --about         the backends by name, the module gate, no model loaded
+C:\nib\build.bat                     /W4 /WX, gates: no network DLL among the dependents; llama delay-loaded
+C:\nib\nib.exe --selftest            176 passed, 0 failed
+python C:/nib/tools/drive.py         27 passed, 0 failed   (the window, driven by messages, never focused)
+python C:/nib/tools/drive.py --ai    41 passed, 0 failed   (the resident switched on inside it; needs the card)
+C:\nib\nib.exe --about               the backends by name, the module gate, no model loaded
+C:\nib\nib.exe --verify X.tape.jsonl the chain, as glance --verify reads it
 ```
 
 - **`src/changeset.h/.cpp`** — Etherpad's Easysync format in C++: base36, `Op`,
@@ -168,6 +187,9 @@ C:\nib\nib.exe --about         the backends by name, the module gate, no model l
   `Delta`s on auricle's ring. No model, no GPU, no threads of its own.
 - **`src/resident.h/.cpp`** — the trunk, the segmenter, and the hold/emit probe. The loop is
   lifted from `fusord.cpp` and its seed is hashed against fusord's pin. **No emit path exists.**
+- **`src/wire.h/.cpp`** — the resident inside the window: its thread, the judgment ring, the fold.
+  **`src/tape.h/.cpp`** — the family's tape (BLAKE2b-256, canonical JSON, the chain, the verifier)
+  and the model's SHA-256. **`src/util.h`** — the one version string and the small helpers.
 - **`tools/drive.py`** — the window battery. Posts messages, reads artefacts, never synthesises
   input and never looks at the screen.
 - **`tools/theme_detect.py`** — derives `nib.theme` from an image. **`nib.theme`** — the palette
@@ -184,6 +206,7 @@ C:\nib\nib.exe --about         the backends by name, the module gate, no model l
 | 0e | every save path is reachable without global input | 17 checks over eight cases, three consecutive identical runs |
 | 1a | no percept is dropped without a loud count | byte conservation over **4,000 random typings, removals and idles**, and fired again from inside the running window |
 | 1b | margins move with content | they move **per seat by mandate**: a false claim moves SKEPTIC ~12 logits and leaves SPEAKER and SENTINEL where they were |
+| 1c | the mind inside the window costs the hand nothing it can feel, and the card comes back | keystroke → painted p50 605–607 µs off against 455–1189 µs on across two runs, p95 under 1.8 ms in all four; VRAM 5716 → 12727 → 5959 MiB; the tape INTACT under nib and glance |
 
 `Ctrl+R` in the editor runs the Stage 0 falsifier live and prints the answer on the status line.
 
@@ -198,17 +221,28 @@ python tools/theme_detect.py shot.png
 python tools/drive.py [--exe X] [--keep]   the window battery; exit 3 on any mismatch
 nib --ingest FILE [--chars N --quiet-ms T --tick-s S --counts]   the percept stream, no GPU
 nib --resident FILE [--ctx N --gpu-layers N --all]               the margins (needs the GPU)
+nib --resident FILE --script [--tick-s S]    a script: a line is typed, '- text' is removed, '# N' is N s of quiet
+nib --verify TAPE.jsonl                      walk a tape's chain, any tape in the family's format
+nib --about                                  version, serve hash, backends by name, the module gate
 ```
 
 Editor keys: `Ctrl+S` save · `Ctrl+Shift+S` save as · `Ctrl+O` open · `Ctrl+A/C/X/V` ·
-`Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Ctrl+R` fold the log and check it.
+`Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Ctrl+R` fold the log and check it · **`Ctrl+Shift+A` the AI
+switch** (on folds the log and loads the model; off unloads it). `nib.theme` beside the exe names
+the hand and the mind: `lane`, `model`, `llama_dir`, `n_ctx`, `gpu_layers`, `ai`.
 
 ### 4.6 The driver seam
 
 The window is tested by **posting messages and reading an artefact**, never by synthesising input.
 `WM_APP+1` (`WM_NIB_CMD`) with `wParam` one of `CmdSave=1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo,
-CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop`. Setting the environment variable
-`NIB_LOG` to a path makes the window append a tab-separated line per command result. Plain
+CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop, CmdIngest, CmdAiOn, CmdAiOff,
+CmdLatency, CmdJudgments, CmdTape, CmdBottom` (12–18 since Stage 1c). Setting the environment
+variable `NIB_LOG` to a path makes the window append a tab-separated line per command result;
+`NIB_DRIVER` makes the window no-activate (rule 12); `NIB_COMPILE` runs the compiler with no model
+in the process. The log's Stage 1c lines: `resident <state> …` (ready carries the model, the load
+ms, the SHA-256 and the hash ms), `judgment <boundary> <seat> <margin> <reason> <clause>`,
+`judgments …` (the counters), `latency <n> <p50> <p95> <max>` in µs, and `tape <rows> <path>
+<percepts> <judgments>`. Plain
 `WM_CHAR` posts work for typing; **Ctrl chords posted with `PostMessage` do not**, because a posted
 message does not update the thread's key state and `GetKeyState(VK_CONTROL)` reads false. That is
 why the command channel exists.
@@ -226,9 +260,10 @@ longer marked done ahead of its evidence.
 Run both oracles before any commit:
 
 ```
-C:\nib\nib.exe --selftest        144 passed, 0 failed     (2026-09-04, 0.6.1)
-python C:/nib/tools/drive.py     27 passed, 0 failed
-C:\nib\nib.exe --about           the runtime module gate: no network DLL in the process
+C:\nib\nib.exe --selftest           176 passed, 0 failed     (2026-09-05, 0.7.0)
+python C:/nib/tools/drive.py        27 passed, 0 failed     (three runs)
+python C:/nib/tools/drive.py --ai   41 passed, 0 failed     (needs the card; one model on it at a time)
+C:\nib\nib.exe --about              the runtime module gate: no network DLL in the process
 ```
 
 Three things the driver found, kept here because they are the kind of thing that comes back:
@@ -273,8 +308,21 @@ resident now enumerates the ggml devices and **refuses to start** without a GPU 
 `--allow-cpu` says so. Generalise it: when a fallback is silent and the two paths differ by 47×,
 the fallback must be a refusal.
 
-**Now: Stage 2 — emission, with floor control.** This is the first stage where the thing can
-speak, and everything in 1b exists so that letting it is a deliberate, dated decision. SPEC §6.3:
+**Stage 1c is done (2026-09-05, 0.7.0)** — `src/wire.h/.cpp`, `src/tape.h/.cpp`; ROADMAP, Stage
+1c, has the table. The resident runs inside the window on its own thread, the tape is the family's,
+the switch unloads the model. Three things it found that come back: the lifted loop probed every
+line's last word twice at the same trunk position (fixed; K5 fixed it too, independently); the
+trunk saw a double newline before every probe (fixed at the serve boundary); and switching on over
+a document costs 39 s for 4.2 KB, because the fold judges history at word grain — which is why the
+next stage is what it is.
+
+**Now: Stage 1d — the trunk as an asset**, from K5 (`docs/BACKLOG.md`, first section): the
+checkpoint beside the document, the resume tick, the hash cache, VRAM on the judgment row, torn-row
+recovery, and word wrap by the operator's word. Then:
+
+**Stage 2 — emission, with floor control.** This is the first stage where the thing can speak, and
+everything in 1b exists so that letting it is a deliberate, dated decision. **It lifts K5's seam
+(SPEC 6.3.4), not the 08-12 blind window, and the lift map is refreshed first.** SPEC §6.3:
 the resident writes into its own blocks and never inside a human's paragraph (6.3.1); an emission
 targeting a block that has had a human keystroke within the floor window is **refused before it is
 composed**, not after (6.3.2); and emission rate must express a real internal state — no invented

@@ -8,6 +8,9 @@
 #include "doc.h"
 #include "ingest.h"
 #include "resident.h"
+#include "tape.h"
+#include "util.h"
+#include "wire.h"
 
 #include <windows.h>
 
@@ -31,13 +34,12 @@ void check(bool ok, const std::string& what) {
 }
 void section(const char* s) { printf("\n%s\n", s); }
 
-std::string ssprintf(const char* f, ...) {
-    va_list ap;
-    va_start(ap, f);
-    char buf[2048];
-    const int n = vsnprintf(buf, sizeof buf, f, ap);
-    va_end(ap);
-    return std::string(buf, n > 0 ? (size_t)(n < (int)sizeof buf ? n : (int)sizeof buf - 1) : 0);
+std::string scratch_path(const char* name) {
+    char tmp[MAX_PATH]{};
+    GetTempPathA(MAX_PATH, tmp);
+    const std::string dir = std::string(tmp) + "nib-selftest";
+    make_dirs(dir);
+    return dir + "\\" + name;
 }
 
 std::string ops_summary(const std::vector<Op>& ops) {
@@ -798,22 +800,85 @@ int run_selftest() {
                   : "no payload");
     }
 
-    section("PadSource - a full ring is counted, never swallowed");
+    section("PadSource - a full ring spools, in order, and nothing is swallowed");
     {
         // CLAUDE.md rule 7: a dropped percept is the turn reborn inside the loop. The ring holds
-        // 1024; nothing polls it here, so the overflow is deliberate and must be VISIBLE.
+        // 1024; nothing polls it here, so the overflow is deliberate and must be VISIBLE - since
+        // Stage 1c as a spool that waits for room, never as a drop.
         auto srcp = std::make_unique<PadSource>();
         PadSource& src = *srcp;
         for (int i = 0; i < 3000; ++i) src.typed("bo", "word. ", 1000 + (uint64_t)i);
         src.flush(9000);
-        const uint64_t total = src.pushed() + src.dropped();
-        check(src.dropped() > 0, ssprintf("the ring overflowed: %llu pushed, %llu DROPPED",
-                                          (unsigned long long)src.pushed(), (unsigned long long)src.dropped()));
-        check(total == src.compiler().percepts(),
-              ssprintf("and every percept is accounted for: %llu pushed + dropped == %llu compiled",
-                       (unsigned long long)total, (unsigned long long)src.compiler().percepts()));
+        check(src.spooled() > 0 && src.dropped() == 0,
+              ssprintf("the ring filled: %llu pushed, %zu SPOOLED, %llu dropped",
+                       (unsigned long long)src.pushed(), src.spooled(), (unsigned long long)src.dropped()));
+        check(src.pushed() + src.spooled() == src.compiler().percepts(),
+              ssprintf("and every percept is accounted for: %llu pushed + %zu spooled == %llu compiled",
+                       (unsigned long long)src.pushed(), src.spooled(), (unsigned long long)src.compiler().percepts()));
         check(src.pending() == auricle::fusor::DeltaRing::capacity(),
               ssprintf("the ring is full at its capacity of %zu", src.pending()));
+        // the consumer drains; the spool follows, in order, until it is empty
+        auricle::fusor::Delta d{};
+        PerceptMeta m{};
+        uint64_t last_id = 0;
+        bool ordered = true;
+        size_t got = 0;
+        for (int round = 0; round < 4; ++round) {
+            while (src.poll(d)) { src.poll_meta(m); if (m.id <= last_id) ordered = false; last_id = m.id; ++got; }
+            src.pump();
+        }
+        check(got == src.compiler().percepts() && src.spooled() == 0 && ordered,
+              ssprintf("drained and pumped: %zu percepts came off in order, the spool is empty", got));
+    }
+
+    section("ingest - spans, jumps, and the fold");
+    {
+        // A percept knows where in the document it came from, and a hand that jumps elsewhere
+        // closes the clause it was in: the span must stay contiguous or it means nothing.
+        Compiler c;
+        std::vector<Percept> out;
+        c.typed("bo", "Hello ", 1000, 0, 1, out);
+        c.typed("bo", "world. ", 1001, 6, 2, out);
+        check(out.size() == 1 && out[0].a == 0 && out[0].b == 13 && out[0].rev == 2,
+              out.empty() ? "no percept" : ssprintf("a clause typed in two bursts spans [%zu,%zu) at rev %llu", out[0].a, out[0].b, (unsigned long long)out[0].rev));
+        out.clear();
+        c.typed("bo", "tail", 1002, 13, 3, out);
+        c.typed("bo", "HEAD ", 1003, 0, 4, out);   // a jump to the start closes "tail" first
+        check(out.size() == 1 && out[0].text == "tail" && out[0].a == 13 && out[0].b == 17,
+              out.empty() ? "no percept" : "a jump closes the pending clause where it stood: \"" + out[0].text + "\"");
+        out.clear();
+        c.removed("bo", "HEAD ", 1004, 0, 5, out);
+        check(out.size() >= 1 && out.back().kind == 'd' && out.back().a == 0 && out.back().b == 0,
+              "a deletion's span is empty at the point it left");
+
+        // The fold: the log replayed through a fresh pad reproduces what the pad compiled live -
+        // deletions and order included - which is what makes switching the resident on a resume
+        // rather than a snapshot.
+        Doc d;
+        std::string err;
+        d.splice(0, 0, "The build is green. ", "bo", err);
+        d.splice(20, 0, "Ship it Friday. ", "bo", err);
+        d.splice(4, 5, "", "bo", err);            // "build" leaves
+        d.splice(4, 0, "release", "bo", err);
+        auto srcp = std::make_unique<PadSource>();
+        const size_t revs = fold_log(d, *srcp, "bo");
+        srcp->flush(mono_ms());
+        std::vector<Percept> ps = srcp->take_shipped();
+        std::string typed, removed;
+        for (const auto& p : ps) { if (p.kind == 'w') typed += p.text; else if (p.kind == 'd') removed += p.text.substr(srcp->compiler().config().removed_mark.size()); }
+        check(revs == 4 && typed == "The build is green. Ship it Friday. release" && removed == "build",
+              ssprintf("%zu revisions folded: typed \"%s\", removed \"%s\"", revs, typed.c_str(), removed.c_str()));
+        check(srcp->compiler().typed_in() == srcp->compiler().typed_out() && srcp->compiler().removed_in() == srcp->compiler().removed_out(),
+              "and the fold conserves every byte, both ways");
+        // a budget keeps the tail and counts the rest, loudly
+        auto srcq = std::make_unique<PadSource>();
+        srcq->fold_begin();
+        fold_log(d, *srcq, "bo");
+        srcq->flush(mono_ms());
+        srcq->fold_end(20);
+        check(srcq->fold_skipped() > 0 && srcq->fold_shipped() > 0 && srcq->fold_shipped() + srcq->fold_skipped() == srcq->compiler().percepts(),
+              ssprintf("a 20-byte budget ships the last %llu percepts and counts %llu skipped (%llu bytes)",
+                       (unsigned long long)srcq->fold_shipped(), (unsigned long long)srcq->fold_skipped(), (unsigned long long)srcq->fold_skipped_bytes()));
     }
 
     section("the resident's serve format - train equals serve, as a run that fails");
@@ -987,6 +1052,101 @@ int run_selftest() {
         while (srcp->poll(d))
             if (d.lane[0] == 0 && std::string(d.payload, d.len) == "[tick +45s]") saw_tick = true;
         check(saw_tick, "and off the ring the tick is [tick +45s] on the empty lane");
+    }
+
+    section("the tape - BLAKE2b, canonical JSON, the chain, and the family's verifier");
+    {
+        // The hash vectors are caseclock's (tests/expected/hash-vectors.json, checked against
+        // hashlib) and glance's. The 127/128/129-byte cases are where a transcription of RFC 7693
+        // goes wrong: the last block is buffered and never compressed early.
+        check(blake2b_hex("") == "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8", "blake2b-256 of the empty string");
+        check(blake2b_hex("abc") == "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319", "blake2b-256(\"abc\")");
+        check(blake2b_hex("The quick brown fox jumps over the lazy dog") == "01718cec35cd3d796dd00020e0bfecb473ad23457d063b75eff29c0ffa2e58a9", "blake2b-256 of the fox");
+        check(blake2b_hex(std::string(127, 'a')) == "59e2f1aba240f20aa591016f5ef429990bc9c2131dcd0d30f0ffd75ed18f317d", "127 x a: one byte short of a block");
+        check(blake2b_hex(std::string(128, 'a')) == "ae2aa48507885c4c950fb809b2076f959cde9f8ea6da260d9a3587df33dac450", "128 x a: exactly one block, still the last");
+        check(blake2b_hex(std::string(129, 'a')) == "2f64744a6de0d2c0b56e64cf6e29a5aaa255010d415d51c75ccc82f73dccd865", "129 x a: the first block compresses only when the second arrives");
+        check(blake2b_hex(std::string(1000, 'a')) == "e00b0ddbf1e2cdaf5c898e1a5e8826ea3a2c339bcf2a478da2e5fca9ff126672", "1000 x a");
+        check(blake2b_hex(std::string(200, 'a')) == "6b6e59aaf00eb730cf93de53560846722184bbd92f8368c21ffa95380c2f9fe6", "200 x a: glance's two-block case");
+        check(canon::flt(1.0) == "1.0" && canon::flt(0.9) == "0.9" && canon::flt(1e-05) == "1e-05" && canon::flt(0.1 + 0.2) == "0.30000000000000004",
+              "canonical floats as Python's repr");
+        check(canon::obj({ { "seq", "0" }, { "kind", canon::str("note") }, { "at", "-20" } }) == "{\"at\":-20,\"kind\":\"note\",\"seq\":0}",
+              "canonical objects sort their keys");
+        check(canon::str("a\"b\\c\nd\x01") == "\"a\\\"b\\\\c\\nd\\u0001\"" && canon::str("\xC3\xA9") == "\"\xC3\xA9\"",
+              "canonical strings: Python's escapes, non-ASCII raw");
+
+        // The cross-implementation pin: this payload and its digests are REGISTRAR's tape.py's
+        // bytes, as glance's selftest pins them. Equal digests mean nib's tape IS the family's.
+        const std::string body0 = canon::obj({ { "text", canon::str("SYNTHETIC \xC3\xA9 \xE2\x80\x94 no PHI") }, { "n", "3" }, { "ok", "true" }, { "c", canon::flt(0.9) } });
+        const std::string p0 = Tape::payload(0, "note", -20, body0);
+        check(p0 == "{\"at\":-20,\"body\":{\"c\":0.9,\"n\":3,\"ok\":true,\"text\":\"SYNTHETIC \xC3\xA9 \xE2\x80\x94 no PHI\"},\"kind\":\"note\",\"seq\":0}", "payload: the reference's bytes");
+        const std::string d0 = Tape::digest(std::string(64, '0'), p0);
+        check(d0 == "404e7301fbe61b8cb50b671e3ebf2dad98635c8e78efe41f912f3ce6c7233194", "digest 0 equals REGISTRAR tape.py's");
+        const std::string p1 = Tape::payload(1, "change", -19, canon::obj({ { "path", canon::str("Labs/Serology drawn") }, { "new", canon::str("21:30") }, { "old", canon::str("") } }));
+        check(Tape::digest(d0, p1) == "aebaa958fbe4d12f19bc5a0017e1abc969fa54a50bdd34a37304973c93dd3ce9", "digest 1 chains from digest 0 as the reference does");
+
+        // A tape on disk: written, verified, continued across a reopen, and localised when broken.
+        const std::string path = scratch_path("tape.jsonl");
+        DeleteFileA(path.c_str());
+        Tape t;
+        std::string e;
+        check(t.open(path, "nib:selftest", { { "tool", canon::str("nib") } }, e), "a tape opens (" + e + ")");
+        t.append("note", 0, body0);
+        t.append("changeset", 5, canon::obj({ { "author", canon::str("bo") }, { "rev", "1" }, { "cs", canon::str("Z:0>5+5$hello") } }));
+        t.append("judgment", 700, canon::obj({ { "i", "1" }, { "margins", canon::obj({ { "SPEAKER", canon::flt(-6.1) }, { "SKEPTIC", canon::flt(5.56) }, { "SENTINEL", canon::flt(-6.09) } }) } }));
+        check(t.rows() == 3 && t.head() != std::string(64, '0'), "three rows appended, the head moved");
+        const std::string head3 = t.head();
+        t.close();
+        uint64_t rows = 0, bad = 0;
+        std::string head;
+        check(Tape::verify_file(path, rows, bad, head, e) && rows == 3 && head == head3, "verify: intact, three rows, head matches");
+        Tape t2;
+        check(t2.open(path, "nib:selftest", {}, e) && t2.rows() == 3 && t2.head() == head3, "reopening verifies first and continues the chain from its head");
+        t2.append("switch", 900, canon::obj({ { "which", canon::str("ai") }, { "to", canon::str("off") } }));
+        t2.close();
+        check(Tape::verify_file(path, rows, bad, head, e) && rows == 4, ssprintf("a fourth row chains on across the reopen (%llu rows)", (unsigned long long)rows));
+        std::string text;
+        read_file(path, text);
+        std::vector<std::string> ls;
+        for (size_t i = 0; i < text.size();) { size_t j = text.find('\n', i); if (j == std::string::npos) j = text.size(); ls.push_back(text.substr(i, j - i)); i = j + 1; }
+        check(ls.size() == 5 && ls[0].rfind("{\"case_id\":\"nib:selftest\"", 0) == 0 && ls[1].rfind("{\"at\":0,\"body\":", 0) == 0 &&
+              ls[1].find("\"digest\"") < ls[1].find("\"kind\"") && ls[1].find("\"kind\"") < ls[1].find("\"prev\"") && ls[1].find("\"prev\"") < ls[1].find("\"seq\""),
+              "file shape: the header, then rows of exactly the six keys in sorted order");
+        std::string flipped = text;
+        const size_t k = flipped.find("Z:0>5+5$hello");
+        flipped[k + 8] = 'j';   // one byte of row 1's body
+        const std::string broken = scratch_path("tape-broken.jsonl");
+        DeleteFileA(broken.c_str());
+        HANDLE bf = CreateFileA(broken.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        DWORD wn = 0;
+        WriteFile(bf, flipped.data(), (DWORD)flipped.size(), &wn, nullptr);
+        CloseHandle(bf);
+        const bool vb = Tape::verify_file(broken, rows, bad, head, e);
+        check(!vb && bad == 1, ssprintf("one flipped byte is localised to its row: bad row %llu (%s)", (unsigned long long)bad, e.c_str()));
+        Tape t3;
+        check(!t3.open(broken, "nib:selftest", {}, e), "and a broken chain refuses to be appended to: " + e);
+        printf("  the intact tape is at %s for glance --verify\n", path.c_str());
+
+        // The model's hash on the tape is the platform's SHA-256 (CNG), streamed over the file.
+        // Two FIPS 180-4 vectors, through a real file, and a missing file is a failure with a
+        // reason rather than a hash of nothing.
+        {
+            const std::string sp = scratch_path("sha.txt");
+            HANDLE sf = CreateFileA(sp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            DWORD swn = 0;
+            WriteFile(sf, "abc", 3, &swn, nullptr);
+            CloseHandle(sf);
+            std::string hx, se;
+            uint64_t nb = 0;
+            const bool ok1 = sha256_file(sp, hx, nb, se);
+            check(ok1 && nb == 3 && hx == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                  "sha256 of a file holding \"abc\" is FIPS 180-4's: " + hx);
+            sf = CreateFileA(sp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            CloseHandle(sf);
+            const bool ok0 = sha256_file(sp, hx, nb, se);
+            check(ok0 && nb == 0 && hx == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "sha256 of the empty file");
+            const bool okm = sha256_file(scratch_path("no-such-model.gguf"), hx, nb, se);
+            check(!okm && hx.empty() && !se.empty(), "a missing model is a reported failure, not a hash: " + se);
+        }
     }
 
     section("refusals");

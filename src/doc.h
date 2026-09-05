@@ -40,7 +40,10 @@ struct Rev {
     std::string inverse;   // the changeset that undoes it, against the text AFTER cs; empty for a foreign change
     std::string author;    // whose hand: "me", a resident's lane, or a peer's — never a verb
     char kind = 'e';       // 'e' edit · 'o' open · 'u' undo · 'r' redo · 'a' a foreign change applied
+    uint64_t ms = 0;       // when, on the steady clock — the tape's `at`, and what the fold replays
 };
+
+uint64_t mono_ms();        // the steady clock in milliseconds, shared by the document, the pad and the tape
 
 class Doc {
 public:

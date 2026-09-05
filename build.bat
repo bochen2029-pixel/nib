@@ -23,15 +23,17 @@ rem never touches a llama symbol (CLAUDE.md: a battery that needs a 9B stops bei
 set LLAMA=C:\auricle\third_party\llama.cpp
 if not exist "%LLAMA%\lib\llama.lib" ( echo build: FAIL - llama import libs not found at %LLAMA%\lib & exit /b 1 )
 set CXXFLAGS=/nologo /c /std:c++20 /O2 /W4 /WX /permissive- /EHsc /utf-8 /MT /Zc:__cplusplus /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Isrc /I"%AURICLE%" /I"%LLAMA%\include"
-cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\doc.cpp src\edit.cpp src\ingest.cpp src\resident.cpp src\selftest.cpp || exit /b 1
-link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj doc.obj edit.obj ingest.obj resident.obj selftest.obj ^
+cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\doc.cpp src\edit.cpp src\ingest.cpp src\resident.cpp src\tape.cpp src\wire.cpp src\selftest.cpp || exit /b 1
+link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj doc.obj edit.obj ingest.obj resident.obj tape.obj wire.obj selftest.obj ^
   "%LLAMA%\lib\llama.lib" "%LLAMA%\lib\ggml.lib" "%LLAMA%\lib\ggml-base.lib" ^
-  kernel32.lib user32.lib gdi32.lib comdlg32.lib delayimp.lib ^
+  kernel32.lib user32.lib gdi32.lib comdlg32.lib bcrypt.lib delayimp.lib ^
   /DELAYLOAD:llama.dll /DELAYLOAD:ggml.dll /DELAYLOAD:ggml-base.dll || exit /b 1
 rem All three are DELAY-loaded so that --selftest, --ingest and the editor still run on a machine
 rem with no llama.cpp and no model: nothing touches a llama symbol until --resident asks for one.
 rem ggml-base carries the backend-device enumeration (ggml_backend_dev_name/type), which is how a
 rem silent CPU fallback is caught, so it is imported from directly and must be named here.
+rem bcrypt is the platform's SHA-256, for the model's hash on the tape (CLAUDE.md rule 8). It is a
+rem hard import and it is not a network DLL; the gate below still names only the five.
 dumpbin /nologo /dependents nib.exe > build-dependents.txt || exit /b 1
 findstr /i /c:"ws2_32" /c:"wininet" /c:"winhttp" /c:"urlmon" /c:"dnsapi" build-dependents.txt >nul
 if not errorlevel 1 (

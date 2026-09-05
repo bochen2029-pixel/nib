@@ -1,4 +1,4 @@
-# nib.theme - the palette from the operator's screenshots.
+# nib.theme - the palette from the operator's screenshots, and since Stage 1c the hand and the mind.
 # Colours are data. Edit freely, or re-derive them from any image:
 #     python tools/theme_detect.py shot.png
 # nib reads this file at startup and falls back to its own defaults for anything missing.
@@ -9,3 +9,13 @@ accent     #2196f3
 selection  #16324a
 font       Consolas
 font_pt    11
+# The hand: the lane the trunk sees this person's words on. v11 was tuned on [bo]; a second
+# person on the same binary is a different file with a different lane.
+lane       bo
+# The mind: the model, where llama.cpp's DLLs live, the window, and the switch's position at
+# startup. n_ctx 16384 costs 272 MiB of q8_0 KV on this model (measured 2026-09-04; 8192 is 136).
+model      C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf
+llama_dir  C:/llama.cpp
+n_ctx      16384
+gpu_layers 99
+ai         off

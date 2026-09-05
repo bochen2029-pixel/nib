@@ -25,6 +25,17 @@ control. Their findings are folded into §3, §4, §6 and §8 and are attributed
 > delay-load assertion, and every doc correction in §3.3. Oracles: 144 in the exe, 27 from the
 > driver, `--about` green. One incident during the pass is recorded in the devlog (a driven window
 > took the keyboard). Next is §8's P1, Stage 1c.
+>
+> **Status, 2026-09-05.** §8's **P1 landed as 0.7.0** — Stage 1c: the wire, the tape, spans on
+> percepts and judgments, the AI switch with unload, the latency instrument, the model's SHA-256
+> on the session row — and the measurements of §6.2 were taken (ROADMAP, Stage 1c; the T sweep
+> waits on a real typing tape). Read since, and post-dating this review by four hours:
+> `C:\fusor1\converge\src\fusord.cpp`, K5, the convergence of the two fusord lineages that came
+> after the kernel nib lifted from. Same pin. It corrects §5.6: **restart by re-fold is the twin,
+> and the trunk is the asset** (a checkpoint beside the document, Stage 1d); it already contains
+> §5.9's seam, which Stage 2 lifts; and the lift map's line ranges for Stages 2–4 point at the
+> 08-12 kernel and need a K5 addendum before Stage 2. Operator ruling: K5 is a source of ideas,
+> not of bytes, while it is in flux (CLAUDE.md).
 
 ---
 

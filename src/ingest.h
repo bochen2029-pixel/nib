@@ -18,11 +18,17 @@
 //      byte quietly — the exact failure CLAUDE.md rule 7 forbids.
 //   3. `lane` is a strncpy into 16 bytes, so a lane longer than 15 characters is truncated,
 //      also silently. Lanes are checked against that bound at the door.
+//
+// And a fourth, from Stage 1c: a Delta carries no `kind` and no position. What the resident needs
+// beyond the bytes — which percept this is, which revision and which span of the document it
+// came from — rides a second ring in lockstep with the first (`PerceptMeta`), pushed only when
+// the Delta itself was pushed, so the two can never disagree about order.
 #pragma once
 
 #include "fusor/source.h"   // auricle::fusor::{Delta, DeltaRing, StreamingTextSource, fill_delta}
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -41,6 +47,14 @@ struct Percept {
     std::string text;
     uint64_t    wall_ms = 0;
     char        kind = 'w';   // 'w' typed world · 'd' a deletion · 't' an idle tick
+    // Where in the document it came from: the byte span [a, b) in the coordinates of revision
+    // `rev` (the revision the edit produced). A deletion's span is empty at the point it left;
+    // a tick's is the point the pad was at. Judgments inherit these, and the floor rule of
+    // Stage 2 is a test on them.
+    uint64_t    id = 0;
+    uint64_t    rev = 0;
+    size_t      a = 0, b = 0;
+    bool        folded = false;   // re-perceived by the fold at switch-on, not compiled live
 };
 
 // The lane a percept travels on. A tick is not anyone's speech: it goes on the EMPTY lane, which
@@ -50,6 +64,16 @@ struct Percept {
 // The kind itself does not survive the ring — `Delta` has no field for it (SPEC 5.1.7) — so the
 // lane carries the one bit that matters until auricle's `Delta` gains a `kind` in its padding.
 inline const char* delta_lane(const Percept& p) { return p.kind == 't' ? "" : p.lane.c_str(); }
+
+// What rides beside a Delta. Trivially copyable, because it rides an SPSC ring.
+struct PerceptMeta {
+    uint64_t id;
+    uint64_t rev;
+    uint64_t wall_ms;
+    uint32_t a, b;
+    char     kind;
+};
+using MetaRing = ::auricle::SpscRing<PerceptMeta, 1024>;
 
 // ---------------------------------------------------------------------------------------------
 // The compiler. Pure, single-threaded, no ring, no clock of its own — every entry point takes the
@@ -80,14 +104,26 @@ public:
     explicit Compiler(Config c = Config{}) : cfg_(std::move(c)) {}
     const Config& config() const { return cfg_; }
 
-    // Text arrived. Appends to the pending clause and emits whatever is complete.
+    // Text arrived at document offset `pos`, producing revision `rev`. Appends to the pending
+    // clause and emits whatever is complete. Text that does not continue the pending clause's
+    // span (the hand jumped elsewhere) closes it first: a jump is a boundary.
     void typed(const std::string& lane, const std::string& text, uint64_t now_ms,
-               std::vector<Percept>& out);
+               size_t pos, uint64_t rev, std::vector<Percept>& out);
 
-    // Text left. Emitted immediately as its own percept, after flushing anything pending, because
-    // the order in which the world happened is part of the world.
+    // Text left, at `pos`. Emitted immediately as its own percept, after flushing anything
+    // pending, because the order in which the world happened is part of the world.
     void removed(const std::string& lane, const std::string& text, uint64_t now_ms,
-                 std::vector<Percept>& out);
+                 size_t pos, uint64_t rev, std::vector<Percept>& out);
+
+    // The sequential forms, for a stream with no positions of its own (a file compiled as if
+    // typed, a script): the text continues where the last one ended.
+    static constexpr size_t kContinue = (size_t)-1;
+    void typed(const std::string& lane, const std::string& text, uint64_t now_ms, std::vector<Percept>& out) {
+        typed(lane, text, now_ms, kContinue, last_rev_, out);
+    }
+    void removed(const std::string& lane, const std::string& text, uint64_t now_ms, std::vector<Percept>& out) {
+        removed(lane, text, now_ms, kContinue, last_rev_, out);
+    }
 
     // No edit arrived. Emits the pending clause once T ms of quiet have passed.
     void idle(uint64_t now_ms, std::vector<Percept>& out);
@@ -98,7 +134,7 @@ public:
     bool has_pending() const { return !pending_.empty(); }
     size_t pending_size() const { return pending_.size(); }
 
-    // The falsifier's arithmetic (SPEC 11.6). Every byte that entered must leave in some percept:
+    // The falsifier's arithmetic (SPEC 5.1.11). Every byte that entered must leave in some percept:
     // typed_in() == typed_out() and removed_in() == removed_out(), always, with nothing pending.
     uint64_t typed_in() const { return typed_in_; }
     uint64_t typed_out() const { return typed_out_; }
@@ -109,7 +145,7 @@ public:
 
 private:
     void emit(const std::string& lane, std::string text, uint64_t now_ms, char kind,
-              std::vector<Percept>& out);
+              size_t a, uint64_t rev, std::vector<Percept>& out);
     void maybe_tick(uint64_t now_ms, std::vector<Percept>& out);
     void drain(uint64_t now_ms, std::vector<Percept>& out);
     void push_pending(uint64_t now_ms, std::vector<Percept>& out);
@@ -117,6 +153,10 @@ private:
     Config cfg_;
     std::string pending_;        // the clause being accumulated
     std::string pending_lane_;
+    size_t pending_at_ = 0;      // document offset of pending_'s first byte, in pending_rev_'s frame
+    uint64_t pending_rev_ = 0;
+    size_t last_pos_ = 0;        // where the pad was last, for a tick's point
+    uint64_t last_rev_ = 0;
     uint64_t last_input_ms_ = 0;
     uint64_t last_percept_ms_ = 0;
 
@@ -140,22 +180,40 @@ size_t sentence_cut(const std::string& s);
 // PadSource — the pad, presented to the resident as a live stream.
 //
 // Producer side (the editor thread) calls typed/removed/idle. Consumer side (the resident thread)
-// calls poll. Between them is auricle's SPSC ring, so the editor never blocks on the mind and the
-// mind never blocks on the editor.
+// calls poll, then poll_meta. Between them are two SPSC rings in lockstep, so the editor never
+// blocks on the mind and the mind never blocks on the editor.
 //
 // **NEVER PUT ONE OF THESE ON THE STACK.** It embeds the 1024-slot ring by value, and a Delta is
-// 528 bytes, so a PadSource is ~528 KB — over half of a default 1 MB thread stack. Declaring one
+// 528 bytes, so a PadSource is ~560 KB — over half of a default 1 MB thread stack. Declaring one
 // as a local overflows the stack at construction, which presents as an instant silent crash with
 // no output at all (exit 0xC00000FD). Found exactly that way on 2026-09-04. Heap-allocate it.
+//
+// A full ring no longer drops: the percept waits in a SPOOL on the producer's side and is pushed
+// when the ring has room (`pump`, from the editor's timer). Delay is legal — judgment may be
+// delayed; the world is never edited — and the spool's depth is on the status line. Only the
+// spool's own cap (a quarter million percepts) drops, and that is counted loudly as before.
 class PadSource final : public auricle::fusor::StreamingTextSource {
 public:
     explicit PadSource(Compiler::Config c = Compiler::Config{}) : comp_(std::move(c)) {}
 
     // --- producer side --------------------------------------------------------------------
-    void typed(const std::string& lane, const std::string& text, uint64_t now_ms);
-    void removed(const std::string& lane, const std::string& text, uint64_t now_ms);
+    void typed(const std::string& lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev);
+    void removed(const std::string& lane, const std::string& text, uint64_t now_ms, size_t pos, uint64_t rev);
+    void typed(const std::string& lane, const std::string& text, uint64_t now_ms) { typed(lane, text, now_ms, Compiler::kContinue, 0); }
+    void removed(const std::string& lane, const std::string& text, uint64_t now_ms) { removed(lane, text, now_ms, Compiler::kContinue, 0); }
     void idle(uint64_t now_ms);
     void flush(uint64_t now_ms);
+    void pump();                        // move spooled percepts onto the rings while they have room
+
+    // The fold (Stage 1c): the document's history replayed into the compiler at switch-on. Between
+    // fold_begin and fold_end nothing is shipped; fold_end ships the LAST percepts that fit
+    // `budget_bytes` and counts the rest as skipped, loudly — a window is only so long, and until
+    // the molt (Stage 2) a resident that joins a long document joins it part-way, and says so.
+    void fold_begin();
+    void fold_end(size_t budget_bytes);
+    uint64_t fold_shipped() const { return fold_shipped_; }
+    uint64_t fold_skipped() const { return fold_skipped_; }
+    uint64_t fold_skipped_bytes() const { return fold_skipped_bytes_; }
 
     // The resident's own seats. A delta on one of these lanes MUST NOT be fed back (SPEC 5.1.6):
     // in a pad the resident writes into the buffer it reads, so the filter lives here, at the
@@ -165,25 +223,38 @@ public:
 
     // --- consumer side (StreamingTextSource) ------------------------------------------------
     bool poll(auricle::fusor::Delta& out) override { return ring_.try_pop(out); }
+    bool poll_meta(PerceptMeta& out) { return meta_.try_pop(out); }
     void stop() override {}
     const char* name() const override { return "pad"; }
 
     // --- what the status line and the tape read ----------------------------------------------
     size_t pending() const { return ring_.size(); }          // how far behind the mind is running
+    size_t spooled() const { return spool_.size(); }         // waiting for room on the ring
     uint64_t pushed() const { return pushed_; }
-    uint64_t dropped() const { return dropped_; }            // ring full — counted LOUDLY (rule 7)
+    uint64_t dropped() const { return dropped_; }            // the spool's cap — counted LOUDLY (rule 7)
     uint64_t echoes() const { return echoes_; }              // self-echo filtered at the door
     uint64_t truncated_lanes() const { return trunc_lanes_; }
     const Compiler& compiler() const { return comp_; }
+    // Every percept shipped since the last call, for the tape (the editor thread appends them).
+    std::vector<Percept> take_shipped();
 
 private:
     void ship(std::vector<Percept>& ps);
+    bool push_one(const Percept& p);
 
     Compiler comp_;
     auricle::fusor::DeltaRing ring_;
+    MetaRing meta_;
     std::vector<std::string> seats_;
     std::vector<Percept> scratch_;
+    std::deque<Percept> spool_;
+    std::vector<Percept> shipped_;      // for the tape
+    std::vector<Percept> fold_;         // held between fold_begin and fold_end
+    bool folding_ = false;
+    uint64_t next_id_ = 1;
     uint64_t pushed_ = 0, dropped_ = 0, echoes_ = 0, trunc_lanes_ = 0;
+    uint64_t fold_shipped_ = 0, fold_skipped_ = 0, fold_skipped_bytes_ = 0;
+    static constexpr size_t kSpoolMax = 262144;
 };
 
 }  // namespace nib

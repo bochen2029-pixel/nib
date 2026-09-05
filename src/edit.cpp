@@ -1,4 +1,5 @@
-// nib · edit.cpp — the window. Stage 0: a plain-text editor whose every keystroke is a changeset.
+// nib · edit.cpp — the window. A plain-text editor whose every keystroke is a changeset, and,
+// since Stage 1c, the surface a resident mind perceives through and is rendered on.
 //
 // Win32 and GDI, no framework, one exe. A monospace face so a column is arithmetic rather than a
 // measurement, which keeps the caret honest and the painting cheap. Per-monitor DPI: the font is
@@ -14,14 +15,22 @@
 //     on open and restored on save — nib does not silently convert somebody's file.
 //   * A save is atomic: a temporary beside the target, then a replace. A crash halfway through
 //     must not be able to destroy the thing it was saving.
+//
+// And the wire (CLAUDE.md rule 11): this thread owns the document, the view, the pad and the
+// tape. The resident lives on its own thread inside `Wire`, meets this one only at two rings, and
+// is never called from here. The AI switch is the wire's start and stop; off unloads the model.
 #include "doc.h"
 #include "ingest.h"
 #include "resident.h"   // seats(): the lanes the self-echo filter must know, from one source
+#include "tape.h"
+#include "util.h"
+#include "wire.h"
 
 #include <windows.h>
 #include <commdlg.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <memory>
@@ -37,7 +46,9 @@ namespace {
 // to be and can type into somebody else's window. WM_APP+1 carries a command; NIB_LOG names a file
 // every command result is appended to. Same shape as glance's WM_APP_REATTACH and GLANCE_LOG.
 // The palette is data: `nib.theme` beside the exe, written by tools/theme_detect.py from an
-// image, or edited by hand. Anything missing or unparsable falls back to the value below.
+// image, or edited by hand. Anything missing or unparsable falls back to the value below. Since
+// Stage 1c the same file names the hand and the mind — the lane, the model, the window — because
+// those are data too, and a second person on the same binary is a different file.
 struct Theme {
     COLORREF bg = RGB(0x0d, 0x15, 0x20);
     COLORREF fg = RGB(0x21, 0x96, 0xf3);
@@ -46,10 +57,30 @@ struct Theme {
     COLORREF sel = RGB(0x16, 0x32, 0x4a);
     std::wstring font = L"Consolas";
     int pt = 11;
+    // the hand and the mind
+    std::string lane = "bo";
+    std::string model = "C:/models/Qwen3.5-9B-emit-v11-Q5_K_M.gguf";
+    std::string llama_dir = "C:/llama.cpp";
+    int n_ctx = 16384;   // 272 MiB of q8_0 KV on this model, measured 2026-09-04; 8192 was 136
+    int gpu_layers = 99;
+    bool ai = false;   // the switch's position at startup; off is the safe default on a shared card
 };
 
-enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop, CmdIngest };
+enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop,
+           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom };
 constexpr UINT WM_NIB_CMD = WM_APP + 1;
+
+// A judged span, in CURRENT document coordinates, with the three seats' margins at that boundary.
+// The gutter renders it; every later edit moves or retires it (see note_edit).
+struct Mark {
+    size_t a, b;
+    float margin[3];
+    bool have[3];
+    uint32_t boundary;
+};
+// An edit region and the revision it produced, so a judgment that arrives late (it was computed
+// against revision r) can be carried forward to the text as it stands.
+struct EditRec { uint64_t rev; size_t start, ndel, ins; };
 
 struct View {
     Doc doc;
@@ -72,10 +103,9 @@ struct View {
     FILE* log = nullptr;
     Theme th;
 
-    // Stage 1: the pad compiles a world. The source is heap-allocated because it embeds the ring
-    // and is ~528 KB — see the note in ingest.h. Nothing reads from it yet; the resident is the
-    // next stage. What exists now is the guarantee that when the mind arrives, everything typed
-    // since the window opened was already compiled, in order, with nothing lost.
+    // The pad. Heap-allocated because it embeds two rings (~560 KB) — see ingest.h. It exists
+    // while the AI switch is on (off means no ingest, SPEC 6.1.1), or under NIB_COMPILE for the
+    // driver's arithmetic checks with no model in the process.
     std::unique_ptr<PadSource> ingest;
     uint64_t last_percepts = 0;
 
@@ -83,6 +113,22 @@ struct View {
     // its second WM_CHAR. Windows delivers one character as two surrogate messages; converting
     // either alone yields U+FFFD, which is how an emoji used to land on disk as two question marks.
     wchar_t high = 0;
+
+    // Stage 1c — the wire, the tape, the marks, the clock
+    Wire wire;
+    Resident::Config rcfg;
+    bool ai_wanted = false;
+    WireState last_state = WireState::Off;
+    Tape tape;
+    uint64_t t0 = 0;              // the session's origin on the steady clock; the tape's `at` is ms since it
+    size_t tape_rev = 0;          // log entries already on the tape
+    bool tape_dirty = false;
+    uint64_t percept_rows = 0, judgment_rows = 0;
+    std::vector<Mark> marks;
+    std::vector<EditRec> edits;
+    struct { uint32_t boundary = 0; int n = 0; JudgmentRow rows[3]; } pend;   // three seats, one row
+    int64_t key_qpc = 0;          // the keystroke whose repaint is being timed
+    std::vector<uint32_t> lat_us; // keystroke -> painted, microseconds
 };
 
 // "#rrggbb" -> COLORREF, or false and the caller keeps its default
@@ -94,13 +140,16 @@ bool parse_hex(const std::string& v, COLORREF& out) {
     return true;
 }
 
-void load_theme(Theme& t) {
+std::wstring exe_dir() {
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir(exe);
     const size_t slash = dir.find_last_of(L"\\/");
-    dir = slash == std::wstring::npos ? L"." : dir.substr(0, slash);
-    FILE* f = _wfopen((dir + L"\\nib.theme").c_str(), L"rb");
+    return slash == std::wstring::npos ? L"." : dir.substr(0, slash);
+}
+
+void load_theme(Theme& t) {
+    FILE* f = _wfopen((exe_dir() + L"\\nib.theme").c_str(), L"rb");
     if (!f) return;
     char line[512];
     while (fgets(line, sizeof line, f)) {
@@ -123,12 +172,19 @@ void load_theme(Theme& t) {
             std::wstring w2((size_t)(n > 0 ? n : 0), L'\00');
             if (n > 0) { MultiByteToWideChar(CP_UTF8, 0, v.data(), (int)v.size(), w2.data(), n); t.font = w2; }
         }
+        else if (k == "lane" && !v.empty() && v.size() <= kLaneUsable) t.lane = v;
+        else if (k == "model") t.model = v;
+        else if (k == "llama_dir") t.llama_dir = v;
+        else if (k == "n_ctx") { const int n = atoi(v.c_str()); if (n >= Resident::kMinCtx) t.n_ctx = n; }
+        else if (k == "gpu_layers") t.gpu_layers = atoi(v.c_str());
+        else if (k == "ai") t.ai = v == "on" || v == "1" || v == "true";
     }
     fclose(f);
 }
 
 View* g = nullptr;
 constexpr int kPad = 8;
+constexpr int kGutter = 10;   // the margin where a judged line carries its mark
 
 void nlog(const char* fmt, ...) {
     if (!g || !g->log) return;
@@ -142,6 +198,9 @@ void nlog(const char* fmt, ...) {
 
 int px(int logical) { return MulDiv(logical, g->dpi, 96); }
 bool dirty() { return g->doc.revisions() != g->saved_rev; }
+
+int64_t qpc() { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; }
+int64_t qpf() { static const int64_t f = [] { LARGE_INTEGER x; QueryPerformanceFrequency(&x); return x.QuadPart; }(); return f; }
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return {};
@@ -183,11 +242,84 @@ void make_font(HWND h) {
     ReleaseDC(h, dc);
 }
 
+// two status rows at the bottom: the document's, and the resident's
 int visible_lines(HWND h) {
     RECT rc;
     GetClientRect(h, &rc);
-    const int body = rc.bottom - px(kPad) * 2 - g->ch;
+    const int body = rc.bottom - px(kPad) * 2 - 2 * g->ch;
     return body / g->ch > 0 ? body / g->ch : 1;
+}
+
+// ---- the tape ------------------------------------------------------------------------------------
+int64_t tape_at(uint64_t ms) { return (int64_t)ms - (int64_t)g->t0; }
+
+void tape_row_at(const char* kind, uint64_t ms, const std::string& body, bool flush_now = false) {
+    if (!g->tape.is_open()) return;
+    g->tape.append(kind, tape_at(ms), body);
+    g->tape_dirty = true;
+    if (flush_now) { g->tape.flush(); g->tape_dirty = false; }
+}
+void tape_row(const char* kind, const std::string& body, bool flush_now = false) { tape_row_at(kind, mono_ms(), body, flush_now); }
+
+// every revision the document has that the tape does not: one row each, stamped when it happened
+void sync_tape_changesets() {
+    if (!g->tape.is_open()) return;
+    const auto& log = g->doc.log();
+    for (; g->tape_rev < log.size(); ++g->tape_rev) {
+        const Rev& r = log[g->tape_rev];
+        g->tape.append("changeset", tape_at(r.ms), canon::obj({
+            { "rev", canon::num((int64_t)g->tape_rev + 1) },
+            { "author", canon::str(r.author) },
+            { "kind", canon::str(std::string(1, r.kind)) },
+            { "cs", canon::str(r.cs) },
+        }));
+        g->tape_dirty = true;
+    }
+}
+
+// every percept the pad shipped since the last call — the world as the mind will see it
+void tape_percepts() {
+    if (!g->ingest) return;
+    for (const Percept& p : g->ingest->take_shipped()) {
+        if (p.kind == 't')
+            tape_row_at("tick", p.wall_ms, canon::obj({ { "id", canon::num((int64_t)p.id) }, { "text", canon::str(p.text) },
+                                                         { "rev", canon::num((int64_t)p.rev) }, { "pos", canon::num((int64_t)p.a) } }));
+        else
+            tape_row_at("percept", p.wall_ms, canon::obj({ { "id", canon::num((int64_t)p.id) }, { "lane", canon::str(p.lane) },
+                                                            { "kind", canon::str(std::string(1, p.kind)) }, { "rev", canon::num((int64_t)p.rev) },
+                                                            { "a", canon::num((int64_t)p.a) }, { "b", canon::num((int64_t)p.b) },
+                                                            { "folded", canon::boolean(p.folded) },
+                                                            { "text", canon::str(p.text) } }));
+        ++g->percept_rows;
+    }
+}
+
+std::string slug_of(const std::wstring& path) {
+    if (path.empty()) return "untitled";
+    return narrow(path.substr(path.find_last_of(L"\\/") + 1));
+}
+
+// The tape lives beside the document, append-only across sessions (a resident's ledger outlives
+// one process); an untitled document's tape lives in runs/ beside the exe until it has a name.
+void open_tape() {
+    g->tape.close();
+    g->tape_rev = 0;
+    std::string p;
+    if (!g->path.empty()) p = narrow(g->path) + ".tape.jsonl";
+    else p = narrow(exe_dir()) + "\\runs\\untitled-" + std::to_string((unsigned long long)g->t0) + ".tape.jsonl";
+    FILETIME ft{};
+    GetSystemTimeAsFileTime(&ft);
+    const uint64_t epoch_ms = (((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000ull - 11644473600000ull;
+    std::string err;
+    if (!g->tape.open(p, "nib:" + slug_of(g->path), {
+            { "tool", canon::str("nib") }, { "version", canon::str(kVersion) },
+            { "t0_epoch_ms", canon::num((int64_t)epoch_ms) }, { "doc", canon::str(narrow(g->path)) } }, err)) {
+        set_status("tape: " + err);
+        return;
+    }
+    tape_row("session_open", canon::obj({ { "doc", canon::str(narrow(g->path)) }, { "version", canon::str(kVersion) },
+                                          { "lane", canon::str(g->th.lane) } }), true);
+    sync_tape_changesets();
 }
 
 // ---- selection -------------------------------------------------------------------------------
@@ -224,7 +356,32 @@ void after_edit(HWND h, bool caret_from_doc) {
     clear_sel();
     scroll_to_caret(h);
     set_title(h);
+    sync_tape_changesets();
     InvalidateRect(h, nullptr, TRUE);
+}
+
+// An edit region moves every mark after it and retires every mark it touches — the judged text
+// was edited, so the judgment is stale — and is remembered with its revision so a judgment that
+// arrives later can be carried forward to the text as it stands now.
+void note_edit(size_t start, size_t ndel, size_t ins) {
+    g->edits.push_back(EditRec{ g->doc.revisions(), start, ndel, ins });
+    if (g->edits.size() > 4096) g->edits.erase(g->edits.begin(), g->edits.begin() + 2048);
+    for (size_t i = 0; i < g->marks.size();) {
+        Mark& m = g->marks[i];
+        if (start >= m.b) { ++i; continue; }
+        if (start + ndel <= m.a) { m.a = m.a - ndel + ins; m.b = m.b - ndel + ins; ++i; continue; }
+        g->marks.erase(g->marks.begin() + (std::ptrdiff_t)i);
+    }
+}
+
+bool transform_span(uint64_t rev, size_t& a, size_t& b) {
+    for (const EditRec& e : g->edits) {
+        if (e.rev <= rev) continue;
+        if (e.start >= b) continue;
+        if (e.start + e.ndel <= a) { a = a - e.ndel + e.ins; b = b - e.ndel + e.ins; continue; }
+        return false;
+    }
+    return true;
 }
 
 void edit_splice(HWND h, int64_t start, int64_t ndel, const std::string& ins) {
@@ -235,18 +392,21 @@ void edit_splice(HWND h, int64_t start, int64_t ndel, const std::string& ins) {
     if (ndel > 0 && start >= 0 && (size_t)start <= g->doc.size())
         gone = g->doc.text().substr((size_t)start, (size_t)ndel);
 
-    if (!g->doc.splice(start, ndel, ins, "me", err)) {
+    if (!g->doc.splice(start, ndel, ins, g->th.lane, err)) {
         set_status("refused: " + err);
         InvalidateRect(h, nullptr, TRUE);
         return;
     }
+    note_edit((size_t)start, gone.size(), ins.size());
 
     // Ingest is unconditional (SPEC 5.1.4) and happens only after the edit is accepted, so the
     // stream the resident sees is exactly the document's history and never a refused attempt.
     if (g->ingest) {
-        const uint64_t t = auricle::fusor::now_ms();
-        if (!gone.empty()) g->ingest->removed("bo", gone, t);
-        if (!ins.empty()) g->ingest->typed("bo", ins, t);
+        const uint64_t t = g->doc.log().back().ms;
+        const uint64_t rev = g->doc.revisions();
+        if (!gone.empty()) g->ingest->removed(g->th.lane, gone, t, (size_t)start, rev);
+        if (!ins.empty()) g->ingest->typed(g->th.lane, ins, t, (size_t)start, rev);
+        tape_percepts();
     }
     after_edit(h, true);
 }
@@ -256,7 +416,6 @@ void edit_splice(HWND h, int64_t start, int64_t ndel, const std::string& ins) {
 // difference between the text before and after. The QC of 2026-09-04 typed 26 characters, undid
 // them, and watched the percept counters stand still while the document emptied.
 void perceive_change(const std::string& before, const std::string& after) {
-    if (!g->ingest) return;
     const size_t n = before.size() < after.size() ? before.size() : after.size();
     size_t p = 0;
     while (p < n && before[p] == after[p]) ++p;
@@ -267,15 +426,19 @@ void perceive_change(const std::string& before, const std::string& after) {
     while (s > 0 && ((unsigned char)before[before.size() - s] & 0xC0) == 0x80) --s;
     const std::string gone = before.substr(p, before.size() - s - p);
     const std::string came = after.substr(p, after.size() - s - p);
-    const uint64_t t = auricle::fusor::now_ms();
-    if (!gone.empty()) g->ingest->removed("bo", gone, t);
-    if (!came.empty()) g->ingest->typed("bo", came, t);
+    note_edit(p, gone.size(), came.size());
+    if (!g->ingest) return;
+    const uint64_t t = g->doc.log().back().ms;
+    const uint64_t rev = g->doc.revisions();
+    if (!gone.empty()) g->ingest->removed(g->th.lane, gone, t, p, rev);
+    if (!came.empty()) g->ingest->typed(g->th.lane, came, t, p, rev);
+    tape_percepts();
 }
 
 void do_undo_redo(HWND h, bool redo) {
     std::string err;
     const std::string before = g->doc.text();
-    const bool ok = redo ? g->doc.redo("me", err) : g->doc.undo("me", err);
+    const bool ok = redo ? g->doc.redo(g->th.lane, err) : g->doc.undo(g->th.lane, err);
     if (ok) {
         perceive_change(before, g->doc.text());
         after_edit(h, false);
@@ -342,7 +505,7 @@ void move_horizontal(HWND h, int delta, bool extend) {
 }
 
 size_t offset_at_point(int mx, int my) {
-    const int x = mx - px(kPad), y = my - px(kPad);
+    const int x = mx - px(kPad) - px(kGutter), y = my - px(kPad);
     const int64_t row = y / g->ch;
     int64_t line = (int64_t)g->top_line + (row < 0 ? 0 : row);
     if (line < 0) line = 0;
@@ -389,6 +552,153 @@ void paste(HWND h) {
     if (!lf.empty()) insert_text(h, lf);
 }
 
+// ---- the AI switch -------------------------------------------------------------------------------
+// What the trunk can hold of the document's history when the resident switches on: the window,
+// less the seed, less a margin for the live typing to come, at roughly 3.5 bytes a token. The
+// fold ships the LAST percepts that fit and counts the rest, loudly, on the tape and the status
+// line. The molt (Stage 2) is what makes a long document a non-event.
+size_t fold_budget_bytes() {
+    const int toks = g->rcfg.n_ctx - 512 - 430 - 1024;
+    return toks > 0 ? (size_t)toks * 7 / 2 : 0;
+}
+
+std::string model_name() {
+    const size_t k = g->th.model.find_last_of("\\/");
+    return k == std::string::npos ? g->th.model : g->th.model.substr(k + 1);
+}
+
+void start_resident() {
+    // A fresh world for the mind: the log replayed through the compiler with its own clock, so
+    // the resident that switches on perceives the document as it was written — deletions, order
+    // and silences included — not a snapshot of how it looks.
+    g->ingest = std::make_unique<PadSource>();
+    register_seats(*g->ingest);
+    g->ingest->fold_begin();
+    const size_t revs = fold_log(g->doc, *g->ingest, g->th.lane);
+    g->ingest->fold_end(fold_budget_bytes());
+    tape_row("fold", canon::obj({
+        { "revisions", canon::num((int64_t)revs) },
+        { "percepts", canon::num((int64_t)g->ingest->compiler().percepts()) },
+        { "shipped", canon::num((int64_t)g->ingest->fold_shipped()) },
+        { "skipped", canon::num((int64_t)g->ingest->fold_skipped()) },
+        { "skipped_bytes", canon::num((int64_t)g->ingest->fold_skipped_bytes()) },
+        { "budget_bytes", canon::num((int64_t)fold_budget_bytes()) },
+    }), true);
+    tape_percepts();
+    g->last_percepts = g->ingest->compiler().percepts();
+    g->wire.start(g->rcfg, g->ingest.get());
+    g->last_state = WireState::Loading;
+    nlog("resident	loading	%s", g->th.model.c_str());
+}
+
+void stop_resident() {
+    if (g->wire.on() || g->wire.state() == WireState::Stopping) {
+        g->wire.stop();   // joins: a decode in flight is at most one batch; then the card comes back
+        tape_row("end", canon::obj({
+            { "boundaries", canon::num((int64_t)g->wire.boundaries()) },
+            { "probes", canon::num((int64_t)g->wire.probes()) },
+            { "wanted", canon::num((int64_t)g->wire.wanted()) },
+            { "ticks", canon::num((int64_t)g->wire.ticks()) },
+            { "deltas", canon::num((int64_t)g->wire.deltas()) },
+            { "dropped_words", canon::num((int64_t)g->wire.dropped_words()) },
+            { "window_full", canon::boolean(g->wire.window_full()) },
+            { "context_used", canon::num(g->wire.context_used()) },
+            { "probe_ms", canon::num((int64_t)g->wire.probe_ms()) },
+        }), true);
+        nlog("resident	off	%llu boundaries", (unsigned long long)g->wire.boundaries());
+    }
+    g->last_state = g->wire.state();
+    if (!getenv("NIB_COMPILE")) g->ingest.reset();   // off means no ingest
+}
+
+void ai_set(HWND h, bool on) {
+    if (on == g->ai_wanted) return;
+    tape_row("switch", canon::obj({ { "which", canon::str("ai") }, { "from", canon::str(g->ai_wanted ? "on" : "off") },
+                                    { "to", canon::str(on ? "on" : "off") } }), true);
+    g->ai_wanted = on;
+    if (on) { start_resident(); set_status("AI: loading " + model_name()); }
+    else { stop_resident(); set_status("AI off - the model is unloaded, the card is returned"); }
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// ---- judgments arriving --------------------------------------------------------------------------
+void flush_pending_judgment() {
+    if (g->pend.n == 0) return;
+    const JudgmentRow& r0 = g->pend.rows[0];
+    std::vector<std::pair<std::string, std::string>> margins;
+    for (int i = 0; i < g->pend.n; ++i)
+        margins.emplace_back(seats()[g->pend.rows[i].seat].name, canon::flt(g->pend.rows[i].margin));
+    tape_row_at("judgment", r0.wall_ms, canon::obj({
+        { "i", canon::num((int64_t)r0.boundary) },
+        { "rev", canon::num((int64_t)r0.rev) },
+        { "a", canon::num((int64_t)r0.a) },
+        { "b", canon::num((int64_t)r0.b) },
+        { "first_id", canon::num((int64_t)r0.first_id) },
+        { "last_id", canon::num((int64_t)r0.last_id) },
+        { "reason", canon::str(std::string(1, r0.reason)) },
+        { "bscore", canon::flt(r0.bscore) },
+        { "clause", canon::str(r0.clause) },
+        { "margins", canon::obj(margins) },
+    }), true);
+    ++g->judgment_rows;
+    g->pend.n = 0;
+}
+
+void poll_wire(HWND h) {
+    const WireState s = g->wire.state();
+    if (s != g->last_state) {
+        g->last_state = s;
+        if (s == WireState::Ready) {
+            nlog("resident	ready	%s	%llu ms	%s	%llu ms", g->wire.detail().c_str(), (unsigned long long)g->wire.load_ms(),
+                 g->wire.model_hash().c_str(), (unsigned long long)g->wire.hash_ms());
+            tape_row("session", g->wire.session_body(), true);
+            for (size_t i = 0; i < seat_count(); ++i)
+                tape_row("mandate", canon::obj({ { "seat", canon::num((int64_t)i) }, { "name", canon::str(seats()[i].name) },
+                                                 { "mandate", canon::str(seats()[i].mandate) } }));
+            if (g->ingest) {
+                const Compiler::Config& c = g->ingest->compiler().config();
+                tape_row("coefficient", canon::obj({ { "name", canon::str("chars") }, { "value", canon::num((int64_t)c.chars) } }));
+                tape_row("coefficient", canon::obj({ { "name", canon::str("quiet_ms") }, { "value", canon::num(c.quiet_ms) } }));
+                tape_row("coefficient", canon::obj({ { "name", canon::str("idle_tick_s") }, { "value", canon::num(c.idle_tick_s) } }));
+                tape_row("coefficient", canon::obj({ { "name", canon::str("removed_mark") }, { "value", canon::str(c.removed_mark) } }));
+            }
+            tape_row("coefficient", canon::obj({ { "name", canon::str("n_ctx") }, { "value", canon::num(g->rcfg.n_ctx) } }), true);
+            set_status(ssprintf("AI on: %s loaded in %.1f s", model_name().c_str(), g->wire.load_ms() / 1000.0));
+        } else if (s == WireState::Error) {
+            nlog("resident	error	%s", g->wire.detail().c_str());
+            tape_row("error", canon::obj({ { "text", canon::str(g->wire.detail()) } }), true);
+            g->ai_wanted = false;
+            if (!getenv("NIB_COMPILE")) g->ingest.reset();
+            set_status("AI error: " + g->wire.detail());
+        }
+        InvalidateRect(h, nullptr, FALSE);
+    }
+
+    JudgmentRow r;
+    bool any = false;
+    while (g->wire.poll(r)) {
+        any = true;
+        size_t a = r.a, b = r.b;
+        const bool live = transform_span(r.rev, a, b);
+        Mark* m = nullptr;
+        if (!g->marks.empty() && g->marks.back().boundary == r.boundary) m = &g->marks.back();
+        else if (live) {
+            Mark nm{};
+            nm.a = a; nm.b = b; nm.boundary = r.boundary;
+            g->marks.push_back(nm);
+            if (g->marks.size() > 256) g->marks.erase(g->marks.begin());
+            m = &g->marks.back();
+        }
+        if (m && r.seat >= 0 && r.seat < 3) { m->margin[r.seat] = r.margin; m->have[r.seat] = true; }
+        nlog("judgment	%u	%s	%.2f	%c	%s", r.boundary, seats()[r.seat].name, (double)r.margin, r.reason, r.clause);
+        // the tape row carries the three seats of one boundary together, as fusord's k=b does
+        if (g->pend.n == 0 || g->pend.boundary != r.boundary) { flush_pending_judgment(); g->pend.boundary = r.boundary; }
+        if (g->pend.n < 3) g->pend.rows[g->pend.n++] = r;
+        if (g->pend.n == 3) flush_pending_judgment();
+    }
+    if (any) InvalidateRect(h, nullptr, FALSE);
+}
+
 // ---- files ------------------------------------------------------------------------------------
 bool read_all(const std::wstring& path, std::string& out) {
     HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -433,6 +743,10 @@ bool write_atomic(const std::wstring& path, const std::string& bytes, std::strin
 }
 
 void load_into(HWND h, const std::wstring& path, std::string raw) {
+    // A different file is a different world: the resident, if it is on, stops perceiving this one
+    // and starts again on the other by folding its log; the tape switches to the new document's.
+    const bool ai = g->ai_wanted;
+    if (ai) stop_resident();
     g->bom = raw.size() >= 3 && (unsigned char)raw[0] == 0xEF && (unsigned char)raw[1] == 0xBB && (unsigned char)raw[2] == 0xBF;
     if (g->bom) raw.erase(0, 3);
     g->crlf = raw.find("\r\n") != std::string::npos;
@@ -448,15 +762,20 @@ void load_into(HWND h, const std::wstring& path, std::string raw) {
     g->caret = g->anchor = 0;
     g->top_line = 0;
     g->idx.build(g->doc.text());
-    // A different file is a different world: the pad's compiler starts over, and the text the
-    // file brought with it is perceived as the hand's own. Until the tape exists (Stage 1c) a
-    // file has no other provenance to offer. Open, like undo, must not bypass the mind.
-    if (g->ingest) {
+    g->marks.clear();
+    g->edits.clear();
+    g->pend.n = 0;
+    open_tape();
+    if (getenv("NIB_COMPILE") && !ai) {
+        // the driver's arithmetic seam: compile with no model in the process; the file's text is
+        // perceived as the hand's own, which is all a file has to offer without a tape
         g->ingest = std::make_unique<PadSource>();
         register_seats(*g->ingest);
         g->last_percepts = 0;
-        if (!g->doc.text().empty()) g->ingest->typed("bo", g->doc.text(), auricle::fusor::now_ms());
+        fold_log(g->doc, *g->ingest, g->th.lane);
+        tape_percepts();
     }
+    if (ai) start_resident();
     set_status(std::string("opened · ") + (g->crlf ? "CRLF" : "LF") + (g->bom ? " · BOM" : ""));
     set_title(h);
     InvalidateRect(h, nullptr, TRUE);
@@ -476,8 +795,17 @@ bool save_to(HWND h, const std::wstring& path) {
     }
     std::string err;
     if (!write_atomic(path, bytes, err)) { set_status("save failed: " + err); InvalidateRect(h, nullptr, TRUE); return false; }
+    const bool renamed = path != g->path;
     g->path = path;
     g->saved_rev = g->doc.revisions();
+    if (renamed) {
+        // the document has a name now (or a new one): its tape moves beside it, chaining on
+        const std::string prev_head = g->tape.head();
+        const std::string prev_path = g->tape.path();
+        open_tape();
+        tape_row("resume", canon::obj({ { "from", canon::str(prev_path) }, { "head", canon::str(prev_head) } }), true);
+    }
+    tape_row("save", canon::obj({ { "bytes", canon::num((int64_t)bytes.size()) }, { "rev", canon::num((int64_t)g->doc.revisions()) } }), true);
     nlog("saved	%zu	%zu", bytes.size(), g->doc.revisions());
     set_status("saved " + std::to_string(bytes.size()) + " bytes · " + (g->crlf ? "CRLF" : "LF"));
     set_title(h);
@@ -531,6 +859,41 @@ bool ok_to_discard(HWND h) {
 }
 
 // ---- painting -----------------------------------------------------------------------------------
+COLORREF lerp(COLORREF from, COLORREF to, float t) {
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    auto ch = [t](int a, int b) { return (int)(a + (b - a) * t + 0.5f); };
+    return RGB(ch(GetRValue(from), GetRValue(to)), ch(GetGValue(from), GetGValue(to)), ch(GetBValue(from), GetBValue(to)));
+}
+
+// The resident's row of the status line. Every word of it is a state that exists: which switch
+// position, what loaded, the last margins, how much of the window is used, how far the pad is
+// ahead of the mind. Nothing here animates and nothing here pretends (rule 5).
+std::string resident_line() {
+    const WireState s = g->wire.state();
+    if (!g->ai_wanted && s == WireState::Off) return "AI off  ·  Ctrl+Shift+A to switch on";
+    switch (s) {
+        case WireState::Loading: return "AI loading  ·  " + model_name();
+        case WireState::Stopping: return "AI stopping";
+        case WireState::Error: return "AI error  ·  " + g->wire.detail();
+        case WireState::Off: return "AI off";
+        case WireState::Ready: {
+            std::string l = ssprintf("AI on  ·  SPEAKER %+.1f  SKEPTIC %+.1f  SENTINEL %+.1f  ·  %llu boundaries  ·  ctx %d/%d",
+                                     (double)g->wire.last_margin(0), (double)g->wire.last_margin(1), (double)g->wire.last_margin(2),
+                                     (unsigned long long)g->wire.boundaries(), g->wire.context_used(), g->rcfg.n_ctx);
+            if (g->ingest) {
+                if (g->ingest->spooled()) l += ssprintf("  ·  spool %zu", g->ingest->spooled());
+                if (g->ingest->fold_skipped()) l += ssprintf("  ·  joined late: %llu percepts before me", (unsigned long long)g->ingest->fold_skipped());
+                if (g->ingest->dropped()) l += "  ·  DROPPED";
+            }
+            if (g->wire.window_full()) l += ssprintf("  ·  WINDOW FULL: %llu words unperceived", (unsigned long long)g->wire.dropped_words());
+            l += "  ·  0 B egress";
+            return l;
+        }
+    }
+    return "";
+}
+
 void paint(HWND h) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(h, &ps);
@@ -546,7 +909,7 @@ void paint(HWND h) {
     SetBkMode(dc, TRANSPARENT);
 
     const int rows = visible_lines(h);
-    const int x0 = px(kPad), y0 = px(kPad);
+    const int x0 = px(kPad) + px(kGutter), y0 = px(kPad);
     const std::string& t = g->doc.text();
     const size_t lo = sel_lo(), hi = sel_hi();
 
@@ -556,6 +919,27 @@ void paint(HWND h) {
         const size_t a = g->idx.start[line];
         const size_t len = g->idx.line_len(line, t);
         const int y = y0 + r * g->ch;
+
+        // the gutter: the strongest want among the seats that judged this line, as brightness.
+        // Margins mean something only near contention (the deep tail measures phrasing, not
+        // judgment), so the scale saturates: nothing below -6, everything above +2.
+        {
+            float best = -1e9f;
+            bool any = false;
+            for (const Mark& m : g->marks) {
+                if (m.b < a || m.a > a + len) continue;
+                for (int s = 0; s < 3; ++s) if (m.have[s] && m.margin[s] > best) { best = m.margin[s]; any = true; }
+            }
+            if (any) {
+                const float bright = (best + 6.0f) / 8.0f;
+                if (bright > 0.05f) {
+                    RECT bar{ px(kPad), y + px(2), px(kPad) + px(4), y + g->ch - px(2) };
+                    HBRUSH gb = CreateSolidBrush(lerp(bg, best > 0 ? g->th.accent : dim, bright));
+                    FillRect(dc, &bar, gb);
+                    DeleteObject(gb);
+                }
+            }
+        }
 
         // the selection band for this line, drawn under the glyphs
         if (has_sel() && hi > a && lo < a + len + 1) {
@@ -590,7 +974,7 @@ void paint(HWND h) {
         DeleteObject(cb);
     }
 
-    // the status line: the estate's signature, and where the two switches will live
+    // the status lines: the document's, then the resident's
     SetTextColor(dc, dim);
     char buf[320];
     const size_t line = g->idx.line_of(g->caret);
@@ -609,10 +993,31 @@ void paint(HWND h) {
                 (unsigned long long)g->doc.size(), (unsigned long long)g->doc.revisions(),
                 dirty() ? "  unsaved" : "", ing, g->status.c_str());
     const std::wstring sw = widen(buf);
-    TextOutW(dc, x0, rc.bottom - px(kPad) - g->ch, sw.c_str(), (int)sw.size());
+    TextOutW(dc, px(kPad), rc.bottom - px(kPad) - g->ch, sw.c_str(), (int)sw.size());
+    const std::wstring rw = widen(resident_line());
+    TextOutW(dc, px(kPad), rc.bottom - px(kPad) - 2 * g->ch, rw.c_str(), (int)rw.size());
 
     SelectObject(dc, old);
     EndPaint(h, &ps);
+
+    // keystroke -> painted, for the latency instrument (the Stage 1c falsifier: this must not
+    // move when the resident is on)
+    if (g->key_qpc) {
+        const int64_t d = qpc() - g->key_qpc;
+        g->key_qpc = 0;
+        const uint64_t us = (uint64_t)(d * 1000000 / qpf());
+        if (g->lat_us.size() >= 8192) g->lat_us.erase(g->lat_us.begin(), g->lat_us.begin() + 4096);
+        g->lat_us.push_back((uint32_t)(us > 0xFFFFFFFFull ? 0xFFFFFFFFull : us));
+    }
+}
+
+void report_latency() {
+    std::vector<uint32_t> v = g->lat_us;
+    if (v.empty()) { nlog("latency	0	0	0	0"); return; }
+    std::sort(v.begin(), v.end());
+    const uint32_t p50 = v[v.size() / 2], p95 = v[(v.size() * 95) / 100 < v.size() ? (v.size() * 95) / 100 : v.size() - 1], mx = v.back();
+    nlog("latency	%zu	%u	%u	%u", v.size(), p50, p95, mx);
+    g->lat_us.clear();
 }
 
 LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
@@ -622,22 +1027,30 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             make_font(h);
             g->idx.build(g->doc.text());
             set_title(h);
-            g->ingest = std::make_unique<PadSource>();
-            register_seats(*g->ingest);   // the resident's own lanes never re-enter as world (SPEC 5.1.6)
-            // The compiler's T is a quiet timeout, so something has to notice the quiet. 120 ms is
-            // well under the smallest sensible T and costs nothing when nothing has been typed.
+            if (getenv("NIB_COMPILE")) {
+                // the driver's seam: compile with no model in the process (Stage 1a's battery)
+                g->ingest = std::make_unique<PadSource>();
+                register_seats(*g->ingest);
+            }
+            // The compiler's T is a quiet timeout, so something has to notice the quiet; the wire's
+            // judgments arrive on a ring, so something has to drain it. 120 ms is well under the
+            // smallest sensible T and costs nothing when nothing has happened.
             SetTimer(h, 1, 120, nullptr);
             return 0;
 
-        case WM_TIMER:
+        case WM_TIMER: {
+            bool repaint = false;
             if (g->ingest) {
-                g->ingest->idle(auricle::fusor::now_ms());
-                // repaint only when the count actually moved; a 120 ms unconditional repaint
-                // would be a busy editor that looks idle
+                g->ingest->idle(mono_ms());
+                tape_percepts();
                 const uint64_t n = g->ingest->compiler().percepts();
-                if (n != g->last_percepts) { g->last_percepts = n; InvalidateRect(h, nullptr, FALSE); }
+                if (n != g->last_percepts) { g->last_percepts = n; repaint = true; }
             }
+            poll_wire(h);
+            if (g->tape_dirty) { g->tape.flush(); g->tape_dirty = false; }
+            if (repaint) InvalidateRect(h, nullptr, FALSE);
             return 0;
+        }
 
         case WM_DPICHANGED: {
             g->dpi = HIWORD(wp);
@@ -655,17 +1068,18 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         case WM_CHAR: {
             const wchar_t c = (wchar_t)wp;
             if (GetKeyState(VK_CONTROL) & 0x8000) return 0;   // Ctrl chords are handled in WM_KEYDOWN
+            g->key_qpc = qpc();
             if (c == '\r') { g->high = 0; insert_text(h, "\n"); return 0; }
             if (c == '\t') { g->high = 0; insert_text(h, "    "); return 0; }
-            if (c < 0x20) return 0;
+            if (c < 0x20) { g->key_qpc = 0; return 0; }
             // An astral character arrives as two messages, a high surrogate then a low one. Hold
             // the first until the second, convert the pair, and drop an unpaired half rather than
             // let the converter substitute U+FFFD.
             wchar_t w[2] = { 0, 0 };
             int wn = 0;
-            if (c >= 0xD800 && c <= 0xDBFF) { g->high = c; return 0; }
+            if (c >= 0xD800 && c <= 0xDBFF) { g->high = c; g->key_qpc = 0; return 0; }
             if (c >= 0xDC00 && c <= 0xDFFF) {
-                if (!g->high) return 0;
+                if (!g->high) { g->key_qpc = 0; return 0; }
                 w[0] = g->high; w[1] = c; wn = 2; g->high = 0;
             } else {
                 g->high = 0; w[0] = c; wn = 1;
@@ -673,16 +1087,16 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             char utf8[8]{};
             const int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w, wn, utf8, sizeof utf8, nullptr, nullptr);
             if (n > 0) insert_text(h, std::string(utf8, (size_t)n));
+            else g->key_qpc = 0;
             return 0;
         }
 
         case WM_KEYDOWN: {
             const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            std::string err;
             switch (wp) {
-                case VK_BACK: backspace(h); return 0;
-                case VK_DELETE: del_forward(h); return 0;
+                case VK_BACK: g->key_qpc = qpc(); backspace(h); return 0;
+                case VK_DELETE: g->key_qpc = qpc(); del_forward(h); return 0;
                 case VK_LEFT: move_horizontal(h, -1, shift); return 0;
                 case VK_RIGHT: move_horizontal(h, 1, shift); return 0;
                 case VK_UP: move_vertical(h, -1, shift); return 0;
@@ -699,6 +1113,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case VK_PRIOR: move_vertical(h, -visible_lines(h), shift); return 0;
                 case VK_NEXT: move_vertical(h, visible_lines(h), shift); return 0;
                 case 'A':
+                    if (ctrl && shift) { ai_set(h, !g->ai_wanted); return 0; }   // the AI switch
                     if (ctrl) { g->anchor = 0; move_to(h, g->doc.size(), true, false); }
                     return 0;
                 case 'C': if (ctrl) copy_sel(h); return 0;
@@ -729,7 +1144,6 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         }
 
         case WM_NIB_CMD: {
-            std::string err;
             switch ((int)wp) {
                 case CmdSave: do_save(h, false); break;
                 case CmdSaveAs: do_save(h, true); break;
@@ -744,6 +1158,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     break;
                 case CmdSelectAll: g->anchor = 0; move_to(h, g->doc.size(), true, false); break;
                 case CmdTop: move_to(h, 0, false, false); break;
+                case CmdBottom: move_to(h, g->doc.size(), false, false); break;   // the driver's windows are visible, and a click in one is the operator's
                 case CmdHome: move_to(h, g->idx.start[g->idx.line_of(g->caret)], false, false); break;
                 case CmdEnd: {
                     const size_t l = g->idx.line_of(g->caret);
@@ -764,7 +1179,8 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     // pending, then report the arithmetic. bytes-in must equal bytes-out and
                     // dropped must be zero, or a percept was lost between a keystroke and the mind.
                     if (!g->ingest) { nlog("ingest	0	0	0	0	0	0	0"); break; }
-                    g->ingest->flush(auricle::fusor::now_ms());
+                    g->ingest->flush(mono_ms());
+                    tape_percepts();
                     const Compiler& c = g->ingest->compiler();
                     // percepts · dropped · typed in · typed out · pushed · removed in · removed out
                     nlog("ingest	%llu	%llu	%llu	%llu	%llu	%llu	%llu",
@@ -777,6 +1193,34 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                                    ? "ingest: nothing lost"
                                    : "INGEST LOST A PERCEPT");
                     InvalidateRect(h, nullptr, TRUE);
+                    break;
+                }
+                case CmdAiOn: ai_set(h, true); break;
+                case CmdAiOff: ai_set(h, false); break;
+                case CmdLatency: report_latency(); break;
+                case CmdJudgments: {
+                    poll_wire(h);
+                    const char* st = "off";
+                    switch (g->wire.state()) {
+                        case WireState::Loading: st = "loading"; break;
+                        case WireState::Ready: st = "ready"; break;
+                        case WireState::Stopping: st = "stopping"; break;
+                        case WireState::Error: st = "error"; break;
+                        default: break;
+                    }
+                    // boundaries · probes · wanted · ticks · dropped words · window full · state · deltas · context
+                    nlog("judgments	%llu	%llu	%llu	%llu	%llu	%d	%s	%llu	%d",
+                         (unsigned long long)g->wire.boundaries(), (unsigned long long)g->wire.probes(),
+                         (unsigned long long)g->wire.wanted(), (unsigned long long)g->wire.ticks(),
+                         (unsigned long long)g->wire.dropped_words(), g->wire.window_full() ? 1 : 0, st,
+                         (unsigned long long)g->wire.deltas(), g->wire.context_used());
+                    break;
+                }
+                case CmdTape: {
+                    flush_pending_judgment();
+                    if (g->tape.is_open()) { g->tape.flush(); g->tape_dirty = false; }
+                    nlog("tape	%llu	%s	%llu	%llu", (unsigned long long)g->tape.rows(), g->tape.path().c_str(),
+                         (unsigned long long)g->percept_rows, (unsigned long long)g->judgment_rows);
                     break;
                 }
                 default: break;
@@ -834,8 +1278,13 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 int run_editor(const std::string& path_utf8) {
     static View view;
     g = &view;
+    g->t0 = mono_ms();
     if (const char* lp = getenv("NIB_LOG")) g->log = fopen(lp, "ab");
     load_theme(g->th);
+    g->rcfg.model = g->th.model;
+    g->rcfg.llama_dir = g->th.llama_dir;
+    g->rcfg.n_ctx = g->th.n_ctx;
+    g->rcfg.n_gpu_layers = g->th.gpu_layers;
 
     // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow
     // answers 96, WM_DPICHANGED is never delivered, and on a 225 % box the window is a bitmap
@@ -873,17 +1322,25 @@ int run_editor(const std::string& path_utf8) {
         const std::wstring wp = widen(path_utf8);
         std::string raw;
         if (read_all(wp, raw)) load_into(h, wp, std::move(raw));
-        else { g->path = wp; set_status("new file"); set_title(h); }   // a path that is not there yet is a new file
+        else { g->path = wp; open_tape(); set_status("new file"); set_title(h); }   // a path that is not there yet is a new file
+    } else {
+        open_tape();
     }
 
     ShowWindow(h, driven ? SW_SHOWNOACTIVATE : SW_SHOW);
     UpdateWindow(h);
+    if (g->th.ai) ai_set(h, true);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    if (g->ai_wanted) { g->ai_wanted = false; stop_resident(); }
+    else g->wire.stop();
+    flush_pending_judgment();
+    tape_row("session_close", canon::obj({ { "revisions", canon::num((int64_t)g->doc.revisions()) } }), true);
+    g->tape.close();
     if (g->font) DeleteObject(g->font);
     if (g->log) fclose(g->log);
     return 0;

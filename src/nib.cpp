@@ -5,6 +5,8 @@
 #include "doc.h"
 #include "ingest.h"
 #include "resident.h"
+#include "tape.h"
+#include "util.h"
 
 #include <windows.h>
 
@@ -21,15 +23,13 @@ int run_editor(const std::string& path);     // edit.cpp
 
 namespace {
 
-// One version string, so the binary cannot report a number the repository has moved past.
-const char* kVersion = "0.6.1";
-
 const char* kUsage =
     "nib %s - a writing surface with no send key on either side\n"
     "\n"
     "  nib --selftest                  the oracle: the port, the document, the compiler, the gates\n"
     "  nib --edit [FILE]               the window\n"
     "  nib --about                     what this build is: version, serve hash, DLLs, the module gate\n"
+    "  nib --verify TAPE.jsonl         walk a tape's chain (any tape in the family's format)\n"
     "  nib --unpack CS                 split a changeset into oldLen, newLen, ops and charBank\n"
     "  nib --ops CS                    the operations, one per line\n"
     "  nib --check CS                  validate it, canonical form included (exit 2 if not)\n"
@@ -39,8 +39,10 @@ const char* kUsage =
     "        --lane L --chars N --quiet-ms T --tick-s S --burst N --burst-ms M --counts\n"
     "  nib --resident FILE [opts]      run the mind over it; print what each seat wanted\n"
     "        --model P --ctx N --gpu-layers N --all --verbose --allow-cpu   (needs the GPU)\n"
+    "        --script   FILE is a script: a line is typed; '- text' is removed; '# N' is N s of quiet\n"
     "\n"
-    "Stage 1b: the resident computes hold/emit and records it. It cannot speak.\n";
+    "The resident computes hold/emit and records it. It cannot speak. In the window, Ctrl+Shift+A\n"
+    "switches it on and off; off unloads the model.\n";
 
 int do_unpack(const std::string& cs) {
     Unpacked u;
@@ -68,6 +70,17 @@ int do_check(const std::string& cs) {
     if (!check_rep(cs, err)) { printf("not canonical: %s\n", err.c_str()); return 2; }
     printf("canonical\n");
     return 0;
+}
+
+// The family's verifier, as glance prints it: INTACT with the row count and the head, or the
+// first broken row named. Exit 0 or 3.
+int do_verify(const std::string& path) {
+    uint64_t rows = 0, bad = 0;
+    std::string head, err;
+    const bool ok = Tape::verify_file(path, rows, bad, head, err);
+    if (ok) printf("%s: INTACT, %llu rows, head %s\n", path.c_str(), (unsigned long long)rows, head.substr(0, 16).c_str());
+    else printf("%s: BROKEN at row %llu - %s\n", path.c_str(), (unsigned long long)bad, err.c_str());
+    return ok ? 0 : 3;
 }
 
 // What this build is, with no model loaded: the version, the serve-format pin, and the two gates
@@ -176,7 +189,7 @@ int do_resident(int argc, char** argv) {
     std::string path, lane = "bo";
     Resident::Config rc;
     Compiler::Config cc;
-    bool show_all = false;
+    bool show_all = false, script = false;
     for (int i = 2; i < argc; ++i) {
         const std::string f = argv[i];
         if (f == "--model" && i + 1 < argc) rc.model = argv[++i];
@@ -185,9 +198,11 @@ int do_resident(int argc, char** argv) {
         else if (f == "--gpu-layers" && i + 1 < argc) rc.n_gpu_layers = atoi(argv[++i]);
         else if (f == "--lane" && i + 1 < argc) lane = argv[++i];
         else if (f == "--chars" && i + 1 < argc) cc.chars = (size_t)atoll(argv[++i]);
+        else if (f == "--tick-s" && i + 1 < argc) cc.idle_tick_s = atoll(argv[++i]);
         else if (f == "--verbose") rc.verbose = true;
         else if (f == "--allow-cpu") rc.allow_cpu = true;
         else if (f == "--all") show_all = true;
+        else if (f == "--script") script = true;
         else if (path.empty()) path = f;
     }
     if (path.empty()) { fprintf(stderr, "nib: --resident needs a file\n"); return 2; }
@@ -223,14 +238,32 @@ int do_resident(int argc, char** argv) {
            res.have_gpu() ? "" : "  (CPU ONLY - this will be slow)", res.module_count());
 
     // The pad compiles the file exactly as it would compile typing, so what the resident sees
-    // here is byte-identical to what it would see from the window.
+    // here is byte-identical to what it would see from the window. A script is the same stream
+    // with two extra kinds of line: "- text" is a deletion, "# N" is N seconds of quiet — the
+    // two experiments the review asked for (do deletions move the margins; are ticks perceived).
     Compiler comp(cc);
     std::vector<Percept> ps;
     uint64_t clock = 1000;
-    for (size_t i = 0; i < text.size(); i += 6) {
-        const size_t n = 6 < text.size() - i ? 6 : text.size() - i;
-        comp.typed(lane, text.substr(i, n), clock, ps);
-        clock += 40;
+    if (script) {
+        size_t i = 0;
+        while (i < text.size()) {
+            size_t j = text.find('\n', i);
+            if (j == std::string::npos) j = text.size();
+            std::string line = text.substr(i, j - i);
+            i = j + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            if (line.rfind("# ", 0) == 0) { clock += (uint64_t)atoll(line.c_str() + 2) * 1000ull; comp.idle(clock, ps); continue; }
+            if (line.rfind("- ", 0) == 0) { comp.removed(lane, line.substr(2), clock, ps); clock += 40; continue; }
+            comp.typed(lane, line + "\n", clock, ps);
+            clock += 40 * (uint64_t)(line.size() / 6 + 1);
+        }
+    } else {
+        for (size_t i = 0; i < text.size(); i += 6) {
+            const size_t n = 6 < text.size() - i ? 6 : text.size() - i;
+            comp.typed(lane, text.substr(i, n), clock, ps);
+            clock += 40;
+        }
     }
     comp.flush(clock, ps);
 
@@ -289,6 +322,7 @@ int main(int argc, char** argv) {
     if (a == "--unpack" && argc > 2) return do_unpack(argv[2]);
     if (a == "--ops" && argc > 2) return do_ops(argv[2]);
     if (a == "--check" && argc > 2) return do_check(argv[2]);
+    if (a == "--verify" && argc > 2) return do_verify(argv[2]);
     if (a == "--splice" && argc > 5) {
         const std::string orig = argv[2], ins = argv[5];
         const long long start = atoll(argv[3]), ndel = atoll(argv[4]);

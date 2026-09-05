@@ -435,3 +435,100 @@
   failed, three identical runs; nib --about: no network module in the process. The exe is 470 KB.
 - NEXT is Stage 1c, the wire: the resident on its own thread inside the window, the gutter, the AI
   switch that unloads the model, and the tape in the family's format - per the review's section 8.
+
+## 2026-09-05 (small hours) · Stage 1c - the wire, and the tape
+
+- The resident lives inside the window now, on its own thread (src/wire.h/.cpp). The editor thread
+  owns the document, the view, the pad and the tape; the wire owns the resident; they meet at two
+  SPSC rings, percepts out and judgments back, and neither ever waits on the other (CLAUDE.md rule
+  11). Ctrl+Shift+A is the AI switch. On folds the document's history through the compiler with each
+  revision's own timestamp, so the mind perceives the document as it was written - deletions,
+  order and silences included - and then loads the model while the window keeps painting. Off
+  joins the thread and destroys the resident, and the card comes back: 5716 -> 12727 -> 5959 MiB,
+  measured by the driver through nvidia-smi.
+- The tape is the family's (src/tape.h/.cpp, ported from fray, itself a port of glance, itself
+  REGISTRAR's tape.py): six keys a row, BLAKE2b-256 over the previous digest, a NUL and the
+  canonical payload, one unchained header line. nib --verify reads it and so does glance --verify;
+  the selftest pins caseclock's hash vectors, the 127/128/129-byte cases included, and REGISTRAR's
+  two reference digests. Every changeset, percept, tick, fold, switch, session, mandate,
+  coefficient, judgment with its three margins and its span, save, resume and close is a row. The
+  tape lives beside the document and is appended across sessions; an untitled document's lives in
+  runs/ until it has a name. Rows are buffered and flushed every 120 ms and at every judgment, so a
+  keystroke never pays for a write and a crash loses at most that.
+- A judgment knows what it judged. A percept carries its id, the revision it produced and its byte
+  span; a second ring carries those beside the Delta, in lockstep, because a Delta has no room for
+  them. The judgment row carries the revision and [a, b), carried forward through later edits, and
+  the gutter paints the strongest want beside the judged line, brightness from the margin,
+  saturating from -6 to +2. Editing a judged span retires its mark; the row stays on the tape.
+- MEASURED on this box, 2026-09-04/05, Qwen3.5-9B-emit-v11-Q5_K_M, q8_0 KV. Keystroke to painted,
+  two runs: p50 607 and 605 us, p95 1115 and 1094 us with the resident off (129 keys); p50 1189
+  and 455 us, p95 1709 and 1037 us with it on (164 and 166 keys, typed while the mind was judging).
+  The falsifier said "moves measurably", and the instrument cannot separate the two: on landed
+  0.6 ms above off in one run and 0.15 ms below it in the next, inside the run-to-run spread, and
+  every figure is under a fifth of a 60 Hz frame. The threshold is a number now - p95 under 8 ms
+  with the resident on; the worst p95 seen is 2.9 ms - because "measurably" was the wrong word for
+  a falsifier.
+- MEASURED: q8_0 KV is 136 MiB at n_ctx 8192 and 272 MiB at 16384, so 16384 is the default. The
+  "roughly 3 GB at 64k" in the 09-04 entry was an estimate; by this measure it would be about
+  1.1 GB on this model. Model load in the window 5.7-8.1 s. Probe cost 118-123 ms per boundary for
+  three seats on a quiet card, and 312-327 ms on the same binary an hour earlier with llama-server
+  busy: a factor of 2.7 from co-tenancy alone, which is why the number must print beside what
+  else the card was doing. Stage 1d puts free VRAM on every judgment row, as K5 does.
+- TRAP, silent, inherited from the lift: every sentence cost two boundaries. The loop appended a
+  word to the clause AFTER the probe that word triggered, so a 'b' fired by "Earth." was labelled
+  "ocean on", and the lone "Earth." left behind was re-judged by the line's 'f' at the SAME trunk
+  position - bit-identical margins, three probes for nothing. The margins script went from 19
+  boundaries and 57 probes to 11 and 33 with every catch intact. K5 (below) made the identical
+  change on 09-04 for the identical measured reason; the two were found independently.
+- TRAP, silent, mine: the compiler keeps a percept's newline (it conserves bytes) and the resident
+  decoded it, so the trunk saw "text.\n\n[SEAT" - a double newline before the probe - and Stage
+  1b's table was measured on that. fusord's source strips the newline before the Delta exists; nib
+  strips it at the serve boundary now. Re-measured on the corrected format the catches move by
+  under a logit: Pacific SKEPTIC +5.61/+5.93 (was +5.56), drop table SENTINEL +5.43 (was +5.88),
+  retry limit SKEPTIC +5.09 and SENTINEL +5.82 (was +4.50/+5.63).
+- THE TWO EXPERIMENTS the review asked for, on the GPU, deterministic: identical prefixes give
+  identical logits, so a difference is the manipulation and nothing else. Deletions: a scripted
+  stream with a removed line against the same stream without it. The deletion is perceived; the
+  following margins move by under a logit in no consistent direction (the correction line
+  SKEPTIC +2.66/+2.81 against +1.91/+3.09, the lunch line +3.45 against +2.85); the removed claim
+  re-fires the SKEPTIC at +4.87 against +5.83 for the claim itself; and the "(removed)" marker
+  closes a thought of its own at boundary mass 0.95, three probes on one word. The marker does not
+  neutralise a claim and it costs a boundary. Its wording stays OPEN, and it is a tune's problem,
+  not a runtime's. Ticks: a 3600 s tick before a line, against no tick. Perceived: the margins on
+  the three boundaries after it shift by at most 0.42 logits, mostly toward speaking, nothing
+  crosses zero, and the tick fired zero probes - 21 in both arms. The law holds mechanically, and
+  the model feels time a little.
+- MEASURED, the cost of switching on over a document: the README (4.2 KB, 749 words) folds in 39 s
+  - 94 percepts, 104 boundaries, 312 probes, 12.7 s of probing and about 35 ms a word of decode.
+  At the 16k fold budget, 50 KB, that is minutes. The fold judges history at word grain because
+  the lifted loop judges everything at word grain. Two answers, both in the BACKLOG: a fold at
+  prefill speed, which leaves the trunk's bytes identical; and K5's checkpoint, Stage 1d.
+- The model's hash is on the tape (rule 8): SHA-256 of the GGUF, 6,642,544,288 bytes in 17.1 s at
+  388 MB/s, hashed on the resident's thread before the load and recorded with its cost. Seventeen
+  seconds a switch-on is too much for a switch Stage 4 wants flipped often; Stage 1d caches it on
+  the file's size and mtime.
+- TRAP in the driver: the AI case never saved, so its close hit the unsaved-changes prompt, the
+  driver killed the process after eight seconds, and the tape had no session_close row. The second
+  run had one because the operator answered the dialog by hand. The case saves before it closes
+  now, and a tape without session_close means exactly what it says.
+- THE CONVERGED KERNEL. The operator pointed at C:/fusor1/converge/src/fusord.cpp - K5 in that
+  tree's numbering, the convergence of the two fusord lineages that came after the 08-12 kernel
+  nib lifted from, written on the evening of 09-04 while nib's review was being run, in flux in
+  another session. Read in full, with its convergence document and its build log. The pin is
+  unchanged, so nothing here moves. Stolen for the plan, not the bytes (operator ruling, CLAUDE.md):
+  the 9B is a 3:1 recurrent hybrid whose forks cannot be rewound, so a judgment is always about
+  now (SPEC 6.2.8); the trunk is an asset and a resident rebuilt from its log is the twin (SPEC
+  6.2.11, Stage 1d); the seam for Stage 2 drains intake after every generated token and kills on
+  a flipped margin (SPEC 6.3.4); the fixed-size Delta nib pinned itself to is abandoned there
+  (SPEC 5.1.1); free VRAM beside every probe; the torn-row recovery nib lacks. What nib has that K5
+  does not is in docs/BACKLOG.md under "for the estate": a backend loader that pulls ggml-rpc.dll
+  and ws2_32 into the process, and a tape the family's verifier cannot read.
+- Green on this box, 2026-09-05: --selftest 176 passed 0 failed; tools/drive.py 27 passed 0 failed,
+  three identical runs; tools/drive.py --ai 41 passed 0 failed; nib --verify and glance --verify
+  both INTACT on the session's tape. The exe links bcrypt now, for the hash; no network DLL; 57
+  modules after the backends load.
+- Word wrap is on the backlog by the operator's word, 2026-09-05: there is none, no toggle, and a
+  long line runs off the right edge with no horizontal scroll. Stage 1d.
+- NEXT is Stage 1d, the trunk as an asset: the checkpoint beside the document, the resume tick, the
+  hash cache, VRAM on the row, torn-row recovery, word wrap. Then Stage 2 on K5's seam, with the
+  lift map refreshed first.

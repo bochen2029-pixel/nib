@@ -70,7 +70,7 @@ void Doc::set(const std::string& t) {
     if (!t.empty()) {
         // the opening move is itself a changeset, so a replay of the log reproduces the file
         const std::string cs = make_splice(std::string(), 0, 0, t);
-        log_.push_back(Rev{ cs, make_splice(t, 0, (int64_t)t.size(), std::string()), "open", 'o' });
+        log_.push_back(Rev{ cs, make_splice(t, 0, (int64_t)t.size(), std::string()), "open", 'o', mono_ms() });
     }
 }
 
@@ -81,14 +81,15 @@ bool Doc::push(const std::string& cs, const std::string& inverse, const std::str
     std::string next;
     if (!apply_to_text(cs, text_, next, err)) return false;
     text_ = std::move(next);
-    log_.push_back(Rev{ cs, inverse, author, kind });
+    log_.push_back(Rev{ cs, inverse, author, kind, mono_ms() });
     return true;
 }
 
-// A monotonic millisecond clock, for grouping only. Nothing in the document model depends on wall
-// time; this decides where one thing a person did ends and the next begins, and nothing else.
-static int64_t mono_ms() {
-    return (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+// A monotonic millisecond clock. Nothing in the document model depends on wall time; this decides
+// where one thing a person did ends and the next begins, stamps each revision for the tape, and
+// is the clock the fold replays. The same steady_clock the pad's percepts carry.
+uint64_t mono_ms() {
+    return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
@@ -118,7 +119,7 @@ bool Doc::splice(int64_t start, int64_t ndel, const std::string& ins, const std:
     if (!push(cs, inv, author, 'e', err)) return false;
 
     // ---- grouping: is this a continuation of what the person was already doing? ----------
-    const int64_t now = mono_ms();
+    const int64_t now = (int64_t)log_.back().ms;
     const char kind = ins.empty() ? 'd' : 'i';
     // typing continues where it left off; deleting backwards arrives AT the previous start
     const bool contiguous = kind == 'i' ? start == group_at_ : (start + ndel == group_at_ || start == group_at_);

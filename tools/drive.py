@@ -14,7 +14,9 @@ Exit code 0 when every check passes, 3 when one does not, so this can join --sel
 even though it lives outside the exe.
 """
 import argparse
+import collections
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -25,7 +27,18 @@ u32 = ctypes.windll.user32
 WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_CLOSE = 0x0102, 0x0100, 0x0101, 0x0010
 WM_NIB_CMD = 0x8000 + 1                     # WM_APP + 1, matching edit.cpp
 CMD = dict(save=1, save_as=2, open=3, undo=4, redo=5, select_all=6,
-           replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12)
+           replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12,
+           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18)
+
+
+def vram_used_mib():
+    """What the card holds right now, per nvidia-smi; None if there is no nvidia-smi."""
+    try:
+        out = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                                      timeout=10).decode().strip().splitlines()[0]
+        return int(out)
+    except Exception:
+        return None
 VK = dict(back=0x08, delete=0x2E, left=0x25, right=0x27, up=0x26, down=0x28,
           home=0x24, end=0x23)
 
@@ -51,7 +64,10 @@ class Nib:
         # does. Without it a test window takes the foreground and eats whatever the operator is
         # typing elsewhere — which is how fragments of an unrelated sentence reached the scratch
         # files on 2026-09-04.
-        env = dict(os.environ, NIB_LOG=log, NIB_DRIVER="1")
+        # NIB_COMPILE runs the pad's compiler with no model in the process, so the arithmetic
+        # checks (Stage 1a's falsifier) can fire without a resident; with the AI switch on, the
+        # compiler runs regardless.
+        env = dict(os.environ, NIB_LOG=log, NIB_DRIVER="1", NIB_COMPILE="1")
         self.proc = subprocess.Popen([exe, "--edit", path], env=env)
         # Bind to the window belonging to THIS process. FindWindow by class alone will happily
         # return a leftover from a previous case, or the operator's own editor — which made two
@@ -90,6 +106,14 @@ class Nib:
             u32.PostMessageW(self.hwnd, WM_CHAR, ord("\r" if c == "\n" else c), 0)
         time.sleep(0.03 + 0.005 * len(s))
 
+    def type_paced(self, s, gap=0.03):
+        """One character every `gap` seconds — a fast human — so every keystroke gets its own
+        repaint and the latency instrument measures keystrokes, not a burst."""
+        for c in s:
+            u32.PostMessageW(self.hwnd, WM_CHAR, ord("\r" if c == "\n" else c), 0)
+            time.sleep(gap)
+        time.sleep(0.05)
+
     def key(self, name, times=1):
         # a bare virtual key needs no modifier state, so posting it is faithful
         for _ in range(times):
@@ -120,6 +144,23 @@ class Nib:
 
     def count(self, kind):
         return len([l for l in self.lines() if l and l[0] == kind])
+
+    def wait_for_match(self, kind, pred, n_before, timeout=6.0):
+        """Wait until a further line of `kind` satisfying `pred` has appeared; return it."""
+        end = time.time() + timeout
+        while time.time() < end:
+            got = [l for l in self.lines() if l and l[0] == kind]
+            for l in got[n_before:]:
+                if pred(l):
+                    return l
+            time.sleep(0.05)
+        return None
+
+    def ask(self, name, kind, timeout=6.0):
+        """Post a reporting command and return the line it appends."""
+        n = self.count(kind)
+        self.cmd(name)
+        return self.wait_for(kind, n, timeout)
 
     def save(self, timeout=6.0):
         n = self.count("saved")
@@ -158,6 +199,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", default=r"C:\nib\nib.exe")
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--ai", action="store_true", help="also switch the resident on inside the window (needs the model and the card)")
     a = ap.parse_args()
     if not os.path.exists(a.exe):
         raise SystemExit("no such exe: " + a.exe)
@@ -338,8 +380,118 @@ def main():
           "two surrogate WM_CHARs became one four-byte character, and the stray half was dropped: %r" % got)
     n5.close()
 
+    # ---- 10 · the resident, switched on inside the window (--ai) ---------------------------
+    # Stage 1c's falsifiers, fired through the seam: the resident loads on its own thread while
+    # the window keeps painting; the paragraph typed BEFORE the switch is folded and judged; the
+    # keystroke-to-painted latency does not move with the resident on; the false claim moves the
+    # SKEPTIC; off unloads the model and the card comes back; the tape verifies.
+    ai_files = ()
+    if a.ai:
+        print(LF + "the resident, switched on inside the window")
+        doc6, log6 = scratch("ai.txt"), scratch("six.log")
+        ai_files = (doc6, doc6 + ".tape.jsonl", log6)
+        try:
+            os.remove(doc6 + ".tape.jsonl")
+        except OSError:
+            pass
+        vram0 = vram_used_mib()
+        n6 = Nib(a.exe, doc6, log6)
+        para = ("The coffee machine in the kitchen was refilled this morning. "
+                "I moved the standup to ten past nine so the west coast can make it. ")
+        n6.cmd("bottom")   # the window is on the operator's screen; a click in it moves the caret
+        n6.type_paced(para)
+        time.sleep(0.7)                         # past T, so the clause flushes before the switch
+        lrow = n6.ask("latency", "latency")
+        n_off, p50_off, p95_off = (int(lrow[1]), int(lrow[2]), int(lrow[3])) if lrow else (0, -1, -1)
+        nr = n6.count("resident")
+        n6.cmd("ai_on")
+        rrow = n6.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=120)
+        check(rrow is not None and rrow[1] == "ready",
+              "the resident loaded on its own thread: %s" % (rrow[2:] if rrow else "no resident line in 120 s",))
+        vram1 = vram_used_mib()
+        if rrow is not None and rrow[1] == "ready":
+            # the fold: what was typed before the switch is perceived first, then judged
+            n6.cmd("bottom")
+            n6.type_paced("Actually, the Pacific is the smallest ocean on Earth. ")
+            # wait for the SKEPTIC's verdict on the live sentence itself, not merely for a count:
+            # the two folded sentences are judged first, and a count of three arrives before it
+            prow = n6.wait_for_match("judgment", lambda l: len(l) > 5 and l[2] == "SKEPTIC" and "Earth" in l[5], 0, timeout=60)
+            # a second paragraph, typed while the mind is still judging: the keystroke sample with
+            # the resident on is then the size of the one without, and it includes keystrokes that
+            # land during a probe round, which is the contention the falsifier is about
+            n6.cmd("bottom")
+            n6.type_paced("The build finished green about a minute ago and the artifacts are uploaded. "
+                          "Lunch is at noon in the small room. ")
+            time.sleep(0.7)
+            jrow = n6.ask("judgments", "judgments", 6.0)
+            check(jrow is not None and int(jrow[1]) >= 3,
+                  "the two folded sentences and the live one were judged: %s boundaries, %s probes" % ((jrow[1], jrow[2]) if jrow else ("?", "?")))
+            check(jrow is not None and jrow[7] == "ready" and int(jrow[5]) == 0 and jrow[6] == "0",
+                  "no word was dropped and the window did not fill (%s)" % (jrow[5:9] if jrow else "?",))
+            jl = [l for l in n6.lines() if l and l[0] == "judgment"]
+            skeptic = [(float(l[3]), l[5] if len(l) > 5 else "") for l in jl if l[2] == "SKEPTIC"]
+            check(len(jl) >= 9, "%d seat verdicts came back over the ring" % len(jl))
+            pacific = [m for m, c in skeptic if "Pacific" in c or "Earth" in c or "ocean" in c]
+            check(prow is not None and pacific and max(pacific) > 0,
+                  "and the SKEPTIC wanted to speak about the Pacific (margins on that sentence: %s; on the others: %s)"
+                  % ([round(m, 2) for m in pacific], [round(m, 2) for m, c in skeptic if m not in pacific]))
+            lrow2 = n6.ask("latency", "latency")
+            n_on, p50_on, p95_on = (int(lrow2[1]), int(lrow2[2]), int(lrow2[3])) if lrow2 else (0, -1, -1)
+            check(p95_on >= 0 and p95_on < 20000,
+                  "keystroke to painted with the resident on: p50 %d us, p95 %d us over %d keystrokes (off: p50 %d, p95 %d over %d)"
+                  % (p50_on, p95_on, n_on, p50_off, p95_off, n_off))
+            trow = n6.ask("tape", "tape")
+            check(trow is not None and int(trow[3]) >= 3 and int(trow[4]) >= 3,
+                  "the tape carries the percepts and the judgments: %s rows, %s percepts, %s judgments" % ((trow[1], trow[3], trow[4]) if trow else ("?",) * 3))
+        nr = n6.count("resident")
+        n6.cmd("ai_off")
+        orow = n6.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=30)
+        check(orow is not None, "off joined the thread and unloaded the model: %s" % (orow[2:] if orow else "no off line",))
+        time.sleep(1.0)
+        vram2 = vram_used_mib()
+        if vram0 is not None and vram1 is not None and vram2 is not None:
+            check(vram1 > vram0 + 1000 and vram2 <= vram0 + 400,
+                  "the card was taken and given back: %d -> %d -> %d MiB used" % (vram0, vram1, vram2))
+        else:
+            print("  (no nvidia-smi: the VRAM return is not measured)")
+        # A driven window is never closed dirty: the unsaved-changes prompt has no driver behind
+        # it, the process gets killed after the timeout, and the tape ends without its
+        # session_close row - which is what the first run of this case produced (2026-09-05).
+        n6.save()
+        n6.close()
+        tape = doc6 + ".tape.jsonl"
+        v = subprocess.run([a.exe, "--verify", tape], capture_output=True, text=True)
+        check(v.returncode == 0 and "INTACT" in v.stdout, "nib verifies the session's tape: %s" % v.stdout.strip())
+        glance = r"C:\glance\glance.exe"
+        if os.path.exists(glance):
+            gv = subprocess.run([glance, "--verify", tape], capture_output=True, text=True)
+            check(gv.returncode == 0 and "INTACT" in gv.stdout, "and so does glance, the family's verifier: %s" % gv.stdout.strip())
+        # what the tape says, read back as a reader would: the weights named by hash (rule 8), the
+        # fold accounted for, and every row kind the stage promised present
+        try:
+            with open(tape, encoding="utf-8") as f:
+                rows = [json.loads(l) for l in f if l.strip()]
+        except Exception as ex:
+            rows = []
+            print("  (the tape did not parse: %s)" % ex)
+        body = {}
+        for r in rows[1:]:
+            if r.get("kind") == "session":
+                body = r.get("body", {})
+                break
+        sha = str(body.get("model_sha256", ""))
+        check(len(sha) == 64 and all(c in "0123456789abcdef" for c in sha) and int(body.get("model_bytes", 0)) > 10 ** 9,
+              "the session row names the weights by SHA-256: %s... over %s bytes, hashed in %s ms, loaded in %s ms"
+              % (sha[:16], body.get("model_bytes", "?"), body.get("hash_ms", "?"), body.get("load_ms", "?")))
+        fold = [r.get("body", {}) for r in rows[1:] if r.get("kind") == "fold"]
+        check(bool(fold) and fold[0].get("skipped") == 0 and int(fold[0].get("shipped", 0)) >= 2,
+              "the fold at switch-on shipped the paragraph typed before it and skipped nothing: %s" % (fold[0] if fold else "no fold row",))
+        kinds = collections.Counter(r.get("kind") for r in rows[1:])
+        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "save", "session_close")
+        check(all(k in kinds for k in wanted), "every row kind the stage promised is on the tape: %s" % dict(kinds))
+
     if not a.keep:
-        for p in (target, crlf, fresh, emoji, log, log2, log3, log4, log5):
+        for p in (target, crlf, fresh, emoji, log, log2, log3, log4, log5) + ai_files:
             try:
                 os.remove(p)
             except OSError:

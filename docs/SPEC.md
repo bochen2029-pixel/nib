@@ -1,11 +1,13 @@
 # nib — SPECIFICATION
 
-*Rev 0.5 · 2026-09-04 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
+*Rev 0.6 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
 governs the built artefact and the blueprint governs the intent. Where either disagrees with
 `docs/ASSEMBLY.md` on Etherpad or on the sync model, ASSEMBLY governs. Revs 0.1–0.4 were headed
 2026-09-03; git says they were written 2026-09-04, and this file dates by git. Rev 0.5 is the QC
 pass of that day (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, §3 and §8): every clause it
-touches carries the date.*
+touches carries the date. Rev 0.6 is Stage 1c, the wire (2026-09-05), and the first clauses that
+cite **K5**, the converged fusord kernel (`C:\fusor1\converge\src\fusord.cpp`, 2026-09-04, in flux
+in another session): by operator ruling a source of ideas and never of bytes (CLAUDE.md).*
 
 Terms: **MUST**, **MUST NOT**, **SHOULD**, **MAY** carry their usual force. A line marked
 **[BUILT]** exists and is covered by `--selftest`; **[SPECIFIED]** is settled but unbuilt;
@@ -181,6 +183,7 @@ now asserts the awareness of the process it launched.
 | `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+O` | save, save as, open |
 | `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` | undo, redo |
 | `Ctrl+R` | fold the log and report whether it is byte-exact |
+| `Ctrl+Shift+A` | the AI switch (§6.1.1): on folds the log and loads the model; off unloads it **[BUILT 2026-09-04]** |
 
 4.2.1 Typing over a selection MUST produce exactly one changeset, hence one revision and one undo.
 
@@ -206,30 +209,54 @@ a different document; pretending otherwise would make §2.1.3 false.
 document size, revision count, and whether there are unsaved changes.
 
 4.4.2 When the resident exists it MUST additionally show, permanently and without user action: the
-AI switch state, the mode (§6.1), and the egress counter (§9.4).
+AI switch state, the mode (§6.1), and the egress counter (§9.4). **[BUILT 2026-09-04]** — a second
+status row, the resident's: the switch's state (off, loading, on, stopping, error with its reason),
+the model, the three seats' last margins, the boundary count, the context used of the window, the
+spool depth when the mind is behind, how many percepts a late-joining resident never saw, a loud
+`DROPPED` or `WINDOW FULL`, and `0 B egress`. Every word of it is a state that exists; nothing on it
+animates or pretends (rule 5). The mode is Stage 4's; until then the session row says `room`.
+
+4.4.3 **The gutter [BUILT 2026-09-04].** Beside each line whose text a seat has judged, a mark whose
+brightness is the strongest seat margin at the last boundary in that line, saturating from −6 to
++2, in the accent hue above zero and the dim hue below. It is the review's continuer (§5.4): a real
+internal state rendered, the only permitted signal, no words, no animation that is not a change of
+state. Editing a judged span retires its mark; the judgment stays on the tape (§8).
 
 ### 4.5 The theme **[BUILT]**
 
 4.5.1 Colours and the font MUST be read from `nib.theme` beside the executable at startup. Missing
-or unparsable entries fall back to compiled defaults.
+or unparsable entries fall back to compiled defaults. **Since 1c the same file names the hand and
+the mind** (2026-09-04): `lane` (the trunk sees this person's words on it; v11 was tuned on `[bo]`,
+so a second person on the same binary is a different file), `model`, `llama_dir`, `n_ctx`,
+`gpu_layers`, and `ai`, the switch's position at startup — `off` by default on a shared card.
 
 4.5.2 `tools/theme_detect.py <image>` derives a palette from a screenshot and writes that file.
 
 ### 4.6 Not built **[SPECIFIED]**
 
-Find and replace; line numbers; word wrap; multiple documents; a tab bar. None is required by any
-stage below Act II.
+Find and replace; line numbers; multiple documents; a tab bar. None is required by any stage below
+Act II. **Word wrap is not in this list any more:** raised by the operator on 2026-09-05 (a long line
+runs off the right edge with no scroll and no sign that it has), it is Stage 1d's, with a toggle on
+the status line and the tape (`docs/BACKLOG.md`).
 
 ---
 
 ## 5 · Ingest — the compiler
 
 **[BUILT 2026-09-04]** — `src/ingest.h/.cpp`, 39 checks in `--selftest` and 5 more fired from
-inside the running window by `tools/drive.py`. The resident that consumes it is §6 and does not
-exist yet; everything below is the producing half, and it runs with no model in the process.
+inside the running window by `tools/drive.py`. Since 1c the resident that consumes it (§6) runs
+inside the window on its own thread; the producing half still runs with no model in the process,
+which is how the driver's arithmetic checks fire without a card (`NIB_COMPILE`).
 
 5.1.1 The resident's input MUST be the document's op stream, delivered as `Delta` records over
 `auricle::fusor::StreamingTextSource` (`C:\auricle\src\fusor\source.h`), unmodified.
+
+> **AMENDED 2026-09-05.** The seam this clause pins nib to has been abandoned by the kernel it was
+> pinned for: K5 carries a string-bearing frame (`t_mono_ns`, `lane`, `grain`, `text`, the spool
+> offset it ends at) on its own ring, with no 496-byte payload and no 15-character lane, and its
+> producer blocks rather than drops. "So the two cannot drift" bought nothing; they drifted at the
+> other end. nib keeps the include until Stage 2, when the frame gains a `grain` and becomes nib's
+> own (`docs/BACKLOG.md`); the spool stays, because the editor's thread may never block.
 
 5.1.2 A percept MUST be emitted at whichever comes first: a **closed thought**, N characters, or T
 milliseconds of quiet. It MUST end on a word boundary wherever the text allows one. N and T are
@@ -255,6 +282,11 @@ NOT be reconciled away silently.
 
 5.1.4 Ingest MUST be unconditional. Only judgment cadence may be modulated under load. A full ring
 MUST count the loss loudly; a silently dropped percept is a turn reborn inside the loop.
+**[BUILT 2026-09-04, amended]** — a full ring no longer drops: the percept waits in a spool on the
+producer's side and is pushed when the ring has room, from the editor's timer; delay is legal, the
+world is never edited, and the spool's depth is on the status line. Only the spool's own cap
+(262,144 percepts) drops, and that is counted loudly as before. K5 reaches the same law by blocking
+its producer; nib's producer is the window's thread and may not block.
 
 5.1.5 The compiler MUST NOT summarise, clean, annotate or interpret. The world is never edited.
 
@@ -307,11 +339,24 @@ and tune format. Lane naming is therefore not a user-interface decision.
 its own `--idle-tick-s` set to 0 or the silence is counted twice. The pad is the right place for
 it: the pad knows what a typing pause is and a generic resident does not.
 
+5.1.9.2 **Ticks are lazy [BUILT]:** one per gap, sized to the gap, emitted before the percept that
+broke the silence — never a decode every N seconds while nothing happens, the periodic idle tick
+that filled another kernel's trunk for hours on 2026-09-05 (K5's F5). **Measured 2026-09-05, A/B on
+the GPU:** a 3600 s tick before a line, against the same stream without it. The tick is perceived —
+the three boundaries after it shift by at most 0.42 logits, mostly toward speaking, nothing crosses
+zero — and it fires zero probes (21 in both arms). **[SPECIFIED, Stage 1d]** the resume tick: on a
+restore, and on a fold that resumes a tape, `[tick +Ns]` for the wall gap since the last percept,
+so the mind is told how long the world went on without it.
+
 5.1.10 A deletion reaches the trunk as the removed text, intact, behind a marker saying it left —
 **on every chunk** of a long removal (2026-09-04; a bare tail chunk would read as newly typed text,
 the opposite of what happened). The marker is nib's and not the world's, so it is excluded from the
-byte-conservation arithmetic of 5.1.11. **[OPEN]** — the marker's wording is off-distribution for v11 and is a decision, not a
-finding; it is configuration until it has been looked at against a real trunk.
+byte-conservation arithmetic of 5.1.11. **[OPEN, measured 2026-09-05]** — the marker's wording is off-distribution for v11. A/B on the
+GPU, a removed line against the same stream without it: the deletion is perceived; the margins on
+the following boundaries move by under a logit in no consistent direction; the removed claim
+re-fires the SKEPTIC at +4.87 against +5.83 for the claim itself, so the marker does not neutralise
+a claim; and `(removed)` closes a thought of its own at boundary mass 0.95, three probes on one
+word. The wording is a tune's decision, not a runtime's (§14.9); it stays configuration.
 
 5.1.11 **The falsifier, stated as arithmetic.** With nothing pending, the bytes that entered the
 compiler MUST equal the bytes that left it, and every percept MUST be either pushed to the ring or
@@ -327,13 +372,41 @@ now asserts that an undo moves the removed-bytes count. A different file is a di
 compiler starts over on open and the file's text is perceived as the hand's own, until the tape
 (§8) can offer better provenance.
 
+5.1.13 **Spans and positions [BUILT 2026-09-04].** A percept carries its id, the revision that
+produced it and its byte span `[a, b)` in that revision's coordinates; a deletion's span is empty at
+the point it left; a tick's is the point the pad was at. Text that does not continue the pending
+clause's span closes it first: a jump is a boundary. The `Delta` has no room for any of this, so a
+second ring carries it in lockstep with the first, pushed only when the Delta was pushed, and the
+two cannot disagree about order. A judgment inherits the span of the percepts it judged and the
+revision they are in (§8), carried forward through later edits; a judgment whose span was edited
+before it arrived is logged and taped and paints nothing. The floor rule of Stage 2 is a test on
+these (review §5.1).
+
+5.1.14 **The fold [BUILT 2026-09-04].** At switch-on the document's log is replayed through the
+compiler with each revision's own timestamp, deletions and order included and the quiet between
+revisions entering as ticks, so the mind perceives the document as it was written and not a
+snapshot of how it looks. The last percepts that fit the budget ship — the window less the seed less
+a margin for the typing to come, at 3.5 bytes a token; 50,463 bytes at 16k — and the rest are
+counted, on a `fold` row and on the status line as "joined late"; a folded percept says so on its
+tape row. **Measured 2026-09-05:** the README, 4.2 KB and 749 words, folds in 39 s at word grain
+(104 boundaries, 312 probes, about 35 ms a word of decode), so a long document costs minutes to
+switch on over. **The fold is the twin** (K5, and the corpus's amendment to the fold law): a
+resident rebuilt from its log is not the resident that was there. The resident is 6.2.11.
+
+5.1.15 **The serve boundary strips the newline [BUILT 2026-09-04].** A percept keeps its newline,
+because the compiler conserves bytes; the resident removes it, because fusord's source removes it
+before a Delta exists and the trunk must see one bracketed LINE. Until that day the trunk saw a
+double newline before every probe, and Stage 1b's table was measured on that format; re-measured
+on the corrected one, every catch moved by under a logit (ROADMAP, Stage 1c).
+
 ---
 
 ## 6 · The resident
 
-**[PARTLY BUILT 2026-09-04]** — `src/resident.h/.cpp`. §6.2 (the loop) is built and its seed is
-hashed against fusord's pin. §6.3 (emission) and §6.4 (un-saying) are **structurally absent**, not
-merely unbuilt: there is no generation code in the file. §6.1's two switches are not built.
+**[PARTLY BUILT 2026-09-05]** — `src/resident.h/.cpp` and `src/wire.h/.cpp`. §6.2 (the loop) is
+built and its seed is hashed against fusord's pin; the wire (6.2.7) puts it inside the window.
+§6.3 (emission) and §6.4 (un-saying) are **structurally absent**, not merely unbuilt: there is no
+generation code in the file. Of §6.1's two switches the first is built; the second is Stage 4's.
 
 6.0.1 The resident MUST refuse to start if no GPU backend came up while GPU layers were requested.
 A `ggml` build that cannot load `ggml-cuda.dll` reports no error and offloads nothing; the model
@@ -358,7 +431,14 @@ value. `n_ctx` below 2048 is refused. The molt that makes the window a non-event
 ### 6.1 The two switches
 
 6.1.1 **AI — on/off.** Off means no ingest, no trunk, no context held. Not muted, not paused. The
-state MUST be on the status line and on the tape.
+state MUST be on the status line and on the tape. **[BUILT 2026-09-04]** — `Ctrl+Shift+A`, the
+theme's `ai` key for the position at startup, the driver's `ai_on`/`ai_off`. On folds the log
+(5.1.14) and starts the resident's thread; the model loads there while the window keeps painting,
+and the first judgments are the folded text's. Off joins the thread and destroys the resident; the
+model is unloaded and the card returned, which the driver measures (5716 → 12727 → 5959 MiB,
+2026-09-05). Both transitions are `switch` rows. **Amended for Stage 1d:** "no context held" means
+held in the process. The trunk's state MAY persist on disk beside the document, like the tape does
+(6.2.11), and resume reloads it; the tape says which.
 
 6.1.2 **RESIDENT / TURN-BASED.** The seat, the seed, the sampler and the mandate MUST be identical
 across the toggle. **Only the trigger may differ**: evidence at a thought boundary, versus an
@@ -387,10 +467,56 @@ is a gate that stops being checked.
 pin covers it, and a constant that exists only to be hashed is the cheapest way to keep Stage 2
 from drifting before it is written.
 
-6.2.6 **[BUILT]** `n_ctx` is 8192 by default, not fusord's 65536. This card is shared with
-llama-server and a speech stack; a 64k q8_0 window costs roughly 3 GB of KV and would evict them.
-It is configuration. Stage 1b needs a window long enough to judge in, not long enough to live in —
-the resident window and the molt are Stage 2's problem.
+6.2.6 **[BUILT, re-measured 2026-09-04]** `n_ctx` is 16384 by default, not fusord's 65536. The
+q8_0 KV on this model is 136 MiB at 8192 and 272 MiB at 16384 — 17 KB a token, so the "roughly
+3 GB at 64k" this clause used to say was an estimate and the true figure would be about 1.1 GB.
+The reason to stay at 16k is not the KV: it is the fold's cost (5.1.14) and the shared card. It is
+configuration (`nib.theme`, `n_ctx`; below 2048 is refused). The molt is Stage 2's problem.
+
+6.2.7 **The wire [BUILT 2026-09-04]** — one process, two clocks (CLAUDE.md rule 11). The editor's
+thread owns the document, the view, the pad and the tape; the resident is born and dies on its own
+thread inside `Wire`, which owns its clock; the two meet only at two lock-free rings, percepts out
+(5.1.13) and judgments back (a 256-slot ring of trivially copyable rows); the editor never calls the
+model and the resident never touches the window. A judgment that finds no room on its ring makes
+the resident wait, never the editor. The editor drains the ring on its 120 ms timer.
+
+6.2.8 **A judgment is about now (K5, 2026-09-04).** The 9B is a 3:1 recurrent hybrid: a fork's
+attention cells can be truncated, its recurrent state cannot be rewound, and a mid-sequence
+`llama_memory_seq_rm` on a fork is a silent no-op followed by a failed decode and stale logits read
+as margins. Therefore: a probe is always a full copy of the trunk as it stands; a delayed judgment
+is a judgment about now and the record MUST say so; every decode's return value is checked and a
+failure is a failure (6.0.3), never a number; and nothing in nib may plan to "re-judge as of then" —
+the pivot of the review's §5.9 is a fresh fork plus a re-decode, never a truncation. The only
+rewind that exists is a checkpoint restore (6.2.11).
+
+6.2.9 **The trigger word is in the clause [BUILT 2026-09-05].** The lifted loop appended a word to
+the clause after the probe that word triggered, so a boundary's label lagged one word behind the
+trunk and the lone last word of every line was re-probed by the line's final at the same trunk
+position — bit-identical margins, three probes for nothing. The word joins the clause before it is
+decoded now; the trunk's bytes and the probe frame are unchanged, so the pin and the calibration are
+untouched. Measured: the margins script fell from 19 boundaries and 57 probes to 11 and 33 with
+every catch intact. K5's `feed_word` made the same change on 2026-09-04 for the same reason, found
+independently. This is nib's one departure from the 08-12 kernel's loop, and a convergence with the
+kernel after it.
+
+6.2.10 **The probe's cost carries its co-tenancy [measured 2026-09-05].** Three seats at one
+boundary cost 118–123 ms on a quiet card and 312–327 ms on the same binary, the same stream and the
+same card an hour earlier with llama-server busy — a factor of 2.7 from what else the card was
+doing. A probe latency printed without the card's state beside it is therefore not a measurement of
+the resident. **[SPECIFIED, Stage 1d]** free VRAM on every judgment row and on the status line, as
+K5 puts it on every boundary row.
+
+6.2.11 **The trunk is an asset [SPECIFIED, Stage 1d].** The resident's held state is not a fold of
+the log: a resident rebuilt from its log is the twin (5.1.14; the corpus's amendment to the fold
+law, and K5's `checkpoint`/`restore`). At switch-off and at quiet, the trunk's KV and token list are
+saved atomically beside the document — a temporary, a write-through replace, the previous generation
+kept — with a sidecar written last that carries the model's SHA-256, the serve hash, the token
+count, the document revision, the tape head and the wall time of the last percept. At switch-on the
+checkpoint is restored if every field agrees, the revisions after it are folded, and the resume tick
+(5.1.9.2) tells the mind how long it was away; if anything disagrees the fold runs and the session
+row says `twin`. Measured in K5's lineage on this model: about 53 MB fixed plus 17 KB a token, so
+about 340 MB at 16k, written in under 100 ms from cache. Off still returns the card; what persists is
+on disk, beside the tape, and the tape says so.
 
 ### 6.3 Emission
 
@@ -402,6 +528,16 @@ MUST be refused before it is composed. The default floor window is 2 s.
 6.3.3 Emission rate MUST express a real internal state. Simulating a human tell that does not
 correspond to an internal event — invented hesitation, fake typos, a "thinking…" indicator that
 is not thinking — is forbidden.
+
+6.3.4 **[SPECIFIED, from K5's seam, 2026-09-05]** Stage 2 lifts the seam and not the 08-12 blind
+window: intake is drained after every generated token; a percept that lands mid-sentence is
+ingested at once and its judgment deferred, never dropped; when a whole percept has landed the
+speaking seat is re-probed on a fresh fork of the updated trunk, and the forming line is killed if
+the margin fell to zero or below or if the world accepted the point; the killed remainder, the aired
+prefix and the cause go on the tape; own speech commits to the trunk on the seat's lane after the
+world's current line closes, never spliced into the middle of it. The lift map's line ranges for
+this (`docs/review/LIFT_MAP_AURICLE.md`) point at the 08-12 kernel and MUST be refreshed against
+K5 before a line of Stage 2 is written.
 
 ### 6.4 Un-saying
 
@@ -430,16 +566,43 @@ with people who did not start it.
 
 ## 8 · The tape
 
-**[SPECIFIED]**
+**[BUILT 2026-09-04]** — `src/tape.h/.cpp`, ported from fray's, itself a port of glance's, itself
+REGISTRAR's `tape.py`; `nib --verify` walks any tape in the family's format.
 
 8.1.1 The tape MUST be append-only and hash-chained in the family's format (BLAKE2b-256 over the
 previous digest, a NUL, and the canonical JSON payload), so that `glance --verify` reads it.
+**[BUILT]** — six keys a row in sorted order (`at, body, digest, kind, prev, seq`), one unchained
+header line, the family's canonical JSON; `--selftest` pins caseclock's BLAKE2b vectors including
+the 127/128/129-byte cases and REGISTRAR's two reference digests, and the driver verifies each
+session's tape with both verifiers.
 
 8.1.2 It MUST record: every changeset, every judgment with its margin, every hold, every abort,
-every switch transition, the model's hash, and the seat's mandate.
+every switch transition, the model's hash, and the seat's mandate. **[BUILT for what exists]** —
+row kinds today: `session_open`, `changeset` (author, kind, the changeset), `percept` (id, lane,
+kind, rev, span, folded, text), `tick`, `fold`, `switch`, `session` (model path and **SHA-256**,
+model bytes and the hash's cost, serve hash, window, KV type, devices, backends by name, module
+count, the seats' mandates, the flush law's constants, `mode`, `egress_bytes`), `mandate` ×3,
+`coefficient` for every dial, `judgment` (boundary, rev, span, first and last percept id, reason,
+boundary mass, clause, the three margins), `end`, `save`, `resume`, `error`, `session_close`. A
+hold is a judgment row whose margins are all below zero; there is no separate row because there is
+no emit path yet. `abort` and `emit` arrive with Stages 2 and 3.
 
 8.1.3 A reader of the tape MUST be able to determine which machine was on the other end at any
-moment in the session.
+moment in the session. **[BUILT]** — the `session` row, written when the model is loaded, and the
+`switch` rows around it.
+
+8.1.4 **Durability [BUILT].** Rows are buffered in memory and written every 120 ms and at every
+judgment; a keystroke never pays for a write; a crash loses at most that window. The tape lives
+beside the document, appended across sessions; an untitled document's lives in `runs/` beside the
+exe until it has a name, and a rename chains on with a `resume` row naming the previous file and
+head. **[SPECIFIED, Stage 1d]** torn-row recovery: a torn last line, the mark of a crash inside a
+write, MUST be skipped with a `warn` row naming the bytes and the chain continued from the last
+complete row — today it refuses the file and the session runs untaped behind a status message
+(K5's F6).
+
+8.1.5 **A tape without `session_close` ended abnormally.** That is a fact a reader may rely on, not
+a defect; the driver found it on 2026-09-05 by closing a dirty window into a prompt it could not
+answer.
 
 ---
 
@@ -463,9 +626,10 @@ the runtime module gate of 6.0.2 kept for `wininet`, `winhttp`, `urlmon` and `dn
 9.3 No frontier API in Act I or Act II. When one arrives it is behind a flag, and the room shows a
 permanent badge.
 
-9.4 **[SPECIFIED]** The status line MUST carry an egress counter. Until Stage 6 it reads zero
+9.4 **[BUILT 2026-09-04]** The status line MUST carry an egress counter. Until Stage 6 it reads zero
 because that is structurally true, not because nothing has been sent yet — and it may read zero
-only while both gates of 9.1 hold. It is not built; it belongs with Stage 1c's status line.
+only while both gates of 9.1 hold. The resident's row ends in `0 B egress`, and the session row
+carries `egress_bytes: 0`, in a process the runtime gate has checked.
 
 9.5 The resident MUST NOT be able to act outside the document: no shell, no file system beyond the
 open document, no input synthesis, no window manipulation.
@@ -501,7 +665,7 @@ incomplete view MUST withdraw (§6.4). Partition-heal is wired to the abort path
 
 ## 11 · Testing
 
-11.1 `--selftest` MUST pass before every commit. **[BUILT: 144 checks, 2026-09-04]**
+11.1 `--selftest` MUST pass before every commit. **[BUILT: 176 checks, 2026-09-05]**
 
 11.2 Every stage below Stage 2 MUST remain runnable with no model in the process. A battery that
 needs a 9B on a busy card is a battery that stops being run.
@@ -513,7 +677,11 @@ splices (canonical form and applied result), one thousand random edits interleav
 11.4 The window MUST be verified by a driver that posts window messages and reads an artefact —
 `WM_APP+1` commands and the `NIB_LOG` file. **Synthesising global input is forbidden**: it lands
 wherever the focus happens to be, which can type into another application's window. **[BUILT]** —
-`tools/drive.py`, 27 checks, 2026-09-04.
+`tools/drive.py`, 27 checks, 2026-09-04, and 14 more with `--ai`, which switches the resident on
+inside the window and needs the card (2026-09-05): the load on its own thread, the fold, the
+SKEPTIC's catch over the ring, keystroke-to-painted with the mind on, the model's hash on the
+session row, the card returned, and both verifiers on the tape. One model on the card at a time:
+`--ai` and any `--resident` run are sequential.
 
 11.4.3 **A driven window MUST NOT take the keyboard** (2026-09-04). The driver sets `NIB_DRIVER`,
 and the window it drives is created no-activate and shown without activation: posted messages
@@ -559,7 +727,9 @@ current text and re-`pack`s. (`docs/review/ETHERPAD_DEEP_READ.md` §3.)
 
 14.2 Tab: four spaces, a real tab, or configurable. Currently spaces, unjustified.
 
-14.3 The ingest compiler's N and T. To be measured against real typing, not chosen.
+14.3 The ingest compiler's N and T. To be measured against real typing, not chosen. **Still open
+2026-09-05:** the sweep needs a real typing tape; the synthetic cadence of `--ingest` and
+`--resident` never pauses, so T never fires and the sweep would measure nothing.
 
 14.4 Whether the resident writes in the same buffer or an adjacent lane, once §6.3 has been used in
 anger.
@@ -576,3 +746,11 @@ hurts in practice is a Stage 5 measurement, not a guess.
 judged as a final today, exactly as a bridge's complete line would be; whether that over-segments
 at pad grain (three probes per half-second pause) is to be measured against real typing before a
 kind is added (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, F8 and §6.2).
+
+14.9 Whether the deletion marker's wording should change for the tune after v11, given 5.1.10's
+measurement (the marker closes a thought of its own and does not neutralise the claim it marks). A
+tune's question; the runtime keeps it configuration.
+
+14.10 How the fold should judge history: at word grain as today, at prefill speed with judgments
+only at the compiler's closed thoughts, or not at all when a checkpoint is present. Decided by
+Stage 1d's checkpoint and by measuring the prefill fold's cost against the 39 s of 5.1.14.
