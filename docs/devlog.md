@@ -776,3 +776,66 @@
 - The picture in the README is a real run: the human types a contradiction, the SKEPTIC catches it
   against what the file established earlier, the SENTINEL flags the irreversible action, and both
   write in their own blocks while the gutter shows how much each seat wanted to speak.
+
+## 2026-09-05 (afternoon) · Stage 3 - the un-say, which is the whole point
+
+- IT TOOK A SENTENCE BACK. The record, from this box:
+    abort   SKEPTIC  +5.06 -> -1.77  margin_flipped
+    aired    "That contradicts what"
+    killed   " we established - it's postgres 16, not mysql 5."
+  The file established postgres 16. The human typed that it was mysql 5. The SKEPTIC began to
+  correct that, and four words reached the screen. The human typed "Sorry, postgres 16." while it
+  was writing; those words landed on the trunk between two generated tokens; the seat was asked
+  again on a fresh fork of the UPDATED trunk and came back at -1.77 where it had been +5.06 - it
+  would not have started - and the sentence died mid-word. The rest was sampled in silence so the
+  tape holds what it would have said. Not one character of it was ever in the document.
+- THE FORMING PLANE IS NOT AN UNDO, and that is the design. The words live in a fourth plane of the
+  view: drawn where the finished block would go, in a colour between the dim and the accent, never
+  in the Doc, so they are in no changeset, no revision and no replay. SPEC 6.4.3 asks that Ctrl+S
+  during a formation write only the committed document; there is no code path to enforce, because
+  there is nothing else to write. The withdrawal is structural. The driver asserts it from both
+  sides: after an abort neither the aired prefix nor the killed remainder is in the saved file, and
+  Ctrl+R still folds the log byte-exact.
+- The wire publishes the forming sentence as a STATE and not a stream - a frame the editor never
+  saw is a frame nobody missed, because the terminal event (said, or taken back) is on the ring and
+  authoritative. While a sentence forms the view repaints at 30 ms instead of 120: a render
+  cadence, pacing nothing, which is the only kind rule 5 permits.
+- ONLY COMMITS KILL, and the killing keystroke is a percept first: the world's words are on the
+  trunk before the branch dies, so a re-form would be informed rather than retried. Two things
+  kill - the newest line accepting the point (settled_by_world), or the seat's own margin at or
+  below zero when asked again (margin_flipped). Judgment is DELAYED inside a generation and ingest
+  is not; probing there would fork the trunk under the speaking seat and could start a second
+  sentence inside the first. That is SPEC 5.1.4 at the finest grain the program has.
+- THE TEST IS A RACE AND SAYS SO. A correction only reaches the trunk mid-sentence if it becomes a
+  percept inside the generation's few hundred milliseconds, so it must be short and close a
+  thought; the driver tries three different claims and passes when one is taken back. Whether a
+  boundary lands inside a given sentence is a property of the sampler's speed, not of the
+  mechanism, and a test that pretended otherwise would be flaky rather than honest.
+- A FINDING WORTH MORE THAN THE FEATURE, and it cost the first version of the test. In a long
+  session the seats PERSEVERATE: having said their piece about one thing they keep re-proposing the
+  same line at every later boundary, and the manners refuse it every time. One driver run composed
+  fourteen sentences: six said, eight refused, and the eight were the same two lines over and over.
+  The harness is doing its job and the disposition is not - say-it-once is a fine-tune target, as
+  the estate has held since 2026-08-12, and this is the first time nib has measured its own version
+  of it. It is also why the un-say needs a window of its own: after a long session there is nothing
+  fresh for a seat to begin, so there is nothing to take back.
+- The first attempt at a screenshot of a forming sentence failed for a reason worth keeping:
+  launching PowerShell to capture the window takes longer than the sentence takes to write. The
+  capture had to move in-process (PrintWindow into a DIB, straight to PNG, a few milliseconds).
+  If you want to photograph something that lasts 300 ms, do not start a shell to do it.
+- TWO TEST FAILURES THAT WERE NOT THE CODE, both worth keeping. First: the un-say case failed twice
+  with "no abort in five attempts" because it inherited a TAPE AND A CHECKPOINT from an earlier
+  --keep run - so the resident RESTORED, had already said its piece about that document, and the
+  manners refused every repeat; nothing was ever begun, so there was nothing to take back. The case
+  clears its own slate now. A test that restores state from a previous run is testing the previous
+  run. Second: one run in four failed earlier still, in the main case, with the SKEPTIC not firing
+  on the Pacific at all - the card is shared with llama-server and was at 40 % with the operator
+  working; the next run passed 65/65 with the same binary. The --ai battery is sensitive to
+  co-tenancy and that is a property of the box, not of nib, but it means a red --ai run is worth
+  re-running once before it is believed.
+- Green: --selftest 213 passed 0 failed; tools/drive.py 30 passed 0 failed, three runs;
+  tools/drive.py --ai 65 passed 0 failed, including the whole un-say act with both verifiers on its
+  tape.
+- NEXT is Stage 4: the two switches and the paired record - RESIDENT / TURN-BASED with the seat,
+  the seed and the sampler pinned identical across the toggle, so every flip during real work is a
+  paired sample with exactly one variable.

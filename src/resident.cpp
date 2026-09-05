@@ -650,11 +650,33 @@ std::vector<Suppressed> Resident::take_suppressed() {
     return o;
 }
 
+std::vector<Abort> Resident::take_aborts() {
+    std::vector<Abort> o;
+    o.swap(aborts_);
+    return o;
+}
+
+// One seat, asked on a fresh fork of the trunk AS IT STANDS NOW. A judgment cannot be made as of
+// an earlier instant on this model — the fork's recurrent state cannot be rewound (SPEC 6.2.8) —
+// so this is always a question about the present, which is exactly what the seam needs to ask.
+float Resident::probe_one(int m) {
+    llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
+    llama_memory_seq_cp(p_->mem, TRUNK, DECIDE, -1, -1);
+    const auto pr = tk(p_->vocab, std::string(PROBE_A) + kSeats[m].name + PROBE_B +
+                                      kSeats[m].mandate + PROBE_C, false);
+    if (!decode(pr, DECIDE, npast_, true)) { llama_memory_seq_rm(p_->mem, DECIDE, -1, -1); return 0.0f; }
+    const float* l = llama_get_logits_ith(p_->ctx, -1);
+    const float margin = l[p_->emit_tok] - l[p_->hold_tok];
+    llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
+    ++probes_;
+    return margin;
+}
+
 // ---- the mouth ---------------------------------------------------------------------------------
 // One sentence, on a fork of the trunk as it stands, with a hard cap. The fork is dropped before
 // this returns: nothing a seat says reaches the trunk here — that happens at the end of the line
 // (flush_own_speech), so a seat's words are never spliced into the middle of somebody else's.
-bool Resident::speak(int m, float margin, const std::string& about, Emission& out) {
+bool Resident::speak(int m, float margin, const std::string& about, Emission& out, Seam* seam) {
     if (!p_ || !p_->smp || !ctx_) return false;
     const uint64_t t0 = wall_ms();
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);
@@ -668,9 +690,13 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
         const float* l = llama_get_logits_ith(p_->ctx, -1);
         memcpy(gl.data(), l, sizeof(float) * (size_t)p_->n_vocab);
     }
-    std::string say;
-    int toks = 0;
+    std::string say, killed, aired;
+    int toks = 0, probes = 0;
     char stop = 'c';
+    bool aborted = false;
+    float m_after = margin;
+    std::string why, by;
+    ++gen_depth_;   // judgment is delayed while a seat speaks; ingest never is
     for (int t = 0; t < cfg_.gen_cap; ++t) {
         const llama_token tok = sample_from(p_->smp, gl.data(), p_->n_vocab, cands);
         if (llama_vocab_is_eog(p_->vocab, tok)) { stop = 'e'; break; }
@@ -678,8 +704,15 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
         const int pn = llama_token_to_piece(p_->vocab, tok, pc, sizeof pc, 0, true);
         const std::string piece(pc, pn > 0 ? (size_t)pn : 0);
         if (piece.find('\n') != std::string::npos) { stop = 'n'; break; }   // a second line is a second thought
-        say += piece;
-        ++toks;
+        if (!aborted) {
+            say += piece;
+            ++toks;
+            // the forming plane: the words appear as they are sampled, and they are not in the
+            // document while they do
+            if (seam) { seam->forming(m, say, true); aired = say; }
+        } else {
+            killed += piece;   // sampled in silence, so the tape holds what would have been said
+        }
         const std::vector<int> one{ tok };
         if (!decode(one, GEN, gpos, true)) break;
         ++gpos;
@@ -688,13 +721,62 @@ bool Resident::speak(int m, float margin, const std::string& about, Emission& ou
             memcpy(gl.data(), l, sizeof(float) * (size_t)p_->n_vocab);
         }
         if (t >= cfg_.gen_min) {   // one sentence: the first close once there is enough to be a line
-            const char lc = say.empty() ? 0 : say[say.size() - 1];
+            const std::string& s = aborted ? killed : say;
+            const char lc = s.empty() ? 0 : s[s.size() - 1];
             if (lc == '.' || lc == '!' || lc == '?') { stop = 's'; break; }
         }
+        // ================== THE WINDOW INSIDE THE BLIND WINDOW ==================
+        // A percept never waits for a sentence to finish — not even for the silent remainder after
+        // a kill. Whatever the world has said lands on the trunk here, between two tokens.
+        if (!seam) continue;
+        if (!seam->drain()) continue;
+        if (aborted) continue;   // the world already answered; the rest is record, not decision
+        // A whole percept landed while this seat was speaking. Did the world answer first?
+        //   (a) deterministically: the newest line ACCEPTS what this seat is saying, or what it is
+        //       speaking about — then the point is settled and the sentence is redundant.
+        //   (b) by asking the seat again, on a fresh fork of the UPDATED trunk: a margin at or
+        //       below zero means it would not have started. Only commits kill (fabric.h's law):
+        //       the keystroke is already on the trunk before the branch dies.
+        const std::string& newest = last_world_line_;
+        const bool settled = looks_like_acceptance(newest) &&
+                             (content_overlap(newest, say) >= 1 || content_overlap(newest, about) >= 1);
+        if (!settled) { m_after = probe_one(m); ++probes; ++seam_probes_; }
+        if (settled || m_after <= 0.0f) {
+            aborted = true;
+            why = settled ? "settled_by_world" : "margin_flipped";
+            by = settled ? newest : std::string();
+            if (seam) seam->forming(m, std::string(), false);   // the words are withdrawn, now
+        }
     }
+    --gen_depth_;
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);   // the fork is dropped; the trunk never saw it
     while (!say.empty() && (say.front() == ' ' || say.front() == '\t')) say.erase(0, 1);
     gen_ms_ += wall_ms() - t0;
+    if (aborted) {
+        Abort a;
+        a.wall_ms = wall_ms();
+        a.boundary = boundaries_;
+        a.seat = m;
+        a.margin = margin;
+        a.margin_after = m_after;
+        a.aired = aired;
+        a.killed = killed;
+        a.clause = about;
+        a.why = why;
+        a.by = by;
+        a.gen_ms = wall_ms() - t0;
+        a.toks = toks;
+        a.probes = probes;
+        aborts_.push_back(std::move(a));
+        ++aborted_;
+        // It really did say the part that reached the surface, so the mind hears that much of
+        // itself — with a marker saying it was cut off, or it would read as a whole short line
+        // and be repeated as one. **[BET]** if seats re-fire BECAUSE of the marker, drop it and
+        // keep only the record (K5's D2 carries the same bet).
+        if (!aired.empty()) pending_commits_.push_back(std::string("\n[") + kSeats[m].name + "] " + aired + " —");
+        return false;
+    }
+    if (seam) seam->forming(m, std::string(), false);
     if (say.empty()) return false;
     out.wall_ms = wall_ms();
     out.boundary = boundaries_;
@@ -763,6 +845,11 @@ bool Resident::allowed_to_say(int m, float margin, const std::string& say, const
 
 void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& out) {
     if (clause_.empty()) return;
+    // Inside a generation, judgment is DELAYED and ingest is not: the words landing while a seat
+    // speaks are on the trunk already, and the clause they belong to keeps accumulating until the
+    // sentence ends. Probing here would fork the trunk under the speaking seat and could start a
+    // second sentence inside the first. Delay a judgment; never drop a percept (SPEC 5.1.4).
+    if (gen_depth_ > 0) { ++deferred_; return; }
     ++boundaries_;
     if (reason[0] == 'c') ++coarsened_;   // degradation must be COUNTED, not inferred
 
@@ -780,26 +867,19 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
     const uint64_t mf = vram_free_mib();   // the co-tenancy dial, read beside the cost it explains
     float margins[3] = { -1e9f, -1e9f, -1e9f };
     for (int m = 0; m < 3; ++m) {
-        llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
-        llama_memory_seq_cp(p_->mem, TRUNK, DECIDE, -1, -1);
-        const auto pr = tk(p_->vocab, std::string(PROBE_A) + kSeats[m].name + PROBE_B +
-                                          kSeats[m].mandate + PROBE_C, false);
-        if (!decode(pr, DECIDE, npast_, true)) { llama_memory_seq_rm(p_->mem, DECIDE, -1, -1); break; }
-        const float* l = llama_get_logits_ith(p_->ctx, -1);
+        const float margin = probe_one(m);
         Judgment j;
         j.wall_ms = wall_ms();
         j.boundary = boundaries_;
         j.seat = m;
-        j.margin = l[p_->emit_tok] - l[p_->hold_tok];
+        j.margin = margin;
         j.bscore = bscore;
         j.reason = reason[0];
         j.mib_free = mf;
         j.clause = clause_;
-        margins[m] = j.margin;
-        if (j.margin > 0.0f) ++wanted_;
+        margins[m] = margin;
+        if (margin > 0.0f) ++wanted_;
         out.push_back(std::move(j));
-        ++probes_;
-        llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
     }
     probe_ms_ += wall_ms() - t0;
 
@@ -840,7 +920,7 @@ bool Resident::wants_pending() const {
 // The floor has opened: compose what each seat still wants to say, oldest seat first, and let the
 // manners decide whether it is said. A want the floor never opened for inside its time to live is
 // dropped, because the instant it was about has gone.
-void Resident::speak_wants() {
+void Resident::speak_wants(Seam* seam) {
     if (!cfg_.emit || !ctx_ || failed() || window_full_) return;
     for (int m = 0; m < 3; ++m) {
         Want& w = want_[m];
@@ -860,7 +940,7 @@ void Resident::speak_wants() {
         }
         w.live = false;
         Emission e;
-        if (!speak(m, w.margin, w.clause, e)) continue;
+        if (!speak(m, w.margin, w.clause, e, seam)) continue;
         if (!allowed_to_say(m, w.margin, e.say, w.clause)) continue;
         emissions_.push_back(e);
         ++emitted_;
@@ -950,6 +1030,7 @@ void Resident::feed(const std::string& lane, const std::string& text, uint64_t,
     std::string line = text;
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
     if (line.empty()) return;
+    last_world_line_ = line;   // the newest thing the world said, for the seam's acceptance test
     const auto pre = tk(p_->vocab, std::string("\n[") + lane + "] ", false);
     if (!room_for(pre.size())) { dropped_words_ += count_words(line); return; }
     if (!decode(pre, TRUNK, npast_, true)) return;

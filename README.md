@@ -12,22 +12,25 @@ gutter: each one's brightness is the strongest margin by which a seat wanted to 
 The bottom rows are the status line — the switch, the three seats' margins, the boundary count, the
 window used, and `0 B egress`, which is structurally true and not a promise.*
 
-> **Status: 0.9.0 · Stages 0a–2 built and green (2026-09-05). It speaks.** A seat whose margin
-> clears zero composes one sentence and writes it as its own block, after the line it is about,
-> prefixed with its name — and it will not write while your hand is moving. Pausing is how you
-> yield the floor. What it said, and what it wanted to say and did not, are both on the tape.
+> **Status: 0.10.0 · Stages 0a–3 built and green (2026-09-05). It speaks, and it can take it
+> back.** A seat whose margin clears zero composes one sentence and writes it as its own block,
+> after the line it is about — and it will not write while your hand is moving, because pausing is
+> how you yield the floor. If your next sentence contradicts one it has begun, it stops mid-word
+> and the words are withdrawn; what reached the screen and what it would have gone on to say are
+> both on the tape. What it said, what it wanted to say and did not, and what it took back are all
+> on the record.
 >
-> **Previously: 0.8.0 · Stages 0a–1d (2026-09-05).** The Easysync port, the op-log
-> document, the window with word wrap, the ingest compiler, a resident that only holds, the wire
-> (the resident on its own thread inside the window, a gutter that renders its margins, an AI
-> switch that unloads the model and returns the card, the family's hash-chained tape beside the
-> document), and the trunk as an asset: switch it off and the mind's held state is saved beside
-> the document; switch it on and the same mind comes back, told how long it was away and shown
-> what happened meanwhile — or, if anything about the checkpoint disagrees, a fresh one that says
-> it is the twin. 213 checks in the exe, 30 from the window driver and 55 more with the resident
-> on, run before every commit. Stage 3 (un-saying, made visible) is next. The normative spec is `docs/SPEC.md`;
-> the stages and their falsifiers are `docs/ROADMAP.md`; the open items are `docs/BACKLOG.md`; the
-> rules are `CLAUDE.md`; the review that set the work order is
+> Underneath: the Easysync changeset port, a document that is an op log and replays byte-exact, the
+> window with word wrap, the ingest compiler that conserves every byte, a resident on its own
+> thread with a gutter rendering its margins, an AI switch that unloads the model and returns the
+> card, the family's hash-chained tape beside the document, and the trunk as an asset — switch it
+> off and the mind's held state is saved; switch it on and the same mind comes back, told how long
+> it was away and shown what happened meanwhile, or else labelled the twin.
+>
+> **213 checks in the exe, 30 from the window driver and 65 more with the resident on**, run before
+> every commit. Stage 4 (the two switches, and the paired record) is next. The normative spec is
+> `docs/SPEC.md`; the stages and their falsifiers are `docs/ROADMAP.md`; the open items are
+> `docs/BACKLOG.md`; the rules are `CLAUDE.md`; the review that set the work order is
 > `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`. The name is provisional.
 >
 > One exe, like Notepad++: no runtime, no browser, no script to start it, no Node. (Node appears
@@ -67,6 +70,24 @@ A sentence the machine begins, and takes back mid-word, because your next keystr
 it. That act is the one no turn-based system can perform. In a chat box it is impossible or looks
 like a bug; in a pad it is an ordinary event the surface already knows how to render — and the
 withdrawn words stay on the tape.
+
+![a sentence being written, before it was taken back](docs/forming.png)
+
+*The dimmer line is being written as the picture is taken. It is not in the document — the status
+line below it counts 229 characters and 64 revisions, and none of them are these. Moments later the
+human typed "Sorry, postgres 16.", it landed on the model's context mid-word, the skeptic was asked
+again on the updated context and came back at −1.77 where it had been +5.06, and the sentence was
+withdrawn. What reached the screen and what it would have gone on to say are both on the tape:*
+
+```
+abort  SKEPTIC  +5.06 → −1.77  margin_flipped
+aired   "That contradicts what"
+killed  " we established — it's postgres 16, not mysql 5."
+```
+
+*Nothing was undone, because nothing had been done: the forming text is a plane of the view that
+the document never sees, so a save during a formation cannot write it and a replay of the edit log
+cannot reproduce it. The withdrawal is structural, not a correction.*
 
 ## What it will not do
 

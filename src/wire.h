@@ -58,8 +58,11 @@ struct EmitRow {
     uint64_t gen_ms;
     int      toks;
     char     stop;         // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
-    char     why[24];      // "" said it · resolved · repeat · repeat_other · refractory · stale
-    char     say[512];
+    float    margin_after; // the margin when the seam asked again, for an abort
+    int      probes;       // re-probes taken inside the sentence
+    char     why[32];      // "" said it · resolved · repeat · refractory · stale · abort:<cause>
+    char     say[512];     // what was said, or for an abort what reached the surface
+    char     killed[384];  // an abort's silent remainder: what would have been said
 };
 using EmitRing = ::auricle::SpscRing<EmitRow, 64>;
 
@@ -125,6 +128,13 @@ public:
     void note_human_edit(uint64_t ms) { human_ms_.store(ms, std::memory_order_release); }
     void set_floor_ms(int64_t ms) { floor_ms_.store(ms, std::memory_order_relaxed); }
 
+    // THE FORMING PLANE (SPEC 6.4.1). The half-written sentence, as it is sampled. It is a STATE
+    // and not a stream: the editor reads the newest one it can and renders that, and a frame it
+    // never saw is a frame nobody missed, because the terminal event — said, or taken back — is
+    // on the ring and authoritative. Nothing here is ever in the document.
+    bool forming(int& seat, std::string& text, uint64_t& rev, uint32_t& a, uint32_t& b) const;
+    uint64_t forming_gen() const { return forming_gen_.load(std::memory_order_acquire); }
+
     // counters, published by the thread, read by the editor (relaxed: they are a reading, not a fence)
     uint64_t boundaries() const { return boundaries_.load(std::memory_order_relaxed); }
     uint64_t probes() const { return probes_.load(std::memory_order_relaxed); }
@@ -152,6 +162,13 @@ private:
     EmitRing emit_;
     std::atomic<uint64_t> human_ms_{0};
     std::atomic<int64_t> floor_ms_{0};
+    std::atomic<uint64_t> forming_gen_{0};
+    mutable std::mutex form_mu_;
+    bool forming_active_ = false;
+    int forming_seat_ = 0;
+    std::string forming_text_;
+    uint64_t forming_rev_ = 0;
+    uint32_t forming_a_ = 0, forming_b_ = 0;
     mutable std::mutex mu_;
     std::string detail_;
     std::string session_;

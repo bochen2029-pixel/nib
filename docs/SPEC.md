@@ -1,11 +1,12 @@
 # nib — SPECIFICATION
 
-*Rev 0.8 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
+*Rev 0.9 · 2026-09-05 · normative. Where this document and `docs/BLUEPRINT.md` disagree, this one
 governs the built artefact and the blueprint governs the intent. Where either disagrees with
 `docs/ASSEMBLY.md` on Etherpad or on the sync model, ASSEMBLY governs. Revs 0.1–0.4 were headed
 2026-09-03; git says they were written 2026-09-04, and this file dates by git. Rev 0.5 is the QC
 pass of that day (`docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`, §3 and §8): every clause it
-touches carries the date. Rev 0.8 is **Stage 2 (2026-09-05): the resident has a mouth** — §6.3
+touches carries the date. Rev 0.9 is **Stage 3 (2026-09-05): un-saying, made visible** — §6.4
+throughout. Rev 0.8 is **Stage 2 (2026-09-05): the resident has a mouth** — §6.3
 throughout, and the correction §6.3.2 needed to be satisfiable at all. Rev 0.7 is Stage 1d
 (2026-09-05): word wrap (§4.7), the trunk as an
 asset (§6.2.11), the batch cap the second life forced (§6.2.12), and the tape's torn-row recovery
@@ -665,18 +666,51 @@ K5 before a line of Stage 2 is written.
 
 ### 6.4 Un-saying
 
-**[SPECIFIED]** — Stage 3. Stage 2 composes a line and writes it when it is finished; the forming
-plane exists so that a sentence can be *taken back*, and it arrives with the mechanism that takes
-it back, not before.
+**[BUILT 2026-09-05]** — the seam, the forming plane, and the withdrawal.
 
 6.4.1 A forming sentence occupies a provisional region: rendered, visually distinct, never
-committed, never saved, never present in the file.
+committed, never saved, never present in the file. **[BUILT]** — a fourth plane of the view. The
+sentence is drawn where the finished block would go, in a colour between the dim and the accent, as
+it is sampled; it is not in the `Doc`, so it is in no changeset, no revision and no replay. The
+wire publishes it as a STATE and not a stream — a frame the editor never saw is a frame nobody
+missed, because the terminal event is on the ring and authoritative — and the view repaints at
+30 ms while a sentence is forming, which is a render cadence and paces nothing (§6.3.3).
 
 6.4.2 On abort, the characters MUST be withdrawn from the view and the abort MUST be committed to
-the tape with what was formed, what reached the air, and why it died.
+the tape with what was formed, what reached the air, and why it died. **[BUILT]** — the `abort`
+row carries the boundary, the seat, the margin that started it and the margin the seam came back
+with, the reason, the re-probes taken, the clause's revision and span, what reached the surface
+(`aired`), and **what it would have gone on to say** (`killed`).
+
+6.4.2.1 **The killed remainder is generated in silence.** After the kill the sampler keeps going to
+its stop, off the surface, so the tape holds the counterfactual: a typed negative with content,
+which is the thing the corpus calls the product. Measured 2026-09-05: aired `"That contradicts
+what"`, killed `" we established — it's postgres 16, not mysql 5."`
+
+6.4.2.2 **Only commits kill, and the killing keystroke is a percept first.** The world's words land
+on the trunk *before* the branch dies, so a re-form is informed rather than retried. Two things
+kill: the newest line ACCEPTS what the seat is saying or what it is speaking about (`settled_by_
+world`), or the seat, asked again on a fresh fork of the updated trunk, comes back at or below zero
+(`margin_flipped`) — it would not have started. Both are real internal events; nothing dies of a
+timer.
+
+6.4.2.3 **What reached the surface reaches the trunk, with a marker.** A seat that was cut off
+really did say the part that was rendered, so that much is committed on its lane followed by ` —`,
+or a truncated line would read as a whole short one and be repeated as one. **[BET]** if seats are
+observed re-firing *because of* the marker, drop the marker and keep only the record.
 
 6.4.3 `Ctrl+S` during formation MUST write the committed document only. Reflex partials never
-persist, enforced by the file format and not by a code path.
+persist, enforced by the file format and not by a code path. **[BUILT, and stronger than the
+clause asks]** — there is no code path to enforce, because the forming text is never in the
+document to begin with. The withdrawal is not an undo; nothing was done. The driver asserts it
+from both sides: after an abort neither the aired prefix nor the killed remainder is in the saved
+file, and `Ctrl+R` still folds the log byte-exact.
+
+6.4.4 **Judgment is delayed inside a generation; ingest is not.** Percepts landing while a seat
+speaks are decoded onto the trunk between two generated tokens, and their clause keeps
+accumulating; probing there would fork the trunk under the speaking seat and could start a second
+sentence inside the first. Delayed judgments are counted. This is SPEC 5.1.4's rule at the finest
+grain the program has: delay a judgment, never drop a percept.
 
 ---
 
@@ -719,7 +753,8 @@ brought up from, how many revisions or rows, the resume tick, what did not fit t
 written and how many bytes, the generation's cost in tokens and milliseconds, which of the four
 stops ended it, and the line itself) and **`refused`** (the same, with the reason it was not
 said: `floor`, `span-edited`, `resolved`, `repeat`, `repeat_other`, `refractory`, `stale`),
-`end`, `save`, `resume`, `warn`, `error`, `session_close`. A
+**`abort`** (§6.4.2: the seat, both margins, the reason, the re-probes, the span, what reached the
+surface and what it would have said), `end`, `save`, `resume`, `warn`, `error`, `session_close`. A
 hold is a judgment row whose margins are all below zero; there is no separate row because there is
 no emit path yet. `abort` and `emit` arrive with Stages 2 and 3.
 

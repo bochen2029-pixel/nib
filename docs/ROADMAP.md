@@ -25,7 +25,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **I** | 1c · the wire — the resident in the window, the gutter, the AI switch, the tape | ✔ 2026-09-05 | 0.7.0 |
 | **I** | 1d · the trunk as an asset — the checkpoint beside the document, word wrap | ✔ 2026-09-05 | 0.8.0 |
 | **I** | 2 · emission, with floor control | ✔ 2026-09-05 | 0.9.0 |
-| **I** | 3 · un-saying, made visible | ○ | |
+| **I** | 3 · un-saying, made visible | ✔ 2026-09-05 | 0.10.0 |
 | **I** | 4 · the two switches, and the paired record | ○ | |
 | **I** | 5 · **a week of real work** — the falsifier for the whole idea | ○ | |
 | **II** | 6 · discovery | ○ | |
@@ -33,7 +33,7 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**213 checks green in the exe, 30 more from the window driver, and 55 with the resident switched on
+**213 checks green in the exe, 30 more from the window driver, and 65 with the resident switched on
 inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
 gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
 llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
@@ -442,20 +442,51 @@ resident never asks — and the review's §5.1 says what a negotiated version wo
 gutter as an announcement, the human disposing by typing, pausing, editing or deleting). Stage 5
 is where a week of real work says whether the crude rule is enough.
 
-### ○ Stage 3 — un-saying, made visible
+### ✔ Stage 3 — un-saying, made visible · 0.10.0
 
-The seam (`LIFT_MAP_K5_2026-09-05.md` §3): intake drained after every generated token, the speaking
-seat re-probed on a fresh fork when a whole percept lands, the line killed mid-word on a flipped
-margin or on the world settling the point, and the killed remainder generated silently so the tape
-holds the counterfactual. The provisional region: rendered, distinct, never committed, never saved.
-On abort the characters are withdrawn and the abort goes on the tape.
+**The demonstration the whole project is for, and it works.** A seat begins a sentence; the words
+appear as they are sampled, in a plane of the view the document never sees; the human's next
+sentence lands on the trunk between two generated tokens; the seat is asked again on a fresh fork
+of the updated trunk; and the line dies mid-word. Measured on this box, 2026-09-05:
+
+```
+abort   SKEPTIC   +5.06 → −1.77   margin_flipped
+aired    "That contradicts what"
+killed   " we established — it's postgres 16, not mysql 5."
+```
+
+The human had written that the staging database was postgres 16; then typed that it was mysql 5;
+the SKEPTIC began to correct it; the human typed "Sorry, postgres 16." while it was writing. Four
+words had reached the screen. The rest was sampled in silence so the tape holds what it would have
+said, and nothing at all reached the document.
 
 *Falsifier: a killed sentence that is not on the tape, or that leaves residue in the buffer, or a
-saved file that ever contained a word that was un-said.*
+saved file that ever contained a word that was un-said.* — **Did not fire, and the third clause is
+unfalsifiable by construction now.** The driver runs the whole act in a window of its own: it
+asserts the abort exists, that it died of a real internal event and not a timer, that neither the
+aired prefix nor the killed remainder is in the saved file, that the tape holds the counterfactual,
+that `Ctrl+R` still folds the log byte-exact, and that the abort is on a chain both verifiers read
+as INTACT. **Nothing is undone, because nothing was done:** the forming text is a fourth plane of
+the view, so a save during a formation cannot write it and a replay cannot reproduce it.
 
-This is the demonstration the whole project is for. A person watches the machine begin a sentence,
-sees their own next keystroke contradict it, and sees it taken back. In a chat box that act is
-impossible or looks like a bug; in a pad it is an ordinary event the surface already renders.
+**Only commits kill, and the killing keystroke is a percept first** — the world's words are on the
+trunk before the branch dies, so a re-form would be informed rather than retried. Two things kill:
+the newest line accepting the point (`settled_by_world`), or the seat's own margin at or below zero
+when asked again (`margin_flipped`). Judgment is delayed inside a generation and ingest is not,
+which is SPEC 5.1.4 at the finest grain the program has.
+
+**What the stage cost, measured.** A sentence forms in 230–820 ms; the seam's re-probe is one more
+probe (~40 ms) and only when a whole percept lands during a sentence; the view repaints at 30 ms
+while forming, which is a render cadence and paces nothing.
+
+**A finding worth more than the feature.** In a long session the seats perseverate: after saying
+their piece about one thing they keep re-proposing the same line at every later boundary, and the
+manners refuse it every time (`repeat`). Fourteen composed sentences in one driver run produced six
+said and eight refused, and the eight were the same two lines over and over. The harness is doing
+its job and the disposition is not: say-it-once is a fine-tune target, exactly as the estate has
+held since 2026-08-12, and this is the first time nib has measured its own version of it. It is
+also why the un-say has a window of its own in the driver — after a long session there is nothing
+fresh for a seat to begin, so there is nothing to take back.
 
 ### ○ Stage 4 — the two switches, and the paired record
 

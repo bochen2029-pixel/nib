@@ -154,6 +154,18 @@ struct View {
         long long npast = 0;
         uint64_t rev = 0, epoch_ms = 0;
     } restore;
+    // THE FORMING PLANE (Stage 3, SPEC 6.4.1). A fourth plane of the buffer: rendered, never in
+    // the Doc, never in the log, never saved. Rule 3 is therefore structural — Ctrl+S during a
+    // formation writes the committed document because there is nothing else to write — and the
+    // withdrawal is not an undo: the characters were never anywhere they could be undone from.
+    bool forming_active = false;
+    int forming_seat = 0;
+    std::string forming_text;
+    size_t forming_at = 0;      // where it would go, in current document coordinates
+    size_t forming_row = 0;     // the visual row it is drawn after
+    uint64_t forming_gen = 0;   // the wire's counter, so a repaint costs nothing when nothing moved
+    bool fast_timer = false;
+    uint64_t abort_rows = 0;
     std::vector<Mark> marks;
     std::vector<EditRec> edits;
     struct { uint32_t boundary = 0; int n = 0; JudgmentRow rows[3]; } pend;   // three seats, one row
@@ -1017,15 +1029,69 @@ void commit_emission(HWND h, const EmitRow& r) {
     InvalidateRect(h, nullptr, TRUE);
 }
 
+// A sentence taken back. Nothing has to be removed from the document, because nothing was ever put
+// there: the words lived in the forming plane and the plane is cleared. What reached the surface,
+// what would have been said, and why it died all go on the tape (SPEC 6.4.2).
+void record_abort(const EmitRow& r) {
+    const char* why = r.why + 6;   // past "abort:"
+    tape_row_at("abort", r.wall_ms, canon::obj({
+        { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },
+        { "m", canon::flt(r.margin) }, { "m_after", canon::flt(r.margin_after) },
+        { "why", canon::str(why) }, { "probes", canon::num(r.probes) },
+        { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
+        { "aired", canon::str(r.say) }, { "killed", canon::str(r.killed) },
+        { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
+    }), true);
+    ++g->abort_rows;
+    nlog("abort	%u	%s	%.2f	%.2f	%s	%s	|	%s", r.boundary, seats()[r.seat].name,
+         (double)r.margin, (double)r.margin_after, why, r.say, r.killed);
+}
+
 void poll_emissions(HWND h) {
     EmitRow r;
     while (g->wire.poll_emit(r)) {
+        if (r.why[0] == 'a' && r.why[1] == 'b' && r.why[2] == 'o') {
+            record_abort(r);
+            set_status(std::string(seats()[r.seat].name) + " took it back");
+            InvalidateRect(h, nullptr, TRUE);
+            continue;
+        }
         if (r.why[0]) {   // the manners would not let it say this twice; the record says why
             refuse_emission(r, r.why);
             continue;
         }
         commit_emission(h, r);
     }
+}
+
+// The forming plane, read from the wire and anchored to the document as it stands now. Where the
+// block WOULD go is where the words appear, so the sentence forms in the place it would live.
+void poll_forming(HWND h) {
+    const uint64_t gen = g->wire.forming_gen();
+    if (gen == g->forming_gen) return;
+    g->forming_gen = gen;
+    int seat = 0;
+    uint64_t rev = 0;
+    uint32_t fa = 0, fb = 0;
+    std::string text;
+    const bool was = g->forming_active;
+    g->forming_active = g->wire.forming(seat, text, rev, fa, fb) && !text.empty();
+    if (g->forming_active) {
+        g->forming_seat = seat;
+        g->forming_text = text;
+        size_t a = fa, b = fb;
+        if (!transform_span(rev, a, b)) b = g->doc.size();   // the span moved; anchor to the end
+        const std::string& t = g->doc.text();
+        if (b > t.size()) b = t.size();
+        const size_t nl = t.find('\n', b);
+        g->forming_at = nl == std::string::npos ? t.size() : nl + 1;
+        g->forming_row = g->ridx.row_of(g->forming_at ? g->forming_at - 1 : 0);
+    } else {
+        g->forming_text.clear();
+    }
+    if (was != g->forming_active) nlog("forming	%d	%s", g->forming_active ? 1 : 0,
+                                       g->forming_active ? seats()[g->forming_seat].name : "");
+    InvalidateRect(h, nullptr, TRUE);
 }
 
 void poll_wire(HWND h) {
@@ -1291,8 +1357,10 @@ std::string resident_line() {
                                      (double)g->wire.last_margin(0), (double)g->wire.last_margin(1), (double)g->wire.last_margin(2),
                                      (unsigned long long)g->wire.boundaries(), g->wire.context_used(), g->rcfg.n_ctx);
             if (g->last_mib_free) l += ssprintf("  ·  %llu MiB free", (unsigned long long)g->last_mib_free);
-            if (g->rcfg.emit) l += ssprintf("  ·  said %llu, held %llu", (unsigned long long)g->emit_rows,
-                                            (unsigned long long)g->refused_rows);
+            if (g->rcfg.emit) l += ssprintf("  ·  said %llu, held %llu, took back %llu",
+                                            (unsigned long long)g->emit_rows,
+                                            (unsigned long long)g->refused_rows,
+                                            (unsigned long long)g->abort_rows);
             else l += "  ·  silent";
             if (g->ingest) {
                 if (g->ingest->spooled()) l += ssprintf("  ·  spool %zu", g->ingest->spooled());
@@ -1328,14 +1396,38 @@ void paint(HWND h) {
     const int lshift = g->wrap ? 0 : (int)g->left_col * g->cw;   // wrap off scrolls sideways
     const size_t cr = g->ridx.row_of(g->caret);
 
+    // the forming plane, laid out with the same arithmetic as the document so it sits in the text
+    std::vector<std::pair<size_t, size_t>> form_rows;
+    std::string form_line;
+    if (g->forming_active) {
+        form_line = std::string("[") + seats()[g->forming_seat].name + "] " + g->forming_text;
+        LineIndex fi;
+        fi.build(form_line);
+        RowIndex fr;
+        fr.build(form_line, fi, (size_t)g->cols, g->wrap);
+        for (const Row& fw : fr.rows) form_rows.emplace_back(fw.a, fw.b);
+    }
+    size_t form_drawn = 0;
+
+    size_t ri = g->top_row;
     for (int r = 0; r < rows; ++r) {
-        const size_t ri = g->top_row + (size_t)r;
+        // the half-written sentence appears where the finished one would go, and it is not in the
+        // document while it does: no changeset, no revision, nothing a save could reach
+        if (g->forming_active && form_drawn < form_rows.size() && ri == g->forming_row + 1) {
+            const auto& fr = form_rows[form_drawn++];
+            const int y = y0 + r * g->ch;
+            SetTextColor(dc, lerp(dim, g->th.accent, 0.45f));
+            const std::wstring w = widen(form_line.substr(fr.first, fr.second - fr.first));
+            TextOutW(dc, x0, y, w.c_str(), (int)w.size());
+            continue;
+        }
         if (ri >= g->ridx.count()) break;
-        const Row& row = g->ridx.rows[ri];
+        const size_t cur = ri++;
+        const Row& row = g->ridx.rows[cur];
         const size_t a = row.a, b = row.b, len = b - a;
         const int y = y0 + r * g->ch;
-        const bool first_of_line = ri == 0 || g->ridx.rows[ri - 1].line != row.line;
-        const bool last_of_line = g->ridx.last_of_line(ri);
+        const bool first_of_line = cur == 0 || g->ridx.rows[cur - 1].line != row.line;
+        const bool last_of_line = g->ridx.last_of_line(cur);
         const size_t line_a = g->idx.start[row.line];
         const size_t line_end = line_a + g->idx.line_len(row.line, t);
 
@@ -1387,7 +1479,7 @@ void paint(HWND h) {
         }
 
         // the caret on this row, drawn rather than a system caret so it cannot drift from the model
-        if (ri == cr) {
+        if (cur == cr) {
             const int cx = x0 + (int)utf8_count(t, a, g->caret - a) * g->cw - lshift;
             RECT car{ cx, y, cx + px(2), y + g->ch };
             HBRUSH cb = CreateSolidBrush(g->th.accent);
@@ -1463,6 +1555,11 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_TIMER: {
+            // A sentence lasts a few hundred milliseconds, so the plane it forms in is polled on a
+            // timer of its own: the compiler's 120 ms would show the words in three chunks and
+            // would notice the sentence had begun a tenth of a second late. This is a render
+            // cadence and paces nothing (SPEC 6.3.3, 6.4.1).
+            if (wp == 2) { poll_forming(h); return 0; }
             bool repaint = false;
             if (g->ingest) {
                 g->ingest->idle(mono_ms());
@@ -1471,6 +1568,15 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 if (n != g->last_percepts) { g->last_percepts = n; repaint = true; }
             }
             poll_wire(h);
+            poll_forming(h);
+            {   // the fast plane runs only while there is a mouth that might use it
+                const bool want = g->wire.state() == WireState::Ready && g->rcfg.emit;
+                if (want != g->fast_timer) {
+                    g->fast_timer = want;
+                    if (want) SetTimer(h, 2, 25, nullptr);
+                    else KillTimer(h, 2);
+                }
+            }
             // The periodic checkpoint (SPEC 6.2.11), taken only when the world is quiet: two seconds
             // since the last edit, nothing on the ring or in the spool, nothing pending in the
             // compiler — so the trunk and the revision the sidecar names agree about what it saw —

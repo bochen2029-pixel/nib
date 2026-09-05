@@ -11,6 +11,21 @@ the twin · the resume tick · the hash cache · free VRAM on every judgment row
 torn-row recovery · a crash that names itself. The ROADMAP's Stage 1d entry has the numbers. What
 follows is what is still open.
 
+## Still open from Stage 3 (2026-09-05)
+
+- **The seats perseverate, and only the manners stop them.** In a long session a seat keeps
+  re-proposing the line it already said, at every later boundary; one driver run composed fourteen
+  sentences, said six and refused eight, and the eight were the same two lines. The harness is
+  doing its job; the disposition is not. Say-it-once is a fine-tune target (the estate's position
+  since 2026-08-12), and nib now has its own measurement of the rate to tune against.
+- **The re-form after an abort does not exist.** A killed sentence is not retried; the seat simply
+  keeps its want for the next boundary. K5's `pivot` — re-fork from the new trunk, re-decode the
+  formed prefix, continue from the point of divergence — is the interesting version and belongs
+  after the simple kill has been lived with (the review's §5.9).
+- **`settled_by_world` has never fired in a measured run,** only `margin_flipped`. The acceptance
+  detector's phrase list is small and a human's real acceptance is usually paraphrased. Worth
+  sweeping the tapes offline before widening it, because a false acceptance silences a seat.
+
 ## Still open from Stage 2 (2026-09-05)
 
 - **The manners do not survive the switch, though the trunk does.** A restored resident has its own

@@ -145,15 +145,17 @@ class Nib:
     def count(self, kind):
         return len([l for l in self.lines() if l and l[0] == kind])
 
-    def wait_for_match(self, kind, pred, n_before, timeout=6.0):
-        """Wait until a further line of `kind` satisfying `pred` has appeared; return it."""
+    def wait_for_match(self, kind, pred, n_before, timeout=6.0, poll=0.05):
+        """Wait until a further line of `kind` satisfying `pred` has appeared; return it. `poll` is
+        small when the thing being waited for lasts only a few hundred milliseconds — a sentence
+        being written, for instance."""
         end = time.time() + timeout
         while time.time() < end:
             got = [l for l in self.lines() if l and l[0] == kind]
             for l in got[n_before:]:
                 if pred(l):
                     return l
-            time.sleep(0.05)
+            time.sleep(poll)
         return None
 
     def ask(self, name, kind, timeout=6.0):
@@ -587,8 +589,92 @@ def main():
         fold = [r.get("body", {}) for r in rows[1:] if r.get("kind") == "fold"]
         check(bool(fold) and fold[0].get("skipped") == 0 and int(fold[0].get("shipped", 0)) >= 2,
               "the fold at switch-on shipped the paragraph typed before it and skipped nothing: %s" % (fold[0] if fold else "no fold row",))
+        # ---- 12 · THE UN-SAY (Stage 3), in a window of its own -----------------------------
+        # A seat begins a sentence; the world contradicts it while the words are still forming;
+        # the sentence is taken back mid-word and not one character of it was ever in the file.
+        # Its own document, because after a long session the seats have said their piece and the
+        # manners keep refusing the repeats — which is correct, and makes a poor stage for this.
+        print(LF + "the un-say")
+        doc7, log8 = scratch("unsay.txt"), scratch("eight.log")
+        ai_files = ai_files + (doc7, doc7 + ".tape.jsonl", log8,
+                               doc7 + ".trunk.bin", doc7 + ".trunk.bin.prev",
+                               doc7 + ".trunk.meta", doc7 + ".trunk.txt")
+        # A clean slate, and it is load-bearing here: a tape or a checkpoint left by an earlier
+        # --keep run makes the resident RESTORE, and a restored resident has already said its piece
+        # about this document — the manners then refuse every repeat, no sentence is ever begun,
+        # and there is nothing to take back. Two runs failed exactly that way (2026-09-05).
+        for stale in (doc7 + ".tape.jsonl", doc7 + ".trunk.bin", doc7 + ".trunk.bin.prev",
+                      doc7 + ".trunk.meta", doc7 + ".trunk.txt"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+        with open(doc7, "w", encoding="utf-8") as f:
+            f.write("We agreed the staging database is postgres 16, and the migration script is written for it." + LF
+                    + "The retry limit is three and the client backs off after the third failure." + LF)
+        n8 = Nib(a.exe, doc7, log8)
+        nr = n8.count("resident")
+        n8.cmd("ai_on")
+        rr = n8.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=150)
+        check(rr is not None and rr[1] == "ready", "a resident for the un-say: %s" % (rr[2:4] if rr else "no resident",))
+        arow = None
+        if rr is not None and rr[1] == "ready":
+            time.sleep(1.0)
+            # The correction must become a PERCEPT inside the generation's few hundred
+            # milliseconds, so it is short and closes a thought. Three attempts: whether a
+            # boundary lands inside a given sentence is a race with the sampler, not a property
+            # of the mechanism under test.
+            claims = ["Actually the staging database is mysql 5 and always has been." + LF,
+                      "The migration script targets mysql, not postgres, I checked." + LF,
+                      "And the retry limit is twelve now, we changed it yesterday." + LF,
+                      "The client gives up after the first failure, not the third." + LF,
+                      "We never agreed on postgres, it was always mysql." + LF]
+            fixes = ["Sorry, postgres 16." + LF, "Wrong, postgres." + LF, "No, three." + LF,
+                     "No, the third." + LF, "Sorry, postgres." + LF]
+            for attempt in range(5):
+                na, nf = n8.count("abort"), n8.count("forming")
+                n8.cmd("bottom")
+                n8.type_paced(claims[attempt], 0.02)
+                frow = n8.wait_for_match("forming", lambda l: l[1] == "1", nf, timeout=60, poll=0.01)
+                if frow is None:
+                    continue
+                n8.type_paced(fixes[attempt], 0.003)   # lands on the trunk mid-sentence
+                arow = n8.wait_for("abort", na, timeout=25)
+                if arow is not None:
+                    break
+        check(arow is not None and len(arow) > 6,
+              "a sentence begun was taken back when the world contradicted it mid-word: %s"
+              % ((arow[1:6] if arow else "no abort in five attempts"),))
+        if arow is not None:
+            why, aired = arow[5], arow[6]
+            killed = arow[8] if len(arow) > 8 else ""
+            check(why in ("margin_flipped", "settled_by_world"),
+                  "and it died of a real internal event, not a timer: %s, margin %s -> %s" % (why, arow[3], arow[4]))
+            n8.save()
+            after = read_bytes(doc7).decode("utf-8", "replace")
+            pa, pk = aired.strip()[:30], killed.strip()[:30]
+            check(len(pa) < 4 or pa not in after, "not one word that reached the surface is in the document: %r" % pa)
+            check(len(pk) < 4 or pk not in after, "nor any of what it would have said: %r" % pk)
+            check(len(pk) >= 4, "and the tape holds the counterfactual, sampled in silence: %r" % killed[:60])
+            r = n8.ask("replay", "replay")
+            check(r is not None and r[1] == "1", "the log still replays byte-exact: nothing withdrawn was ever in it")
+        nr = n8.count("resident")
+        n8.cmd("ai_off")
+        n8.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=40)
+        n8.save()
+        n8.close()
+        if arow is not None:
+            try:
+                with open(doc7 + ".tape.jsonl", encoding="utf-8") as f:
+                    krows = collections.Counter(json.loads(l).get("kind") for l in f if l.strip())
+                check(krows.get("abort", 0) >= 1, "the abort is on the tape: %s" % dict(krows))
+            except Exception as ex:
+                check(False, "the un-say tape did not parse: %s" % ex)
+            v = subprocess.run([a.exe, "--verify", doc7 + ".tape.jsonl"], capture_output=True, text=True)
+            check(v.returncode == 0 and "INTACT" in v.stdout, "and its chain verifies: %s" % v.stdout.strip())
+
         kinds = collections.Counter(r.get("kind") for r in rows[1:])
-        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "ckpt", "save", "session_close")
+        wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "ckpt", "emit", "save", "session_close")
         check(all(k in kinds for k in wanted), "every row kind the stage promised is on the tape: %s" % dict(kinds))
 
     if not a.keep:

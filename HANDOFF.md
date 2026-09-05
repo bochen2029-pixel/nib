@@ -19,6 +19,17 @@ to resume.**
 > review's §8 P1, then Stage 2. And by operator ruling the shipped product autodiscovers on the
 > LAN by default (CLAUDE.md rule 2, SPEC 9.1.1).
 >
+> **Addendum, 2026-09-05 (afternoon).** **Stage 3 landed as 0.10.0: IT TAKES A SENTENCE BACK.** A
+> seat begins a line, the words appear in a plane the document never sees, the human's next
+> sentence lands on the trunk between two generated tokens, the seat is asked again on a fresh fork
+> and comes back at −1.77 where it was +5.06, and the line dies mid-word. The rest is sampled in
+> silence so the tape holds what it would have said. Oracles: **`--selftest` 213, `drive.py` 30,
+> `drive.py --ai` 65.** Nothing is undone because nothing was done: the forming plane is not in the
+> `Doc`, so a save cannot write it and a replay cannot reproduce it. A finding kept: in a long
+> session the seats perseverate and the manners refuse the repeats — say-it-once is a fine-tune
+> target, and this is nib's own measurement of it. §5's "resume here" means **Stage 4**, the two
+> switches and the paired record.
+>
 > **Addendum, 2026-09-05 (late morning).** **Stage 2 landed as 0.9.0: IT SPEAKS.** A seat whose
 > margin clears zero composes one sentence and writes it as its own `[SEAT] ` block, after the line
 > it is about, and never while the hand is moving. Oracles: **`--selftest` 213, `drive.py` 30,
@@ -154,7 +165,7 @@ Every tool in this family follows the same discipline. Match it or the work will
 | **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
 | **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
 | **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.9.0 · the active work · Stages 0a–2 · 213 + 30 + 55 checks · it speaks, in its own blocks, and not while you type** |
+| **nib** | `C:\nib` | **0.10.0 · the active work · Stages 0a–3 · 213 + 30 + 65 checks · it speaks, and it takes a sentence back when you contradict it** · public at github.com/bochen2029-pixel/nib |
 
 The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
 `https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.

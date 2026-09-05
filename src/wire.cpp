@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 
 namespace nib {
 
@@ -21,6 +22,17 @@ void Wire::set_state(WireState s) { state_.store((int)s, std::memory_order_relea
 std::string Wire::detail() const { std::lock_guard<std::mutex> g(mu_); return detail_; }
 std::string Wire::session_body() const { std::lock_guard<std::mutex> g(mu_); return session_; }
 std::string Wire::model_hash() const { std::lock_guard<std::mutex> g(mu_); return model_hash_; }
+
+bool Wire::forming(int& seat, std::string& text, uint64_t& rev, uint32_t& a, uint32_t& b) const {
+    std::lock_guard<std::mutex> g(form_mu_);
+    if (!forming_active_) return false;
+    seat = forming_seat_;
+    text = forming_text_;
+    rev = forming_rev_;
+    a = forming_a_;
+    b = forming_b_;
+    return true;
+}
 std::string Wire::boot() const { std::lock_guard<std::mutex> g(mu_); return boot_; }
 std::string Wire::boot_reason() const { std::lock_guard<std::mutex> g(mu_); return boot_reason_; }
 
@@ -221,7 +233,33 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             if (s.boundary == boundary) { rev = s.rev; a = s.a; b = s.b; return; }
         rev = 0; a = 0; b = 0;
     };
-    // what a seat said, or what the manners refused to say twice, on its way to the editor
+    // The seam, handed to the resident for the duration of a sentence: the world lands on the
+    // trunk between two generated tokens, and the half-written line goes out to be rendered.
+    struct WireSeam : Seam {
+        Wire* w;
+        std::function<bool()> step;
+        uint64_t rev = 0;
+        uint32_t a = 0, b = 0;
+        bool drain() override {
+            bool whole = false;
+            while (step()) whole = true;   // everything on the ring, not one percept
+            return whole;
+        }
+        void forming(int seat, const std::string& text, bool active) override {
+            {
+                std::lock_guard<std::mutex> g(w->form_mu_);
+                w->forming_active_ = active;
+                w->forming_seat_ = seat;
+                w->forming_text_ = text;
+                w->forming_rev_ = rev;
+                w->forming_a_ = a;
+                w->forming_b_ = b;
+            }
+            w->forming_gen_.fetch_add(1, std::memory_order_release);
+        }
+    };
+
+    // what a seat said, what it took back, or what the manners refused to say twice
     auto ship_emissions = [&] {
         for (const Emission& e : res.take_emissions()) {
             EmitRow r{};
@@ -237,6 +275,31 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             const size_t n = e.say.size() < sizeof r.say - 1 ? e.say.size() : sizeof r.say - 1;
             memcpy(r.say, e.say.data(), n);
             r.say[n] = 0;
+            while (!emit_.try_push(r) && !stop_.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        for (const Abort& ab : res.take_aborts()) {
+            EmitRow r{};
+            r.wall_ms = ab.wall_ms;
+            r.boundary = (uint32_t)ab.boundary;
+            span_of(r.boundary, r.rev, r.a, r.b);
+            r.seat = ab.seat;
+            r.margin = ab.margin;
+            r.margin_after = ab.margin_after;
+            r.probes = ab.probes;
+            r.gen_ms = ab.gen_ms;
+            r.toks = ab.toks;
+            r.stop = 'k';
+            const std::string why = "abort:" + ab.why;
+            const size_t wn = why.size() < sizeof r.why - 1 ? why.size() : sizeof r.why - 1;
+            memcpy(r.why, why.data(), wn);
+            r.why[wn] = 0;
+            const size_t n = ab.aired.size() < sizeof r.say - 1 ? ab.aired.size() : sizeof r.say - 1;
+            memcpy(r.say, ab.aired.data(), n);
+            r.say[n] = 0;
+            const size_t kn = ab.killed.size() < sizeof r.killed - 1 ? ab.killed.size() : sizeof r.killed - 1;
+            memcpy(r.killed, ab.killed.data(), kn);
+            r.killed[kn] = 0;
             while (!emit_.try_push(r) && !stop_.load(std::memory_order_acquire))
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -293,7 +356,15 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
                 const uint64_t human = human_ms_.load(std::memory_order_acquire);
                 const bool open = floor <= 0 || human == 0 ||
                                   (int64_t)(mono_ms() - human) >= floor;
-                if (open) { res.speak_wants(); ship_emissions(); publish(); }
+                if (open) {
+                    WireSeam s;
+                    s.w = this;
+                    s.step = step;
+                    span_of((uint32_t)res.boundaries(), s.rev, s.a, s.b);
+                    res.speak_wants(&s);
+                    ship_emissions();
+                    publish();
+                }
             }
             // a checkpoint asked for is taken now, when nothing is half-perceived
             if (ckpt_req_.exchange(false, std::memory_order_acq_rel)) {

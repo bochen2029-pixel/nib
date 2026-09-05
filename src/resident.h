@@ -65,6 +65,33 @@ struct Emission {
     char     stop = 'c';        // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
 };
 
+// A sentence that was begun and taken back. Stage 3: the demonstration the project is for.
+struct Abort {
+    uint64_t wall_ms = 0;
+    uint64_t boundary = 0;
+    int      seat = 0;
+    float    margin = 0.0f;      // the margin that started it
+    float    margin_after = 0.0f;// the margin when it was re-asked, if it was
+    std::string aired;           // what had been published to the surface when it died
+    std::string killed;          // the rest of the sentence, sampled in silence, for the record
+    std::string clause;          // what it was about
+    std::string why;             // margin_flipped · settled_by_world
+    std::string by;              // the world's line that settled it, when that is why
+    uint64_t gen_ms = 0;
+    int      toks = 0;
+    int      probes = 0;         // re-probes taken inside the sentence
+};
+
+// The seam, seen from inside a generation. The resident owns the mouth; the caller owns the ring
+// and the surface, so it hands these two in: `drain` lands whatever the world has said onto the
+// trunk (percepts are never dropped, not even for a sentence in flight) and answers whether a
+// whole percept arrived, and `forming` carries the half-written sentence out to be rendered.
+struct Seam {
+    virtual ~Seam() = default;
+    virtual bool drain() = 0;
+    virtual void forming(int seat, const std::string& text, bool active) = 0;
+};
+
 // A line a seat composed and the manners refused to say twice. Counted and recorded, never
 // dropped: a suppression is a fact about the mind, and say-it-once is a tune's problem, not a
 // harness's (the estate's own finding — the harness does the honest minimum and logs the rest).
@@ -175,15 +202,19 @@ public:
     // what each seat WANTS and composes nothing; the caller, which is the only party that knows
     // whether the hand has paused, calls this when the floor is open. Pausing is how a person
     // yields the floor, and this is the line that makes that true.
-    void speak_wants();
+    void speak_wants(Seam* seam = nullptr);
     bool wants_pending() const;
 
     // What was said, and what the manners would not say twice, since the last call. Drained by the
     // caller after `feed`; empty unless Config::emit.
     std::vector<Emission> take_emissions();
     std::vector<Suppressed> take_suppressed();
+    std::vector<Abort> take_aborts();
     uint64_t emitted() const { return emitted_; }
     uint64_t suppressed() const { return suppressed_; }
+    uint64_t aborted() const { return aborted_; }
+    uint64_t deferred() const { return deferred_; }
+    uint64_t seam_probes() const { return seam_probes_; }
 
     // Save the trunk's state and token list to `path`, atomically: a temporary, a write-through
     // replace, the previous generation kept as `.prev`. `bytes` is what was written.
@@ -216,8 +247,10 @@ public:
 
 private:
     void judge(const char* reason, float bscore, std::vector<Judgment>& out);
-    // Compose one sentence on a fork of the trunk. Returns false if it produced nothing.
-    bool speak(int seat, float margin, const std::string& about, Emission& out);
+    // Compose one sentence on a fork of the trunk. Returns false if it produced nothing OR if the
+    // world took it back mid-word, in which case an Abort was recorded.
+    bool speak(int seat, float margin, const std::string& about, Emission& out, Seam* seam);
+    float probe_one(int seat);   // one seat, one fork of the trunk as it stands NOW
     // The manners ladder. True when the line may be said; otherwise it is recorded as suppressed.
     bool allowed_to_say(int seat, float margin, const std::string& say, const std::string& about);
     void flush_own_speech();   // the seats' lines onto the trunk, once the world's line has closed
@@ -254,7 +287,10 @@ private:
     // ---- Stage 2 ------------------------------------------------------------------------------
     std::vector<Emission> emissions_;
     std::vector<Suppressed> supp_;
-    uint64_t emitted_ = 0, suppressed_ = 0, gen_ms_ = 0;
+    std::vector<Abort> aborts_;
+    uint64_t emitted_ = 0, suppressed_ = 0, gen_ms_ = 0, aborted_ = 0, deferred_ = 0, seam_probes_ = 0;
+    int gen_depth_ = 0;              // inside a generation: judgment is delayed, ingest never is
+    std::string last_world_line_;    // the newest thing the world said, for the acceptance test
     // Own speech waits for the world's line to close before it joins the trunk: a boundary can
     // fire in the MIDDLE of a percept's words, and a seat's line spliced in there would leave the
     // rest of that percept running on with no lane prefix — a serve-format drift the tune never
