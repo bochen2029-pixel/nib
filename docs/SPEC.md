@@ -426,10 +426,12 @@ on the corrected one, every catch moved by under a logit (ROADMAP, Stage 1c).
 
 ## 6 · The resident
 
-**[PARTLY BUILT 2026-09-05]** — `src/resident.h/.cpp` and `src/wire.h/.cpp`. §6.2 (the loop) is
-built and its seed is hashed against fusord's pin; the wire (6.2.7) puts it inside the window.
-§6.3 (emission) and §6.4 (un-saying) are **structurally absent**, not merely unbuilt: there is no
-generation code in the file. Of §6.1's two switches the first is built; the second is Stage 4's.
+**[BUILT 2026-09-05, through §6.4]** — `src/resident.h/.cpp` and `src/wire.h/.cpp`. §6.2 (the
+loop) is built and its seed is hashed against fusord's pin; the wire (6.2.7) puts it inside the
+window; §6.3 (emission) and §6.4 (un-saying) are built, and with `Config::emit` unset no sampler is
+constructed, so emission is absent rather than disabled (6.3). Of §6.1's two switches the first is
+built; the second is Stage 4's. (Until Stage 2 this paragraph said §6.3 and §6.4 were structurally
+absent; corrected 2026-09-05 by the read of 0.10.0.)
 
 6.0.1 The resident MUST refuse to start if no GPU backend came up while GPU layers were requested.
 A `ggml` build that cannot load `ggml-cuda.dll` reports no error and offloads nothing; the model
@@ -755,8 +757,9 @@ stops ended it, and the line itself) and **`refused`** (the same, with the reaso
 said: `floor`, `span-edited`, `resolved`, `repeat`, `repeat_other`, `refractory`, `stale`),
 **`abort`** (§6.4.2: the seat, both margins, the reason, the re-probes, the span, what reached the
 surface and what it would have said), `end`, `save`, `resume`, `warn`, `error`, `session_close`. A
-hold is a judgment row whose margins are all below zero; there is no separate row because there is
-no emit path yet. `abort` and `emit` arrive with Stages 2 and 3.
+hold is a judgment row whose margins are all at or below zero, or a `refused` row whose reason is
+`stale` (a want the floor never opened for, §6.3.2.1); there is no separate `hold` row. `emit`
+arrived with Stage 2 and `abort` with Stage 3 (2026-09-05).
 
 8.1.3 A reader of the tape MUST be able to determine which machine was on the other end at any
 moment in the session. **[BUILT]** — the `session` row, written when the model is loaded, and the
@@ -838,7 +841,8 @@ incomplete view MUST withdraw (§6.4). Partition-heal is wired to the abort path
 
 ## 11 · Testing
 
-11.1 `--selftest` MUST pass before every commit. **[BUILT: 201 checks, 2026-09-05]**
+11.1 `--selftest` MUST pass before every commit. **[BUILT: 213 checks at 0.10.0, 2026-09-05]** —
+the count is the binary's; `README.md` and `HANDOFF.md` carry the current one.
 
 11.1.1 **A crash must name itself.** The window installs a terminate handler and an unhandled
 exception filter that write what they know to `NIB_LOG` before the process dies, and `NIB_TRACE`

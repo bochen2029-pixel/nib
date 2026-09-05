@@ -4,6 +4,58 @@
 it lands (named with its version in the ROADMAP) or when it is deliberately not done (ROADMAP,
 "Deliberately not doing"). Nothing here is a promise about order except the first section.*
 
+## Found 2026-09-05 (evening) by reading every source at 0.10.0
+
+Every falsifier that was fired at held; these are one level below where the falsifiers look, which
+is the shape the review of 09-04 named. Ranked. The first three are the remediation of this
+evening, in this order; the rest wait their turn.
+
+- **A late want's block lands after line 1.** The wire remembers a judged span once per seat, so
+  three times per boundary, in a 16-slot ring (`src/wire.cpp`, `remember_span` and the loop at
+  `step`), which is five boundaries of memory. A seat that wanted to speak and then held through
+  five more sentences before the hand paused gets span zero when its want is composed; the
+  transform passes trivially on an empty span at revision 0, and `commit_emission` (`src/edit.cpp`)
+  places the block after the document's first line. Medium; the ring should remember once per
+  boundary and hold more of them, and the memory should be a struct the selftest can fire at.
+- **The fold does not know who wrote what.** `fold_log` ignores `Rev.author` and `fold_tape` never
+  reads the row's `author`; both replay every revision on the hand's lane. A seed or twin fold over
+  a document that already holds `[SKEPTIC] …` blocks feeds the trunk `[bo] [SKEPTIC] …` — the human
+  saying the seat's line — and a restore hits it too, because the rows after the checkpoint include
+  the emissions committed at stop. A serve-format drift the tune never saw, and an authorship error
+  in what the mind perceives. **Design (decided this evening, below): own speech reaches the trunk
+  through the document, as a percept of its own kind, exactly once, live or folded.**
+- **Emissions composed at stop never reach the trunk before the checkpoint** (`Wire::run`'s stop
+  path composes the remaining wants after `finish()` has flushed own speech, then checkpoints), and,
+  worse, **the trunk hears a line the editor refused**: `speak_wants` queues every allowed line for
+  the trunk before the editor's second floor gate has ruled, so a `refused {why: floor}` line — two
+  in the very first driver run — is on the trunk and in the manners' memory while the document
+  never received it. The mind believes it said something nobody saw. Both are the same defect as
+  the one above, and the same design closes all three: the resident's line joins the trunk only
+  when the document has it, carried back through the pad on the seat's lane as an own-speech
+  percept that is decoded raw and never judged; the fold replays seat-authored revisions the same
+  way; a checkpoint's cursor then advances past the block's revision because the percept carries
+  it, so a restore can never replay a line the trunk already holds. What the thread still commits
+  on its own is the aired prefix of an abort, which is never a document revision, flushed before
+  every checkpoint.
+- **The forming sentence and its committed block can appear in different places.** The seam is
+  anchored to the span of the *latest* boundary (`span_of(res.boundaries())` in `Wire::run`) while
+  the emit row uses the want's own boundary; a want from an earlier boundary forms after one line
+  and lands after another. Low; the forming call should carry the want's boundary.
+- **A block inserted above the caret is not seen by the compiler's pending span**, so the next
+  keystroke reads as a jump and closes the clause early. Cannot happen while `floor_ms` (2000)
+  exceeds `quiet_ms` (500), because the pending clause was flushed by the quiet before any seat may
+  compose; the own-speech percept above pushes the pending clause first anyway, which closes it for
+  any configuration.
+- **SPEC 6.2.11.3 promises a refusal when the checkpoint's tape row is in no tape;** `fold_on_ready`
+  degrades to a diff-only fold with an `err` field on the `fold` row instead. `decide_restore`
+  should walk the tapes before the model loads and refuse into the twin, as the clause says.
+- **A clause whose judgment includes a deletion percept can carry a span whose end precedes its
+  start** (`step` takes `span_b` from a deletion's empty span). Edge; a deletion closes its own
+  clause in every measured run.
+- Doc drift found and corrected the same evening: SPEC §6's header still said emission and
+  un-saying were structurally absent; SPEC 11.1 said 201 checks; SPEC 8.1.2 said there was no emit
+  path yet; the handoff counted its own commit out.
+
 ## Landed in 0.8.0 (Stage 1d, 2026-09-05)
 
 Word wrap with its toggle · the checkpoint beside the document with its sidecar, the restore and
@@ -74,6 +126,14 @@ follows is what is still open.
   one verifier walks every tape on this machine.
 - **The consistency fence** (review §8): a selftest that pairs every count, version and date across
   README, SPEC, ROADMAP, HANDOFF and the devlog.
+- **Three brainstorms of 2026-09-05, filed in `docs/BRAINSTORMS_2026-09-05.md`:** voice as a
+  second lane (the null is two typed lanes into one trunk, a day's work); the two-gear escalation
+  (composition, not judgment; dispatched at the want and deadlined by the floor; the dialler
+  outside the exe; the exact payload on the tape; behind rule 9's flag and badge); vision as a floor
+  sensor and not a content lane (detector events that ride like ticks and never trigger; frames
+  never on the tape; window focus as the zero-hardware null). Their order across all three: fix
+  say-it-once first, then focus-as-a-lane, then two typed lanes, then gear 2, then speech, then
+  vision — and none of it before Stage 4 and the week of real work.
 
 ## For the estate, not for nib (read in K5 on 2026-09-05; the kernel is in flux, so noted, not filed)
 

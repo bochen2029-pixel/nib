@@ -839,3 +839,61 @@
 - NEXT is Stage 4: the two switches and the paired record - RESIDENT / TURN-BASED with the seat,
   the seed and the sampler pinned identical across the toggle, so every flip during real work is a
   paired sample with exactly one variable.
+
+## 2026-09-05 (evening) · the read of 0.10.0 - what the falsifiers could not see
+
+- A fresh session read everything: the merged chat export of the two sessions that built Stages 2
+  and 3, every document, both handoffs, the review and its K5 addendum, every source, the driver
+  and the snapshot tool. Then it rebuilt from source and ran the oracles that need no card: build
+  green in 30 s with both gates, --selftest 213/0, drive.py 30/0, --about 57 modules and no network
+  DLL. The tree was clean at 7ad6f96 and in sync with the public remote.
+- The GPU battery was NOT run on that pass: the card held 8.1 GB with llama-server resident, and
+  the resident's load would have sat within a gigabyte of the ceiling. Run later in this entry's
+  successor, with the operator's word.
+- THE FINDINGS, all by reading, none by a falsifier, and each one level below where a falsifier
+  looks (the review's own sentence about this repository, holding again):
+    1. The wire remembers a judged span three times per boundary (once per seat) in a 16-slot
+       ring, so it holds five boundaries. A want older than that composes with span zero, the
+       transform passes trivially, and the block lands after the document's first line.
+    2. The fold does not know who wrote what: fold_log ignores Rev.author and fold_tape never
+       reads the row's author, so every revision is replayed on the hand's lane and a seat's own
+       block comes back to the trunk as "[bo] [SKEPTIC] ...", the human saying the seat's line.
+       A seed or twin fold over any document with resident blocks does this; a restore does it for
+       the emissions committed at stop.
+    3. The trunk hears lines the editor refused. speak_wants queues every allowed line for the
+       trunk before the editor's second floor gate rules; a line refused with `floor` (two in the
+       very first driver run) is on the trunk and in the manners' memory, and never in the
+       document. The mind believes it said something nobody saw. And the lines composed at stop
+       never reach the trunk before the checkpoint at all.
+    4. The forming plane is anchored to the latest boundary's span, the committed block to the
+       want's; a want from an earlier boundary forms in one place and lands in another.
+    5. SPEC 6.2.11.3 promises a refusal when the checkpoint's row is in no tape; the code degrades
+       to a diff-only fold with an error field.
+    6. Doc drift: SPEC §6's header still said emission was structurally absent, 11.1 said 201
+       checks, 8.1.2 said there was no emit path yet, the handoff miscounted its own commit. All
+       corrected in this pass.
+- THE DESIGN DECISION that closes 2 and 3 together, and the reason the first plan for 3 was wrong.
+  The first plan was to flush own speech before every checkpoint. That would have put the same
+  line on the trunk twice: once from the flush, and once more when the restore replays the tape's
+  rows after the bound row, because the block's revision is after the cursor. The right shape is
+  the one the pad already has: THE RESIDENT WRITES INTO THE BUFFER IT READS, so its own line
+  should reach its trunk the way everything else does - through the document, as a percept. A
+  seat's block, once the editor has really written it, comes back through the pad on the seat's
+  lane as an own-speech percept of its own kind; the resident decodes it raw on the seat's lane,
+  byte-identical to the commit fusord makes, and judges nothing (the self-echo law's gate half is
+  about JUDGING one's own words, and it still holds; the trunk half is satisfied by the same
+  percept). The fold replays a seat-authored revision the same way, so live and folded produce the
+  same trunk bytes; the percept carries the block's revision, so the cursor advances past it and
+  a restore cannot replay a line the trunk already holds; and a line the editor refused never
+  reaches the trunk, because it never became a revision. The one thing the thread still commits on
+  its own is the aired prefix of an abort, which is never a revision, and that is flushed before
+  every checkpoint. The manners' memory follows the same road: an own-speech percept records what
+  the seat said, so a twin folding a document full of resident blocks arrives already knowing it
+  must not repeat them.
+- Three brainstorms from the evening of 09-05 (voice as a lane, the two-gear escalation, vision as
+  a floor sensor) had been answered in chat and recorded nowhere; they are in
+  docs/BRAINSTORMS_2026-09-05.md now, with the null experiment for each and their order.
+- NEXT, in this order and each a commit of its own: the span memory as a testable struct; own
+  speech through the document, with the fold attributing by author and the CLI feeding its own
+  lines back; the manners in the checkpoint's sidecar; the refusal SPEC 6.2.11.3 promises. Then
+  Stage 4.

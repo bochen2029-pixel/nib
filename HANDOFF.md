@@ -39,7 +39,7 @@ rescues that, and the finding gets published beside the laws it bought.
 | | |
 |---|---|
 | version | **0.10.0**, commit `e9cdbd9`, branch `main`, working tree clean |
-| public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 21 commits |
+| public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 22 commits through this handoff |
 | stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3 — **all green, every falsifier fired at** |
 | next | **Stage 4** — the two switches and the paired record |
 | oracles | `--selftest` **213** · `tools/drive.py` **30** · `tools/drive.py --ai` **65** |
