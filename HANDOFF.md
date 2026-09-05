@@ -1,427 +1,372 @@
 # HANDOFF — read this first
 
-*Written 2026-09-03 by the session that built nib Stages 0a–0d, immediately before its context was
-compacted. It is three things at once: a **continuation prompt** for the same work, a **handoff**
-to a different session, and a **cold-start initialisation** for a session that has never seen this
-estate. Everything load-bearing is either in this file or named by absolute path.*
+*Written 2026-09-05 at nib **0.10.0**, Stages 0a–3 green, immediately after the un-say landed and
+the repository went public. It replaces the 2026-09-04 handoff, which is kept whole at
+`docs/HANDOFF_2026-09-04.md` because it is the record of how the project started.*
 
-**If you are starting from this file: read §1 and §2 before you touch anything, then §5 for where
-to resume.**
-
-> **Addendum, 2026-09-04 (later).** This file was written on 2026-09-04, not 09-03 — the session
-> that wrote it began on the night of the 2nd and carried its start date through a compaction;
-> git dates every commit. Since it was written: the review
-> `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md` (read it after §1 and §2 — its §3 is the QC, its
-> §5 the design, its §8 the work order), and **0.6.1, the QC pass**, which fixed two editor
-> criticals, the runtime half of the network law and six things Stage 2 would have walked into
-> (ROADMAP, "The QC pass"). Where this file says 77/17 or 120/22 it is stale: **`--selftest`
-> 144 passed, `drive.py` 27 passed** (2026-09-04). §5's "resume here" now means **Stage 1c** per the
-> review's §8 P1, then Stage 2. And by operator ruling the shipped product autodiscovers on the
-> LAN by default (CLAUDE.md rule 2, SPEC 9.1.1).
->
-> **Addendum, 2026-09-05 (afternoon).** **Stage 3 landed as 0.10.0: IT TAKES A SENTENCE BACK.** A
-> seat begins a line, the words appear in a plane the document never sees, the human's next
-> sentence lands on the trunk between two generated tokens, the seat is asked again on a fresh fork
-> and comes back at −1.77 where it was +5.06, and the line dies mid-word. The rest is sampled in
-> silence so the tape holds what it would have said. Oracles: **`--selftest` 213, `drive.py` 30,
-> `drive.py --ai` 65.** Nothing is undone because nothing was done: the forming plane is not in the
-> `Doc`, so a save cannot write it and a replay cannot reproduce it. A finding kept: in a long
-> session the seats perseverate and the manners refuse the repeats — say-it-once is a fine-tune
-> target, and this is nib's own measurement of it. §5's "resume here" means **Stage 4**, the two
-> switches and the paired record.
->
-> **Addendum, 2026-09-05 (late morning).** **Stage 2 landed as 0.9.0: IT SPEAKS.** A seat whose
-> margin clears zero composes one sentence and writes it as its own `[SEAT] ` block, after the line
-> it is about, and never while the hand is moving. Oracles: **`--selftest` 213, `drive.py` 30,
-> `drive.py --ai` 55.** The finding was in the spec, not the code: 6.3.2 as written ("refused
-> before it is composed") could never be satisfied, because judgments fire *while* you type — so a
-> margin above zero records a **want**, and the wants are composed when the hand has been still.
-> **Pausing is how a person yields the floor**, and that is now the mechanism. §5's "resume here"
-> means **Stage 3**, the un-say, whose ranges are in `docs/review/LIFT_MAP_K5_2026-09-05.md` §3.
->
-> **Addendum, 2026-09-05 (dawn).** **Stage 1d landed as 0.8.0** — word wrap (`Alt+Z`), the trunk
-> as an asset (off saves the mind's state beside the document, on restores it or says it is the
-> twin), free VRAM on every judgment, torn-row recovery, the model's hash remembered. Oracles:
-> **`--selftest` 201, `drive.py` 30, `drive.py --ai` 51.** It also found the defect nobody had hit:
-> switching the resident off and on again crashed the process, because the second model loaded into
-> one process dies in cuBLAS above a 64-token batch. **The batch is capped at 64** (SPEC 6.2.12),
-> which also makes every life numerically identical — every margin measured before 2026-09-05 dawn
-> was taken on the other kernel path. §5's "resume here" now means **Stage 2**, on K5's seam, with
-> the lift map refreshed first.
->
-> **Addendum, 2026-09-05.** **Stage 1c landed as 0.7.0** — the wire, the tape, the AI switch, the
-> gutter, spans, the latency instrument, the model's SHA-256 (ROADMAP, Stage 1c, with every
-> number). Oracles: **`--selftest` 176, `drive.py` 27, `drive.py --ai` 41.** Two more files a cold
-> start must read: `docs/BACKLOG.md` (open items, word wrap first) and
-> `C:\fusor1\converge\src\fusord.cpp` — **K5, the converged kernel**, which post-dates everything
-> §3 says about the substrate: same pin, in flux, by operator ruling a source of ideas and not of
-> bytes (CLAUDE.md). §5's "resume here" now means **Stage 1d** (the trunk as an asset), then
-> Stage 2 on K5's seam with the lift map refreshed first. §4.3–4.6 are updated below.
+**This file is three things at once.** A **continuation prompt** for the session that is already
+building; an **initialisation** for a session that has never seen this estate; and a
+**rehydration** for a session whose context was trimmed mid-flight. Read §1 and §2, then §12 for
+what to do next. Everything load-bearing is either in this file or named by absolute path.
 
 ---
 
-## 1 · The machine — rules that bit this session, repeatedly
+## 1 · What nib is, in one paragraph
 
-These are not style preferences. Each one cost real time today.
+**A writing surface with no send key on either side.** You type; a locally-resident 9B model
+perceives as you type, judging at every thought boundary whether this instant deserves a word. It
+writes; the words appear as they are sampled. Neither of you takes a turn. If your next sentence
+contradicts one it has begun, it stops mid-word and the words are withdrawn — and what reached the
+screen, what it would have gone on to say, and why it died are all on an append-only hash-chained
+tape. One Windows executable, no runtime, no browser, and no network stack at all: the build fails
+if a socket is ever linked, and the resident refuses to start if a network module has entered the
+process. Later, on a LAN, other people join the same pad. That is Act II and it waits.
 
-**1.1 File content NEVER travels through a shell literal.** Write files with the **Write** tool;
-change them with **Edit**. A Bash heredoc, or a C++ string embedded in a `python - <<'PYEOF'`
-block, will turn `"\n"` inside a C++ literal into a **real newline**, and MSVC says
-`error C2001: newline in constant`. This happened **five separate times today** in `changeset.cpp`,
-`nib.cpp`, and `edit.cpp` — twice after I had already written the rule down. It also once produced
-a literal NUL byte inside `L'\0'`. If you must patch programmatically, write the replacement text
-to a `.txt` with the Write tool and have Python *read that file*, never embed the text.
+**The thesis, which sets the build order.** Etherpad did not fail as technology; it failed as a
+*matching problem* — its value needed two people free in the same instant, the scarcest thing in
+collaboration. A resident mind is the first thing that is always free. So the resident half carries
+the entire thesis and the network half is upside. And there is no system prompt: a system prompt is
+an artefact of amnesia, and a resident does not have amnesia. The interaction is the prompt.
 
-**1.2 Forward slashes in every shell command.** Git Bash eats backslashes in unquoted arguments:
+**The falsifier for the whole idea** arrives at Stage 5 and not before: *if the operator, alone with
+nib for a week of real work, does not leave it turned on, the idea is wrong.* Nothing in Act II
+rescues that, and the finding gets published beside the laws it bought.
+
+---
+
+## 2 · Where it stands, exactly
+
+| | |
+|---|---|
+| version | **0.10.0**, commit `e9cdbd9`, branch `main`, working tree clean |
+| public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 21 commits |
+| stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3 — **all green, every falsifier fired at** |
+| next | **Stage 4** — the two switches and the paired record |
+| oracles | `--selftest` **213** · `tools/drive.py` **30** · `tools/drive.py --ai` **65** |
+
+```bash
+build.bat                          # /W4 /WX, zero warnings, two gates
+nib.exe --selftest                 # 213 passed, 0 failed        (no model, no GPU)
+python tools/drive.py              # 30 passed, 0 failed         (no model, no GPU)
+python tools/drive.py --ai         # 65 passed, 0 failed         (needs the card, ~6 min)
+nib.exe --about                    # the serve pin, the backends by name, the module gate
+```
+
+**What works today, end to end.** Open a file. Press `Ctrl+Shift+A`. The model loads on its own
+thread while the window keeps painting; if a checkpoint is beside the document the mind that was
+there comes back, told how long it was away and shown what happened meanwhile. Type. The gutter
+brightens where a seat wanted to speak. Pause two seconds and a seat writes a block of its own,
+prefixed with its name. Contradict a sentence while it is forming and it is withdrawn mid-word.
+Press `Ctrl+Shift+A` again and the trunk is saved and the card comes back.
+
+---
+
+## 3 · Read these, in this order
+
+1. `CLAUDE.md` — the hard rules and the refusals, written as laws with reasons. **Rule 2 (no
+   network), rule 3 (forming text never persists), rule 4 (never write into a block a human is
+   touching), rule 5 (never simulate a tell that is not a real internal event), rule 8 (every state
+   that changes what the resident is goes on the tape), rule 11 (one process, two clocks), rule 12
+   (a driven window never takes the keyboard).** Plus the versioned-edits rule (§10 below).
+2. `docs/SPEC.md` — **normative**, rev 0.9. Every line marked BUILT / SPECIFIED / OPEN. Where this
+   handoff and the SPEC disagree, the SPEC governs the artefact.
+3. `docs/ROADMAP.md` — the stages, each with its falsifier and whether it fired, and every measured
+   number with its date.
+4. `docs/BACKLOG.md` — what is open, newest section first.
+5. `docs/devlog.md` — the lab notebook: what was tried, what was measured, what was decided, and
+   **traps the day they bit**. Never rewritten; corrections are appended in the same voice.
+6. `docs/ASSEMBLY.md` — why the Easysync library is ported and why OT rather than CRDT.
+   Supersedes BLUEPRINT §2 and §7 where they disagree.
+7. `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md` — the review that set the work order. §3 is the QC,
+   §5 the design at the edge, §6 the falsifiers and metrics, §8 the remediation list.
+8. `docs/review/LIFT_MAP_K5_2026-09-05.md` — **what to lift from the converged kernel and what to
+   refuse.** Read before touching the resident's loop.
+
+---
+
+## 4 · The machine — rules that cost real time
+
+These are not style preferences. Each one was paid for.
+
+**4.1 File content NEVER travels through a shell literal.** Heredocs are blocked by a hook on both
+the Bash and PowerShell tools; they mangle apostrophes and backslashes and silently truncate past
+~10 K. Author files with the **Write** tool, change them with **Edit**, and use the shell to *run*
+things.
+
+**4.2 Forward slashes in every shell command.** Git Bash eats backslashes in unquoted arguments:
 `python C:\x\y.py` arrives as `C:xy.py`.
 
-**1.3 `cmd` here does not search the current directory for an exe.** Use `./nib.exe` or an
-absolute path.
+**4.3 `build.bat` needs an absolute path from PowerShell:** `cmd /c C:\nib\build.bat`. And a bare
+`find` or `more` inside a batch file launched from Git Bash resolves to Git's Unix tools — which is
+why the build script names `%SystemRoot%\System32\find.exe` explicitly. `find /c /v ""` once walked
+the whole drive for ten minutes.
 
-**1.4 `system()` and `start` strip the outer quotes** of a command that begins with one. Wrap the
-whole line again: `cmd /s /c "" "C:/a b/x.exe" ... ""`. A bare `start "" "C:\p\f.bat"` from Bash
-produced `Access is denied` — write a small `.bat` in the scratchpad and run that instead.
+**4.4 Do not load this machine.** It is the operator's working box, with llama-server, a speech
+stack and other agent sessions live on it. No load generators, ever.
 
-**1.5 Do not load this machine.** The operator asked, in these words, that synthetic CPU
-saturation stop. It is their working box with llama-server, a speech stack and other agent
-sessions live on it. **Do not run load generators.** The Stage 3 loaded-box numbers in
-`C:\glance\docs\devlog.md` stand as measured; they are not to be re-taken without being asked.
+**4.5 Never synthesise global input.** `keybd_event` / `SendInput` land wherever the focus happens
+to be. nib has a proper seam instead: `WM_APP+1` commands and the `NIB_LOG` file.
 
-**1.6 Never synthesise global input.** `keybd_event` / `SendInput` land wherever the focus happens
-to be, which can type into the operator's other windows. This session started such a driver and
-killed it within a minute. nib has a proper seam instead: `WM_APP+1` commands and the `NIB_LOG`
-file (see §4.6).
+**4.6 A driven window must never take the keyboard, and must never read the thread's key state.**
+`NIB_DRIVER` makes the window no-activate. And `GetKeyState` answers for the *thread*, so a driven
+window reads whichever modifier the operator is holding in another program — which silently
+swallowed five characters out of a typed sentence on 2026-09-05. Both halves are in `WM_CHAR` now.
 
-**1.7 Do what the operator says, not what you infer they meant.** Asked to match colours *from a
-screenshot*, this session went and sampled a live application window instead, which was both
-wrong and slower. The correction was blunt and deserved.
+**4.7 One model on the card at a time.** `drive.py --ai`, `nib --resident` and any `--script` run
+each load the 9B; two at once with llama-server resident do not fit in 16 GB. **And the probe cost
+moves by 2.7× with what else is on the card** — a red `--ai` run is worth re-running once before it
+is believed. Never kill a nib window to free the card: it may hold unsaved text.
 
-**1.8 The website has a deploy law.** `C:\Websites\_DEPLOY_LANE.md`, §1, in order. The step whose
-absence caused real harm: **hash-manifest `_upload/` BEFORE touching anything**, because
-`wrangler` ships the whole assets directory and will publish other people's unfinished files. This
-session published another session's draft backups that way and had to un-publish them.
+**4.8 A DPI-unaware process measuring a DPI-aware window is told a lie, and the lie is
+self-consistent.** `GetWindowRect` answered 887 where nib correctly saw 1997 physical pixels, so a
+screen capture rendered a 1997-pixel window into an 887-pixel bitmap and clipped it — which read
+exactly like a word-wrap bug. Call `SetProcessDpiAwarenessContext(-4)` first in any tool that
+measures, sizes or captures nib's window. nib prints its own geometry when the wrap switch moves;
+when the two disagree, the unaware one is wrong.
 
-**1.9 One model on the card at a time.** `drive.py --ai`, `nib --resident` and any `--script` run
-each load the 9B; two at once with llama-server resident do not fit in 16 GB. Run them
-sequentially, and expect the probe cost to move by a factor of 2.7 with what else the card is doing
-(ROADMAP, Stage 1c). Never kill a nib window to free the card: it may hold unsaved text.
+**4.9 A crash inside a DLL says nothing unless you make it.** Three instruments exist and cost
+nothing: llama and ggml errors always reach stderr; the window writes a `crash` line to `NIB_LOG`
+from a terminate handler and an unhandled-exception filter; `NIB_TRACE=1` prints the resident's
+start-up steps. Bisect with an env knob (`NIB_CHUNK` found the cuBLAS cliff) rather than rebuilding
+per guess.
 
-**1.11 A DPI-unaware process measuring a DPI-aware window is told a lie, and the lie is
-self-consistent.** nib is per-monitor aware. A Python or PowerShell helper that is not gets
-virtualized rectangles — `GetWindowRect` answered 887 where nib correctly saw 1997 physical
-pixels — so a screen capture rendered a 1997-pixel window into an 887-pixel bitmap and clipped it,
-which read exactly like a word-wrap bug in nib (2026-09-05, twenty minutes). Call
-`SetProcessDpiAwarenessContext(-4)` first in any tool that measures, sizes or captures nib's
-window. nib prints its own geometry when the wrap switch moves; when the two disagree, the
-unaware one is wrong.
-
-**1.12 A driven window must not read the thread's key state.** `GetKeyState` answers for the
-thread, and a driven window has no keyboard, so it reads whatever modifier the operator is holding
-in another program — which silently swallowed five characters out of a driven window's typing on
-2026-09-05. Fixed in `WM_CHAR`; the lesson generalises to any guard that consults global input
-state on behalf of a window that receives none.
-
-**1.10 A crash inside a DLL says nothing unless you make it.** An hour went into
-`ggml-cuda.cu:103: CUDA error` on 2026-09-05 because llama's log callback swallowed errors along
-with progress. Three instruments exist now and cost nothing: llama and ggml errors always reach
-stderr, the window writes a `crash` line to `NIB_LOG` from a terminate handler and an
-unhandled-exception filter, and `NIB_TRACE=1` prints the resident's start-up steps. When something
-dies inside a DLL, set them and bisect with an env knob (`NIB_CHUNK` is the one that found it)
-rather than rebuilding per guess.
+**4.10 A test that restores state from a previous run is testing the previous run.** The un-say case
+failed twice because it inherited a tape and a checkpoint from an earlier `--keep` run: the
+resident restored, had already said its piece, and the manners refused every repeat. Every driver
+case that involves the resident clears its own slate now.
 
 ---
 
-## 2 · How these repositories are written
+## 5 · The architecture, file by file
 
-Every tool in this family follows the same discipline. Match it or the work will not fit.
+One executable. `build.bat` compiles nine translation units and links kernel32, user32, gdi32,
+comdlg32, bcrypt — **no network DLL, enforced at build** — plus llama.cpp and ggml, all three
+**delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until
+the resident is switched on, so `--selftest`, `--ingest` and the editor run on a machine with no
+model and no card.
 
-- **`CLAUDE.md`** at the repo root: hard rules and refusals, written as laws with reasons.
-- **`docs/BLUEPRINT.md`**: the design and the stages, each stage with a **falsifier** — the
-  observation that would say it failed.
-- **`docs/devlog.md`**: a lab notebook. Dates, what was tried, what was measured, what was
-  decided, and **traps the day they bite**. Failures stay printed beside the fixes.
-- **`--selftest` before every commit.** Numbers get measured on this box and carry their date.
-  No performance figure appears anywhere it was not measured.
-- **Prose voice:** plain, specific, no marketing. Say what was measured and what was not. When a
-  claim is unproven, the document says so in the same sentence.
-- **`build.bat`, `/W4 /WX`, zero warnings, static CRT, one exe, C++20.** No frameworks.
-- **A build gate proves the refusals mechanically** — `dumpbin /dependents` fails the build if a
-  network DLL appears. Hazards unreachable by construction, never forbidden by policy.
-- **Commit messages are prose**, several paragraphs, explaining the decision and the traps. Always
-  end with the attribution trailer the harness specifies.
-- **Selftest trap:** C++ leaves argument evaluation order unspecified, so
-  `check(f(&err), "..." + err)` may read `err` before `f` runs. **Compute first, format after.**
-  This session wrote that bug and caught it by reading the output rather than the pass count.
+| file | what it is, and the law it carries |
+|---|---|
+| `src/changeset.h/.cpp` | Etherpad's Easysync format in C++: base36, `Op`, `deserialize_ops` (a scanner, not `std::regex`), `unpack`/`pack`, `apply_to_text`, the three assemblers, `check_rep`, `ops_from_text`, `make_splice`, `Builder`. **Canonical form is the real test:** `check_rep` re-serialises what it parsed and demands byte-identity. |
+| `src/doc.h/.cpp` | The document is an **op log**, not a string. Every edit is a changeset; undo is an inverse changeset *appended*, never a truncation. `LineIndex` (logical lines) and `RowIndex` (visual rows — word wrap). `Doc::text_at` folds to any revision. Columns are **characters**, and `splice` snaps to UTF-8 sequence boundaries. |
+| `src/ingest.h/.cpp` | The compiler and `PadSource`. Edits become percepts; percepts become `Delta`s on auricle's lock-free ring, with a second ring of `PerceptMeta` in lockstep carrying id, revision and byte span. Byte conservation is the falsifier. A full ring **spools**, never drops. Self-echo is filtered at the door. |
+| `src/resident.h/.cpp` | The trunk, the segmenter, the three seats, the probe, **the mouth**, the manners, and the seam. The loop is **lifted** from fusord, not re-derived, and `serve_hash()` proves it byte-for-byte. |
+| `src/wire.h/.cpp` | The resident on its own thread inside the window. Two rings out (judgments, emissions), a forming *state*, the floor gate, the checkpoint, `fold_log` and `fold_tape`. |
+| `src/tape.h/.cpp` | The family's append-only hash-chained record: BLAKE2b-256, canonical JSON, six keys a row. Ported from fray, which is glance's, which is REGISTRAR's. Torn-row recovery. Also SHA-256 (the model's hash) and the atomic file helpers. |
+| `src/edit.cpp` | The Win32/GDI window. Every edit goes through `Doc::splice`. Per-monitor DPI, word wrap, the gutter, two status rows, the forming plane, the floor's second gate, block placement, the driver seam. |
+| `src/selftest.cpp` | The oracle: 213 checks, none of which need a model. |
+| `src/nib.cpp` | The console verbs. |
+| `tools/drive.py` | The window battery: posts messages, reads artefacts, never synthesises input and never looks at the screen. |
+| `tools/snap.py` | Gitignored snapshots with an MD5 manifest (§10). |
+
+### The two clocks (CLAUDE.md rule 11)
+
+The editor thread owns the document, the view, the pad and the tape. The **wire** owns a second
+thread that owns the resident. They meet only at lock-free rings; the editor never calls the model
+and the resident never touches the window; neither ever waits on the other. The price of one
+process is that a driver fault takes the editor with it, and the mitigations are: forming text is
+never persisted, the save is atomic, and the tape is durable as it goes.
 
 ---
 
-## 3 · The estate — what exists
+## 6 · The laws that are structural, not advisory
 
-| tool | path | state |
+- **Emission is absent, not disabled, when it is off.** With `Config::emit` false no sampler is
+  constructed, so no path in the process can produce a token. Stage 1b was a whole stage to
+  establish this property and it survives for every build that does not ask for a mouth.
+- **Percepts are never dropped; judgment may be delayed.** The ring spools rather than drops; the
+  spool's own cap is counted loudly. Inside a generation, judgment is delayed and ingest is not.
+- **Own speech is a percept, with no self-exception** — the trunk half (a seat's line is committed
+  on its own lane, or say-it-once is structurally unlearnable) and the gate half (the same line is
+  dropped at the pad's door). Both halves are exercised by one line of text.
+- **A seat's line waits for the world's line to close** before joining the trunk, because a
+  boundary can fire mid-percept and a line spliced in there is a serve-format drift the tune never
+  saw.
+- **The floor: pausing is how a person yields it.** A margin above zero records a *want* and
+  composes nothing; wants are composed when the hand has been still. Refusing costs nothing because
+  the model is never run. Checked again at the moment of writing.
+- **The forming plane is never in the `Doc`.** So a save cannot write it and a replay cannot
+  reproduce it. The withdrawal is not an undo; nothing was done.
+- **Only commits kill.** The world's words are on the trunk before the branch dies.
+- **A judgment is always about now.** The 9B is a 3:1 recurrent hybrid; a fork's recurrent state
+  cannot be rewound, so there is no such thing as re-judging "as of then".
+- **Ticks are world, never a poll.** `[tick +Ns]` rides the empty lane, is decoded raw, and fires
+  no probe round.
+- **Every state that changes what the resident is goes on the tape** — the AI switch, word wrap,
+  every coefficient, the model's SHA-256, the seats' mandates.
+
+---
+
+## 7 · Every measured number, with its date
+
+All on this box: Windows 11 24H2, 225 % DPI, RTX 4070 Ti SUPER (16 GB) **shared** with llama-server
+and a speech stack. Model `Qwen3.5-9B-emit-v11-Q5_K_M`, `n_ctx` 16384, q8_0 KV, flash attention.
+
+| what | value | when |
 |---|---|---|
-| **facet** | `C:\facet` | shipped · TOOL 01 |
-| **vramtop** | `C:\GPUz` | shipped · TOOL 02 |
-| **caseclock** | `C:\caseclock` | shipped · TOOL 03 · `--facts -` added by this session (`360cd2f`) |
-| **glance** | `C:\glance` | 0.4.0 · TOOL 04 · public repo · 142 checks |
-| **everywho** | `C:\Intellect_AI_tools\everywho` | TOOL 05 · Stage 0 only (counters tier) |
-| **fray** | `C:\fray` | 0.4.0 · Stages 0–3 · 64 checks · not published |
-| **nib** | `C:\nib` | **0.10.0 · the active work · Stages 0a–3 · 213 + 30 + 65 checks · it speaks, and it takes a sentence back when you contradict it** · public at github.com/bochen2029-pixel/nib |
+| keystroke → painted, AI off | p50 **605–657 µs**, p95 1.1–1.6 ms | 09-05 |
+| keystroke → painted, AI on | p50 **455–1713 µs**, p95 1.0–2.7 ms | 09-05 |
+| probe, three seats, quiet card | **107–122 ms** per boundary | 09-05 |
+| probe, same binary, contended card | **312–327 ms** per boundary | 09-05 |
+| q8_0 KV | **136 MiB** at 8192, **272 MiB** at 16384 | 09-04 |
+| model load | **4.3–8.1 s** | 09-05 |
+| model SHA-256 (6.64 GB) | **17 s** first time, **0 ms** cached | 09-05 |
+| checkpoint | **58.8 MB** at 350 tokens, written in **51–68 ms** | 09-05 |
+| VRAM taken and returned | 7080 → 14153 → 7311 MiB | 09-05 |
+| fold over a 4.2 KB file, word grain | **39 s** (104 boundaries, 312 probes) | 09-05 |
+| one sentence composed | **11–19 tokens, 230–820 ms** | 09-05 |
+| the un-say | +5.06 → **−1.77**, four words aired | 09-05 |
+| CPU fallback penalty | **47×** (556 s against 11.8 s) | 09-04 |
 
-The site is `C:\Websites\aorta-site`, deployed with `npx wrangler deploy`; five tools are live at
-`https://opnaorta.ai/tools`. The deploy ledger is `aorta-site/DEPLOY_LOG_<date>.md`.
-
-**The substrate nib is built on:** FUSOR-1, at `C:\auricle`. Read
-`C:\NEW\FUSOR_MASTER-ONEPAGER_2026-08-23_FABLE5.md` for what it is. The pieces nib needs already
-exist and are built: `C:\auricle\src\fusor\fusord.cpp` (the resident loop),
-`C:\auricle\src\fusor\source.h` (**the intake seam — read this before writing `PadSource`**),
-`C:\auricle\src\fabric\fabric.h` (the hash-chained tape), `C:\auricle\src\overlay\hud.cpp` (words
-projected on screen). `C:\auricle\build\Release\` holds working binaries. **And since 2026-09-04
-there is K5**, `C:\fusor1\converge\src\fusord.cpp`: the converged kernel, same pin, in flux in
-another session — ideas, not bytes (CLAUDE.md); what nib took from it is named in SPEC 6.2.8,
-6.2.11 and 6.3.4.
-
-**Etherpad's source is on disk** at `C:\etherpad-develop` (Node/TypeScript). nib ports its
-changeset library rather than bundling its server; the reasoning is in `C:\nib\docs\ASSEMBLY.md`.
+**The batch cap that every margin depends on.** The decode batch is capped at **64 tokens**
+(SPEC 6.2.12). Above ~64 rows ggml-cuda leaves its quantized matmul for cuBLAS, and that path
+aborts the process on the *second* model loaded into one process — every life of the AI switch
+after the first. The cap also makes lives **numerically identical**: without it, life one judges
+through cuBLAS and life two through the quantized path, and the same sentence scores differently in
+the same session (mean 0.16, max 0.84 logits apart). **Every margin measured before 2026-09-05 dawn
+was taken on the other kernel path.** If a margin ever disagrees with a published table, check this
+first. `NIB_CHUNK` overrides it for bisection only.
 
 ---
 
-## 4 · nib — the active work
+## 8 · The stages, and their falsifiers
 
-### 4.1 What it is
-
-**A writing surface with no send key on either side.** You type; a locally-resident model perceives
-as you type. It writes; you watch the words form. Neither takes a turn. Act II puts it on a LAN.
-
-The thesis, in one paragraph: Etherpad did not fail as technology, it failed as a **matching
-problem** — its value needed two people free in the same instant, which is the scarcest thing in
-collaboration. A resident mind is the first thing that is always free. So Act I is not a
-collaboration tool with an assistant bolted on; it is *the second party*, and the network waits.
-The fit is exact because both directions already stream at the same grain: a pad's input is the
-ordered edit stream a decode-on-delta loop consumes, and a pad's output already renders another
-author's characters as they arrive. **And there is no system prompt** — that is an artefact of
-amnesia, and a resident does not have amnesia; the interaction is the prompt.
-
-### 4.2 Read these, in this order
-
-1. `C:\nib\CLAUDE.md` — the rules, including where nib deliberately breaks the family's no-model
-   rule and what it pays for the exception.
-2. `C:\nib\docs\SPEC.md` — **normative**. Every line marked BUILT / SPECIFIED / OPEN.
-3. `C:\nib\docs\ROADMAP.md` — ten stages, three acts, each with its falsifier and whether it fired.
-4. `C:\nib\docs\ASSEMBLY.md` — why the changeset library is ported and why OT rather than CRDT.
-   **Supersedes BLUEPRINT §2 and §7 where they disagree.**
-5. `C:\nib\docs\BLUEPRINT.md` — the design and the intent.
-6. `C:\nib\docs\devlog.md` — what happened, in order, with the traps.
-
-### 4.3 Built and green — 176 checks in the exe, 27 in the driver, 41 with the resident on
-
-```
-C:\nib\build.bat                     /W4 /WX, gates: no network DLL among the dependents; llama delay-loaded
-C:\nib\nib.exe --selftest            176 passed, 0 failed
-python C:/nib/tools/drive.py         27 passed, 0 failed   (the window, driven by messages, never focused)
-python C:/nib/tools/drive.py --ai    41 passed, 0 failed   (the resident switched on inside it; needs the card)
-C:\nib\nib.exe --about               the backends by name, the module gate, no model loaded
-C:\nib\nib.exe --verify X.tape.jsonl the chain, as glance --verify reads it
-```
-
-- **`src/changeset.h/.cpp`** — Etherpad's Easysync format in C++: base36, `Op`,
-  `deserialize_ops` (a scanner, not `std::regex`), `unpack`/`pack`, `apply_to_text`, the three
-  assemblers, `check_rep`, `ops_from_text`, `make_splice`, `Builder`.
-  **Canonical form is the real test:** `check_rep` re-serialises what it parsed and demands
-  byte-identity, so the port must agree with Etherpad about which ops fuse, that deletes precede
-  inserts, and that a trailing bare keep is implicit.
-- **`src/doc.h/.cpp`** — the document is an **op log**, not a string. Every edit is a changeset.
-  Undo is an inverse changeset **appended**; the log is never truncated. The inverse is computed
-  against the text the edit *produces*. Undo works in **groups**, not single edits — see §5.
-- **`src/edit.cpp`** — Win32/GDI window. Typing, navigation, selection, clipboard, atomic save,
-  open, CRLF/BOM preservation, undo/redo, the status line, per-monitor DPI, the theme loader, the
-  driver seam.
-- **`src/selftest.cpp`** — the oracle. **`src/nib.cpp`** — the CLI.
-- **`src/ingest.h/.cpp`** — the compiler and `PadSource`. Edits become percepts; percepts become
-  `Delta`s on auricle's ring. No model, no GPU, no threads of its own.
-- **`src/resident.h/.cpp`** — the trunk, the segmenter, and the hold/emit probe. The loop is
-  lifted from `fusord.cpp` and its seed is hashed against fusord's pin. **No emit path exists.**
-- **`src/wire.h/.cpp`** — the resident inside the window: its thread, the judgment ring, the fold.
-  **`src/tape.h/.cpp`** — the family's tape (BLAKE2b-256, canonical JSON, the chain, the verifier)
-  and the model's SHA-256. **`src/util.h`** — the one version string and the small helpers.
-- **`tools/drive.py`** — the window battery. Posts messages, reads artefacts, never synthesises
-  input and never looks at the screen.
-- **`tools/theme_detect.py`** — derives `nib.theme` from an image. **`nib.theme`** — the palette
-  (colours are data; the operator's is dark navy `#0d1520` / azure `#2196f3` / dim `#3f5f7a`).
-
-### 4.4 The falsifiers that did not fire
+Every stage carries a falsifier — the observation that would say it failed — and a stage is done
+only when the falsifier has been fired at and did not go off.
 
 | stage | property | evidence |
 |---|---|---|
 | 0a | the port agrees with Etherpad | 41 checks on Etherpad's own vectors + 4 negative canonical-form cases |
-| 0b | a splice is canonical and applies correctly | **10,000 random splices**, deterministic generator |
-| 0c | the log replays byte-exact | **1,000 random edits interleaved with undos** — 767 edits, 214 undos, 965 revisions, checked after *every* one |
-| 0d | no save loses a file or silently changes its conventions | the Stage 0e driver: bytes compared on disk, CRLF stayed CRLF, a BOM came back, the file survived close-and-reopen |
-| 0e | every save path is reachable without global input | 17 checks over eight cases, three consecutive identical runs |
-| 1a | no percept is dropped without a loud count | byte conservation over **4,000 random typings, removals and idles**, and fired again from inside the running window |
-| 1b | margins move with content | they move **per seat by mandate**: a false claim moves SKEPTIC ~12 logits and leaves SPEAKER and SENTINEL where they were |
-| 1c | the mind inside the window costs the hand nothing it can feel, and the card comes back | keystroke → painted p50 605–607 µs off against 455–1189 µs on across two runs, p95 under 1.8 ms in all four; VRAM 5716 → 12727 → 5959 MiB; the tape INTACT under nib and glance |
+| 0b | a splice is canonical and applies | **10,000 random splices**, deterministic generator |
+| 0c | the log replays byte-exact | **1,000 random edits interleaved with undos**, checked after every one |
+| 0d | no save loses a file or changes its conventions | bytes compared on disk; CRLF stayed CRLF, a BOM came back |
+| 0e | every save path reachable without global input | 17 checks, three identical runs |
+| 1a | no percept dropped without a loud count | byte conservation over **4,000 random** typings, removals and idles |
+| 1b | margins move with content | they move **per seat, by mandate**; a false claim moves the SKEPTIC ~12 logits |
+| 1c | the mind in the window costs the hand nothing it can feel | latency table above; VRAM returned; tape INTACT under two verifiers |
+| 1d | the trunk survives being switched off | 58.8 MB saved and restored; a disagreeing sidecar is refused into the **twin** |
+| 2 | it writes in its own blocks, and not while you type | **nothing written while the hand moved**; a line written once it paused |
+| 3 | a sentence begun can be taken back | `+5.06 → −1.77`; neither the aired prefix nor the killed remainder in the file |
 
-`Ctrl+R` in the editor runs the Stage 0 falsifier live and prints the answer on the status line.
+### Next: Stage 4 — the two switches, and the paired record
 
-### 4.5 Commands
+AI on/off (built) and **RESIDENT / TURN-BASED** (not built). The seat, the seed, the sampler and the
+mandate MUST be identical across the toggle; **only the trigger may differ** — evidence at a thought
+boundary, versus an explicit keystroke. Any other difference makes the toggle a preference instead
+of an experiment.
 
-```
-nib --selftest                       the oracle
-nib --edit [FILE]                    the window
-nib --splice "text" START NDEL "ins" the changeset for one edit, and the result
-nib --unpack CS | --ops CS | --check CS | --apply CS TEXT
-python tools/theme_detect.py shot.png
-python tools/drive.py [--exe X] [--keep]   the window battery; exit 3 on any mismatch
-nib --ingest FILE [--chars N --quiet-ms T --tick-s S --counts]   the percept stream, no GPU
-nib --resident FILE [--ctx N --gpu-layers N --all]               the margins (needs the GPU)
-nib --resident FILE --script [--tick-s S]    a script: a line is typed, '- text' is removed, '# N' is N s of quiet
-nib --verify TAPE.jsonl                      walk a tape's chain, any tape in the family's format
-nib --about                                  version, serve hash, backends by name, the module gate
-```
+*Falsifier: the two modes differ in seat, seed or sampler; or a scaffold present in one arm and
+absent from the other.*
 
-Editor keys: `Ctrl+S` save · `Ctrl+Shift+S` save as · `Ctrl+O` open · `Ctrl+A/C/X/V` ·
-`Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Ctrl+R` fold the log and check it · **`Ctrl+Shift+A` the AI
-switch** (on folds the log and loads the model; off unloads it). `nib.theme` beside the exe names
-the hand and the mind: `lane`, `model`, `llama_dir`, `n_ctx`, `gpu_layers`, `ai`.
+**This stage is worth more than livability.** It is the estate's twin race instrumented inside the
+product: the one number the corpus has called decisive for a year and has never run. Every flip
+during real work is a paired sample with exactly one variable. The review's §5.5 adds two things
+worth building: keep the boundary judgments running **in shadow** during TURN-BASED (so every
+period yields what the resident *would* have done beside what the twin did), and `nib --twin
+<tape>` to re-drive a recorded stream through a turn-based policy offline. And it carries an honest
+limitation to print with every table: nib's pairs are **observational, not matched-input** — the
+human types different things in the two modes, and the mode changes what they type.
 
-### 4.6 The driver seam
-
-The window is tested by **posting messages and reading an artefact**, never by synthesising input.
-`WM_APP+1` (`WM_NIB_CMD`) with `wParam` one of `CmdSave=1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo,
-CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop, CmdIngest, CmdAiOn, CmdAiOff,
-CmdLatency, CmdJudgments, CmdTape, CmdBottom` (12–18 since Stage 1c). Setting the environment
-variable `NIB_LOG` to a path makes the window append a tab-separated line per command result;
-`NIB_DRIVER` makes the window no-activate (rule 12); `NIB_COMPILE` runs the compiler with no model
-in the process. The log's Stage 1c lines: `resident <state> …` (ready carries the model, the load
-ms, the SHA-256 and the hash ms), `judgment <boundary> <seat> <margin> <reason> <clause>`,
-`judgments …` (the counters), `latency <n> <p50> <p95> <max>` in µs, and `tape <rows> <path>
-<percepts> <judgments>`. Plain
-`WM_CHAR` posts work for typing; **Ctrl chords posted with `PostMessage` do not**, because a posted
-message does not update the thread's key state and `GetKeyState(VK_CONTROL)` reads false. That is
-why the command channel exists.
+Then **Stage 5, the week of real work** — the falsifier for the whole idea. Then Act II: discovery
+(on by default in the shipped product, by operator ruling), rooms, convergence.
 
 ---
 
-## 5 · Resume here
+## 9 · The estate around nib
 
-**Stage 0e is done (2026-09-04, 0.4.1).** `C:\nib\tools\drive.py` — 17 checks over eight cases,
-posting `WM_CHAR` and `WM_NIB_CMD` and asserting on the bytes on disk and the lines in `NIB_LOG`.
-Its falsifier did not fire: every save path was reachable without global input, and no byte was
-lost across close-and-reopen. That also closed the one honest gap in the ROADMAP — Stage 0d is no
-longer marked done ahead of its evidence.
+| tool | path | state |
+|---|---|---|
+| **nib** | `C:\nib` | **0.10.0 · the active work · public** |
+| facet, vramtop, caseclock, glance, everywho, fray | `C:\facet`, `C:\GPUz`, `C:\caseclock`, `C:\glance`, `C:\Intellect_AI_tools\everywho`, `C:\fray` | shipped tools; **glance's `--verify` reads nib's tape** |
 
-Run both oracles before any commit:
+**The substrate.** `C:\NEW\FUSOR_MASTER-ONEPAGER_2026-08-23_FABLE5.md` is what FUSOR is.
+`C:\auricle_snapshots\20260813-131533\src\fusor\fusord.cpp` is the loop nib lifted (the 08-12
+kernel). `C:\auricle\src\fusor\source.h` is the intake seam, **included unmodified** rather than
+copied. `C:\etherpad-develop` is Etherpad's source, on disk.
 
-```
-C:\nib\nib.exe --selftest           176 passed, 0 failed     (2026-09-05, 0.7.0)
-python C:/nib/tools/drive.py        27 passed, 0 failed     (three runs)
-python C:/nib/tools/drive.py --ai   41 passed, 0 failed     (needs the card; one model on it at a time)
-C:\nib\nib.exe --about              the runtime module gate: no network DLL in the process
-```
+**K5, the converged kernel.** `C:\fusor1\converge\src\fusord.cpp` (2026-09-04 evening, in flux in
+another session) is the convergence of the two fusord lineages that came *after* the kernel nib
+lifted from. Same serve pin. **Operator ruling, 2026-09-05: a source of ideas, not of bytes.** What
+nib took: a judgment is always about now; the trunk is an asset; the seam; the acceptance-detector
+fix (whole words, so "that is incorrect" is not "correct"); atomic writes with a retried rename;
+torn-row recovery; free VRAM beside every probe. What nib **refused on merit**: queueing the hand's
+keystrokes during a load (nib's log already has them with their clock — queueing perceives them
+twice); gear 2 and the counsel loop; the verdict wire as a second file; and its backend loader,
+which pulls `ggml-rpc.dll` and with it ws2_32 into the process.
 
-Three things the driver found, kept here because they are the kind of thing that comes back:
-
-- **Undo groups.** A burst by the same hand, contiguous, within `Doc::kGroupMs` (700 ms) and of the
-  same kind is one undo. A pause, a newline, a jump elsewhere, a switch between typing and
-  deleting, or a **different author** closes it. That last clause is load-bearing for Stage 1: the
-  resident writes into the same buffer and must never fuse into a person's undo.
-- **The two undo stacks carry opposite conventions.** An undo group is stored in edit order and
-  applied newest-first; a redo group is stored in apply order and applied forwards. Reversing
-  either one half-restores a burst and looks like corruption.
-- **When a test is intermittent, suspect the test.** Two runs in three failed because
-  `FindWindow` by class name returns *any* nib window — a leftover, or the operator's own. The
-  driver now binds to the pid it launched. This looked exactly like an editor bug and was not.
-
-**Stage 1a is done (2026-09-04, 0.5.0)** — `src/ingest.h/.cpp`. `PadSource` implements
-`auricle::fusor::StreamingTextSource`; the compiler turns edits into percepts; the editor feeds it
-from `edit_splice`; `nib --ingest FILE` shows the percept stream with no GPU. 116 selftest checks
-and 22 driver checks, three identical runs.
-
-**Four things it found that the header and the spec had wrong** — do not re-derive these:
-
-- `sizeof(Delta)` is **528**, not the 512 `source.h`'s own comment claims.
-- `fill_delta` **silently truncates at 495**: it reserves the last byte for a NUL. SPEC 5.1.7 used
-  to say chunk at 496, which loses a byte per full chunk with no signal. Use `nib::kChunkMax`.
-- a `PadSource` is **~528 KB and must never be a stack local** — it crashes at construction with
-  no output at all (`0xC00000FD`), which looks like a broken build rather than a stack overflow.
-- a percept is a **clause, not a word**. fusord prepends `\n[lane] ` per Delta and judges when the
-  line ends, so one percept per word would probe three seats per word. A word boundary is where a
-  percept may *end*. `.`/`!`/`?` close a thought; `;`/`:` do not (fusord measured that).
-
-**Stage 1b is done (2026-09-04, 0.6.0)** — `src/resident.h/.cpp`, `nib --resident FILE`. The
-margins move per seat by mandate; 21 of 54 probes wanted to speak and none could. `serve_hash()`
-computes `0xe7ffa5704ba31076`, fusord's own pin, which is the mechanical proof the lift was verbatim.
-
-**The trap that cost the most, and it was silent.** The first run took **556 s instead of 11.8 s**
-because `ggml-cuda.dll` could not resolve its CUDA dependencies and ggml **fell back to the CPU
-with no error at all**, offloading nothing. One missing `SetDllDirectory` on `C:/llama.cpp`. It
-saturated the CPU §1.5 says not to load, and it silently corrupted the record — the 1500 ms flush
-law is wall-clock, so the slow run invented 30 boundaries where the correct run finds 18. The
-resident now enumerates the ggml devices and **refuses to start** without a GPU unless
-`--allow-cpu` says so. Generalise it: when a fallback is silent and the two paths differ by 47×,
-the fallback must be a refusal.
-
-**Stage 1c is done (2026-09-05, 0.7.0)** — `src/wire.h/.cpp`, `src/tape.h/.cpp`; ROADMAP, Stage
-1c, has the table. The resident runs inside the window on its own thread, the tape is the family's,
-the switch unloads the model. Three things it found that come back: the lifted loop probed every
-line's last word twice at the same trunk position (fixed; K5 fixed it too, independently); the
-trunk saw a double newline before every probe (fixed at the serve boundary); and switching on over
-a document costs 39 s for 4.2 KB, because the fold judges history at word grain — which is why the
-next stage is what it is.
-
-**Now: Stage 1d — the trunk as an asset**, from K5 (`docs/BACKLOG.md`, first section): the
-checkpoint beside the document, the resume tick, the hash cache, VRAM on the judgment row, torn-row
-recovery, and word wrap by the operator's word. Then:
-
-**Stage 2 — emission, with floor control.** This is the first stage where the thing can speak, and
-everything in 1b exists so that letting it is a deliberate, dated decision. **It lifts K5's seam
-(SPEC 6.3.4), not the 08-12 blind window, and the lift map is refreshed first.** SPEC §6.3:
-the resident writes into its own blocks and never inside a human's paragraph (6.3.1); an emission
-targeting a block that has had a human keystroke within the floor window is **refused before it is
-composed**, not after (6.3.2); and emission rate must express a real internal state — no invented
-hesitation, no fake typos, no "thinking…" that is not thinking (6.3.3, CLAUDE.md rule 5).
-
-The speak-cue is already carried and hashed in `resident.cpp`, so Stage 2 decodes a constant that
-is already pinned. What it must add is the floor rule, and it must add it as a serializer
-constraint rather than a manner — CLAUDE.md rule 4.
-
-Two constraints from `source.h` that still hold, and are already honoured in `PadSource`:
-
-- **self-echo** (spec §5.8): a delta whose lane is one of the resident's own seats must never be
-  fed back, or the nucleus deliberates about interrupting itself. In a pad the resident writes into
-  the buffer it reads, so this filter lives in `PadSource`, at the source, and is case-insensitive.
-- the lane string is **train ≡ serve**; the trunk sees `[lane] text` byte-identically to the tune
-  format, so lane naming is not a UI decision.
+**The serve pin.** `serve_hash()` computes `0xe7ffa5704ba31076` over the seed, the six worked
+examples, the stream opener, the three seats' names and mandates, the probe frame and the speak-cue
+frame. It is fusord's own pin from 2026-08-12, and nib computing the same number is the mechanical
+proof that the lift was verbatim. **The resident refuses to start if it moves.** The check is pure
+string arithmetic and runs in every `--selftest`, with no model and no card. Do not "improve",
+reflow or reformat any of those literals.
 
 ---
 
-## 6 · Open loops and hazards, right now
+## 10 · Session discipline
 
-**6.1 Resolved 2026-09-04.** `nib.exe` was locked by an instance the operator had open from a build
-predating save; the session built to `nib-next.exe` rather than kill the window. That window has
-since been closed by the operator, `nib-next.exe` is gone, and `nib.exe` is the current build. The
-standing rule survives the incident: **if `nib.exe` is locked, build beside it — never kill a
-window that may hold unsaved text.**
-
-**6.2 `compose` and `follow` are not ported, deliberately.** Act I needs neither. Before either is
-trusted, build the **differential harness**: `pnpm install` the Etherpad tree and run the real
-`Changeset.ts` over random inputs, comparing byte for byte. Hand-picked vectors are not sufficient
-for those two — their failure modes are rare and structural.
-
-**6.3 Public and still true:** everywho's page says it cannot name files yet (the ETW tier is
-unbuilt). That is an honest promise with an implied follow-through.
-
-**6.4 glance's open items** are in `C:\glance\docs\BACKLOG.md`: change-to-line on real remote
-content is unmeasured; `--mcp` and the strip have no automated tests.
-
-**6.5 The estate's biggest unmeasured number** is the twin race — a resident against a
-maximally-good turn-based twin on identical weights. **nib's Stage 4 toggle produces it as a
-by-product of ordinary work**, one paired sample per flip, provided the seat, seed and sampler stay
-identical across the toggle and only the trigger differs.
+- **Versioned edits (operator ruling, 2026-09-05).** An existing source file is never rewritten
+  whole: change it with surgical edits that fail atomically on a mismatch, write only NEW files
+  whole, and commit at every green step. Bought with an incident: a whole-file write of
+  `src/wire.cpp` was cut mid-token and the turn that wrote it left the writer's context.
+- **Snapshots.** `python tools/snap.py <label>` copies every source, tool and document into
+  `versions/<stamp>-<label>/` with an MD5 manifest, **gitignored**, before a risky step and after
+  every green commit. `--list` and `--diff <dir>`. A backup git can reset away is not a backup.
+- **Both oracles before every commit**, and three identical driver runs when the window changed.
+- **Commit messages are prose**, several paragraphs, explaining the decision and the traps. Write
+  them to a file and use `git commit -F`. End with the attribution trailer the harness specifies.
+- **No performance number anywhere it was not measured, with its date.** No date that is not git's.
+- **The devlog is a notebook.** Failures stay printed beside the fixes. Traps go in the day they
+  bite.
+- **Prose voice:** plain, specific, no marketing. When a claim is unproven, the document says so in
+  the same sentence.
 
 ---
 
-## 7 · The line that governs everything
+## 11 · Open gaps, ranked
+
+Full list in `docs/BACKLOG.md`. The ones that matter:
+
+1. **The manners' memory dies with the resident while the trunk survives.** A restored resident has
+   its own lines on its trunk but an empty suppression ladder, so a seat can repeat itself once
+   after the switch. Three strings in the checkpoint's sidecar. **Should land before the week.**
+2. **The seats perseverate.** One driver run composed fourteen sentences: six said, eight refused,
+   and the eight were the same two lines. The harness is doing its job and the disposition is not.
+   Say-it-once is a fine-tune target; nib now measures its own rate to tune against.
+3. **`settled_by_world` has never fired in a measured run** — only `margin_flipped`. The acceptance
+   phrase list is small. Sweep the tapes offline before widening it: a false acceptance silences a
+   seat.
+4. **The floor is global, not per block.** Stricter than the spec requires, therefore safe, but
+   writing in one paragraph silences a seat that wanted to speak about another.
+5. **The `.prev` checkpoint generation is written and never read.** Needs a fault-injection test.
+6. **The first fold over a long document costs 39 s** at word grain. The checkpoint means it is
+   normally paid once.
+7. **The T sweep** (SPEC 14.3) needs a real typing tape; the synthetic cadence never pauses.
+8. **The driver's windows sit on the operator's screen.** Move them off-screen, not hidden — a
+   hidden window gets no `WM_PAINT` and the latency instrument measures keystroke to painted.
+
+---
+
+## 12 · Resume here
+
+**If you are continuing the work:** Stage 4, per §8. Read `docs/review/LIFT_MAP_K5_2026-09-05.md`
+before touching the resident's loop, and the review's §5.5 for the shadow twin and `--twin`. The
+cheap win first, if you want one: gap 1 above (the manners in the sidecar).
+
+**If you are a fresh session:** read `CLAUDE.md`, then `docs/SPEC.md`, then this file's §4 and §10,
+then `build.bat && nib.exe --selftest && python tools/drive.py`. Do not run `--ai` until you have
+checked the card with `nvidia-smi` and know no other model is resident.
+
+**If you are rehydrating after a trim:** §2 is the state, §7 is every number you may quote, §10 is
+how to work, §11 is what is unfinished. The git log is the narrative — each commit message is a
+paragraph of prose about what was decided and why.
+
+**Before you start any GPU work:** `nvidia-smi`, and remember that one model on the card at a time
+is a rule and that a red `--ai` run is worth re-running once before it is believed.
+
+---
+
+## 13 · The line
 
 **If the operator, alone with nib for a week of real work, does not leave it turned on, the idea is
 wrong.** Nothing in Act II rescues that, and the finding gets published beside the laws it bought.
