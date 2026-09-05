@@ -60,6 +60,19 @@ static const char* CUE_C   = ". You chose to speak about what you just perceived
                              "Give your one-sentence line now — no preamble."
                              "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
 
+// THE SAVER'S CONTINUATION CUE. Not inside the serve hash and not pinned: the pinned cue asks for
+// one line about what was just perceived, and a seat holding the floor has just perceived its own
+// line, so under the pinned cue the monologue horizon is one to two sentences (measured 2026-09-05
+// on an empty pad, on notes, and on the margins script). The gate that makes the seat speak is
+// still the pinned probe, and its margin rides every line; only the phrasing is asked for
+// differently, and every row it produces says `cue: saver`. Same frame, same seat, same sampler.
+static const char* SAVER_CUE_C =
+    ". The host has asked you to keep talking until you are interrupted, and you are holding the "
+    "floor. Give your next sentence now: one sentence that adds something new — a thought, an "
+    "observation, a question, an aside — and never a repeat or a restatement of anything you have "
+    "already said. No preamble."
+    "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+
 const Seat* seats() { return kSeats; }
 size_t seat_count() { return 3; }
 
@@ -681,12 +694,15 @@ float Resident::probe_one(int m) {
 // One sentence, on a fork of the trunk as it stands, with a hard cap. The fork is dropped before
 // this returns: nothing a seat says reaches the trunk here — that happens at the end of the line
 // (flush_own_speech), so a seat's words are never spliced into the middle of somebody else's.
-bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam) {
+bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam,
+                     std::vector<Judgment>* late, bool saver_cue) {
     if (!p_ || !p_->smp || !ctx_) return false;
     const uint64_t t0 = wall_ms();
+    const uint64_t d0 = deferred_;   // judgments the world's lines would have had, had a seat not been speaking
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);
     llama_memory_seq_cp(p_->mem, TRUNK, GEN, -1, -1);
-    const auto ct = tk(p_->vocab, std::string(CUE_A) + kSeats[m].name + CUE_B + kSeats[m].mandate + CUE_C, false);
+    const auto ct = tk(p_->vocab, std::string(CUE_A) + kSeats[m].name + CUE_B + kSeats[m].mandate +
+                                      (saver_cue ? SAVER_CUE_C : CUE_C), false);
     if (!decode(ct, GEN, npast_, true)) { llama_memory_seq_rm(p_->mem, GEN, -1, -1); return false; }
     long long gpos = npast_ + (long long)ct.size();
     std::vector<float> gl((size_t)p_->n_vocab);
@@ -746,7 +762,14 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
         const bool settled = looks_like_acceptance(newest) &&
                              (content_overlap(newest, say) >= 1 || content_overlap(newest, about) >= 1);
         if (!settled) { m_after = probe_one(m); ++probes; ++seam_probes_; }
-        if (settled || m_after <= 0.0f) {
+        // The judgment that started the sentence changed SIGN. In RESIDENT the sentence began at
+        // a margin above zero, so this is the flip to zero or below — it would not have started.
+        // In the saver the sentence may have begun at any margin, the mode having made the seat
+        // speak, and the flip that kills is the one upward: the world just said something the
+        // seat itself wants to answer, so the sentence about the old world dies and the next one
+        // is about the new. One law, read in both directions.
+        const bool flipped = (margin > 0.0f) != (m_after > 0.0f);
+        if (settled || flipped) {
             aborted = true;
             why = settled ? "settled_by_world" : "margin_flipped";
             by = settled ? newest : std::string();
@@ -755,6 +778,12 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
     }
     --gen_depth_;
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);   // the fork is dropped; the trunk never saw it
+    // THE SAVER'S PROMPT JUDGMENT. Inside a generation judgment is delayed and ingest is not
+    // (SPEC 6.4.4); in RESIDENT the delayed clause is judged at the next boundary. In the saver
+    // the world's line landed while the seat was talking, and the seat's answer to it is the
+    // whole point of the mode, so the delayed final is judged now, at the end of the sentence,
+    // into the caller's vector, and shipped like any judgment.
+    if (saver_ && late && deferred_ > d0 && !clause_.empty()) judge("f", 0.0f, *late);
     while (!say.empty() && (say.front() == ' ' || say.front() == '\t')) say.erase(0, 1);
     gen_ms_ += wall_ms() - t0;
     if (aborted) {
@@ -772,6 +801,7 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
         a.gen_ms = wall_ms() - t0;
         a.toks = toks;
         a.probes = probes;
+        a.cue = saver_cue ? 's' : 'p';
         aborts_.push_back(std::move(a));
         ++aborted_;
         // It really did say the part that reached the surface, so the mind hears that much of
@@ -792,15 +822,20 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
     out.gen_ms = wall_ms() - t0;
     out.toks = toks;
     out.stop = stop;
+    out.cue = saver_cue ? 's' : 'p';
     return true;
 }
 
 // The manners ladder as a pure check, so that --selftest fires at it with no model and a restored
 // resident's imported memory can be shown to work before a card is touched.
-const char* Resident::manners_allows(int m, const std::string& say, const std::string& about, std::string& by) const {
+const char* Resident::manners_allows(int m, const std::string& say, const std::string& about, std::string& by,
+                                     bool interrupting) const {
     by.clear();
+    // the paraphrase valve: three content words for a seat restating a catch, a higher bar for
+    // the saver's seat, whose every sentence about one document shares that document's nouns
+    const int overlap_bar = interrupting ? cfg_.dup_overlap : cfg_.saver_dup_overlap;
     const bool dup = !last_say_[m].empty() &&
-                     (near_dup(say, last_say_[m]) || content_overlap(say, last_say_[m]) >= cfg_.dup_overlap);
+                     (near_dup(say, last_say_[m]) || content_overlap(say, last_say_[m]) >= overlap_bar);
     const bool in_win = (boundaries_ - last_say_i_[m]) <= kSuppBoundaries &&
                         (wall_ms() - last_say_ms_[m]) <= kSuppTtlMs;
     // Re-armed: the topic genuinely came back up — a LATER clause than the one that produced the
@@ -810,6 +845,11 @@ const char* Resident::manners_allows(int m, const std::string& say, const std::s
 
     if (dup && resolved_[m]) return "resolved";
     if (dup && in_win && !re_armed) return "repeat";
+    // the saver's seat holds the floor for many lines, and its memory of the last one is not
+    // enough: a monologue must not cycle through its own recent lines either
+    if (!interrupting)
+        for (const std::string& h : saver_history_)
+            if (near_dup(say, h) || content_overlap(say, h) >= overlap_bar) return "repeat";
     for (int o = 0; o < 3; ++o) {
         if (o == m || last_say_[o].empty()) continue;
         const bool o_win = (boundaries_ - last_say_i_[o]) <= kSuppBoundaries &&
@@ -822,8 +862,9 @@ const char* Resident::manners_allows(int m, const std::string& say, const std::s
     }
     // The interruption budget, and it applies to a RESTATEMENT only: an unconditioned window
     // silences a legitimate new catch that happens to arrive soon after the last one, which is
-    // what K5's own calibration found.
-    if (cfg_.refractory_ms > 0 && last_say_ms_[m] && !re_armed &&
+    // what K5's own calibration found. A seat that is not interrupting anyone — the saver's, which
+    // the human asked to keep talking — has no such budget to spend.
+    if (interrupting && cfg_.refractory_ms > 0 && last_say_ms_[m] && !re_armed &&
         (int64_t)(wall_ms() - last_say_ms_[m]) < cfg_.refractory_ms &&
         (content_overlap(say, last_say_[m]) >= 1 || content_overlap(about, last_clause_[m]) >= 1))
         return "refractory";
@@ -833,9 +874,10 @@ const char* Resident::manners_allows(int m, const std::string& say, const std::s
 // The manners ladder. A line that clears it is said and remembered; a line that does not is
 // RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
 // that held its tongue and a harness that lost a sentence has to stay visible on the tape.
-bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about) {
+bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about,
+                              bool interrupting) {
     std::string by;
-    const char* why = manners_allows(m, say, about, by);
+    const char* why = manners_allows(m, say, about, by, interrupting);
     if (why[0]) {
         Suppressed s;
         s.wall_ms = wall_ms();
@@ -975,6 +1017,7 @@ void Resident::judge(const char* reason, float bscore, std::vector<Judgment>& ou
         want_[m].boundary = boundaries_;
         want_[m].at_ms = wall_ms();
         want_[m].clause = judged;
+        want_[m].renewal = false;   // a real want, answered with the pinned cue
     }
 }
 
@@ -986,9 +1029,10 @@ bool Resident::wants_pending() const {
 // The floor has opened: compose what each seat still wants to say, oldest seat first, and let the
 // manners decide whether it is said. A want the floor never opened for inside its time to live is
 // dropped, because the instant it was about has gone.
-void Resident::speak_wants(Seam* seam) {
+void Resident::speak_wants(Seam* seam, std::vector<Judgment>* late, int only_seat) {
     if (!cfg_.emit || !ctx_ || failed() || window_full_) return;
     for (int m = 0; m < 3; ++m) {
+        if (only_seat >= 0 && m != only_seat) continue;
         Want& w = want_[m];
         if (!w.live) continue;
         if (cfg_.want_ttl_ms > 0 && (int64_t)(wall_ms() - w.at_ms) > cfg_.want_ttl_ms) {
@@ -1005,11 +1049,22 @@ void Resident::speak_wants(Seam* seam) {
             continue;
         }
         w.live = false;
-        Emission e;
-        if (!speak(m, w.boundary, w.margin, w.clause, e, seam)) continue;
-        if (!allowed_to_say(m, w.boundary, w.margin, e.say, w.clause)) continue;
-        emissions_.push_back(e);
-        ++emitted_;
+        // The saver's seat interrupts nobody, so the refractory budget is not spent on it, and a
+        // line the manners refuse is composed once more before the seat holds: rejection sampling
+        // under the ladder, with every refusal on the record. Nothing is retried after an abort —
+        // the world moved, and the prompt judgment at the end of the sentence decides what next.
+        const bool saver_seat = saver_ && m == kSaverSeat;
+        const int tries = saver_seat ? 1 + (cfg_.saver_retries > 0 ? cfg_.saver_retries : 0) : 1;
+        for (int t = 0; t < tries; ++t) {
+            Emission e;
+            if (!speak(m, w.boundary, w.margin, w.clause, e, seam, late, saver_seat && w.renewal && cfg_.saver_cue)) break;
+            if (allowed_to_say(m, w.boundary, w.margin, e.say, w.clause, !saver_seat)) {
+                emissions_.push_back(e);
+                ++emitted_;
+                break;
+            }
+            if (t + 1 < tries) ++saver_retried_;
+        }
         // The line is NOT committed to the trunk here (it was, through 0.10.1). It is said only
         // when the editor has really written it, and the editor may still refuse it at the second
         // floor gate; so it comes back through the document as an own-speech percept, and the
@@ -1055,6 +1110,46 @@ void Resident::own_line(const std::string& lane, const std::string& text, uint64
     if (last_say_[m] != line) { last_say_[m] = line; last_clause_[m].clear(); cond_open_[m] = true; resolved_[m] = false; }
     last_say_i_[m] = boundaries_;
     last_say_ms_[m] = wall_ms();
+    // THE SAVER: the want renews itself. The seat's own line has just joined the trunk through
+    // the document, and in the saver it wants again at once — the trigger is the mode, not the
+    // margin — while the margin it is asked for rides the record, so a reader sees what the seat
+    // itself thought each time it was made to speak. `clause` is its own last line: what the
+    // next one is "about", for the manners' re-arm test.
+    if (saver_ && m == kSaverSeat) {
+        Want& w = want_[m];
+        w.live = true;
+        w.margin = probe_one(m);
+        w.boundary = boundaries_;
+        w.at_ms = wall_ms();
+        // what the next line is "about" is the newest thing the WORLD said, never the seat's own
+        // line: the manners' re-arm test reads a clause that shares words with the seat's last
+        // line as the world raising the topic again, and a seat that named its own line as the
+        // clause re-armed itself and repeated verbatim (measured 2026-09-05, the first null)
+        w.clause = last_world_line_;
+        w.renewal = true;
+        saver_history_.push_back(line);
+        if (saver_history_.size() > kSaverHistory) saver_history_.erase(saver_history_.begin());
+        ++saver_lines_;
+    }
+}
+
+void Resident::set_saver(bool on) {
+    if (saver_ == on) return;
+    saver_ = on;
+    if (!on && want_[kSaverSeat].live) {
+        // a renewal still waiting goes with the mode, on the record and never as a silence
+        Want& w = want_[kSaverSeat];
+        w.live = false;
+        Suppressed s;
+        s.wall_ms = wall_ms();
+        s.boundary = w.boundary;
+        s.seat = kSaverSeat;
+        s.margin = w.margin;
+        s.clause = w.clause;
+        s.why = "saver_off";
+        supp_.push_back(std::move(s));
+        ++suppressed_;
+    }
 }
 
 bool Resident::ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out) {

@@ -1516,6 +1516,27 @@ int run_selftest() {
               "a line said more boundaries ago than the window holds may be said again");
     }
 
+    section("the screen saver - the seat that interrupts nobody, and the mode as a switch");
+    {
+        // The saver's seat holds the floor by the human's leave, so the refractory budget — an
+        // interruption budget — does not apply to it; repeat, repeat_other and resolved still do.
+        Resident r;
+        std::string by;
+        r.manners_import("m0.say\tThe Pacific is the largest ocean.\nm0.clause\tx\nm0.age_ms\t1000\nm0.since_i\t0\nm0.resolved\t0\nm0.open\t1\n");
+        const std::string a = "The Atlantic is smaller than the Pacific.";
+        check(std::string(r.manners_allows(0, a, "y", by)) == "refractory", "a restatement one second after the seat's last line is refractory for an interrupting seat");
+        check(std::string(r.manners_allows(0, a, "y", by, false)).empty(), "and allowed for the saver's seat, which interrupts nobody");
+        check(std::string(r.manners_allows(0, "The Pacific is the largest ocean on Earth.", "y", by, false)) == "repeat",
+              "while a repeat is still a repeat, saver or not");
+        check(!r.saver() && !r.saver_wants(), "the saver is off by default and no want is pending");
+        r.set_saver(true);
+        check(r.saver() && !r.saver_wants(), "on is a state, not a want: nothing is composed until the seat is addressed");
+        r.set_saver(false);
+        check(!r.saver(), "and off is off");
+        check(std::string(kSaverLane) == "host" && std::string(kSaverAddress).find("Watcher") == 0 && kSaverSeat == 0,
+              "the standing instruction addresses the Watcher on the host's lane, and the saver's seat is the SPEAKER");
+    }
+
     section("refusals");
     {
         std::string err;

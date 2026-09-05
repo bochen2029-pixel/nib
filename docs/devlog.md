@@ -965,6 +965,85 @@
   a want arises at, and therefore the fork the line is sampled from, moves between runs. The next
   commit takes that clock, and the CLI's run should become reproducible with it.
 
+## 2026-09-05 (night) · the `saver` branch - the resident holds the floor
+
+*This entry is on the branch `saver`, in a worktree at C:\nib-saver, built from 0.10.3 so that
+nothing on the mainline moves. The mode is docs/SAVER.md and SPEC 6.5; the design was
+docs/BRAINSTORMS_2026-09-05.md section 4, filed the same evening from the operator's voice note.*
+
+- THE MODE. Ctrl+Shift+M. The mind switches on if it is off; one line arrives on the pad as WORLD
+  on the host's lane - "[host] Watcher, talk to me about anything until I interrupt." - and the
+  SPEAKER answers it under its own mandate. From then on the seat keeps going, one sentence at a
+  time, each its own [SPEAKER] block at the TAIL of the document. The human types anywhere else;
+  that typing is the interruption. Off is a switch and never a timer.
+- WHAT WAS ALREADY THERE, and it was nearly all of it: the Stage 3 seam that drains the ring
+  between two generated tokens, the re-probe on a fresh fork, the forming plane, own speech
+  through the document (0.10.2), the manners that persist (0.10.3). Four things were new.
+- ONE: a want that renews itself. A want is born at a boundary and dies when it is composed; the
+  saver's seat wants again the moment its own line joins the trunk through the document. The
+  clause it names for the next line is the newest thing the WORLD said, never its own line - the
+  first null had it name its own line, which re-armed the manners' repeat rule (a clause sharing
+  content words with the seat's last line reads as the world raising the topic again) and the
+  seat repeated itself verbatim.
+- TWO: the seam's kill, read in BOTH directions. The sentence dies when the seat's judgment
+  changes SIGN. In RESIDENT that is the flip to zero or below - it would not have started. In the
+  saver a sentence may begin below zero, the mode having made the seat speak, and the flip that
+  kills is the one UPWARD: the world just said something the seat itself wants to answer, so the
+  sentence about the old world dies and the next is about the new. One law, two readings, and the
+  three verbs the operator asked for - ignore, pause, adapt - are that one mechanism.
+- THREE: the per-block floor, which SPEC 6.3.2 always meant and the wire enforced globally. The
+  saver composes while the hand moves; its line is refused (floor) only when the hand's last
+  keystroke within floor_ms touched the tail. The other seats keep the global floor.
+- FOUR: a continuation cue, and it cost a measurement to justify. THE MONOLOGUE HORIZON is the
+  number of sentences said before the manners refuse the seat and it holds. UNDER THE PINNED
+  SPEAK-CUE IT IS ONE. That cue asks for one sentence "about what you just perceived in the
+  stream", and a seat holding the floor has just perceived ITS OWN LAST LINE, so every renewal
+  came back a near-verbatim repeat and the manners refused it. The pinned cue is a cue for
+  interrupting and it does that job exactly as tuned; it is not a cue for continuing. The saver's
+  cue asks for one more sentence that adds something new. It is NOT in the serve hash and is not
+  pinned: the gate that makes the seat speak is still the pinned probe, the sampler is still the
+  pinned chain, the cue composes a line only after the gate has decided, it is declared on the
+  session row, and every emit and abort row it produces says cue: saver. --saver-pinned-cue
+  measures the horizon without it.
+- THE PARAPHRASE VALVE, tuned once, for that seat only. dup_overlap is 3 content words, measured
+  for a seat RESTATING A CATCH in a watch-room. A monologue about one document shares that
+  document's nouns in every sentence, and at 3 the valve refused "postgres 16 is fast, but the
+  migration script assumes a schema that might not exist yet" as a repeat of "the staging database
+  is postgres 16, and the migration script is written for it" - a different claim about the same
+  subject. saver_dup_overlap is 5; the six-in-ten near-duplicate test is unchanged. Measured
+  effect on an empty pad: three lines at 3, EIGHT at 5, and the three-line run's refusals were
+  paraphrases while the eight-line run's are real repeats.
+- MEASURED, 2026-09-05, --resident FILE --saver on three pads: empty 8 lines in 4.6 s (2 retried,
+  3 refused); four lines of notes 3 lines in 2.4 s; tests/margins.txt 1 line, correctly, the
+  SPEAKER having already said its piece in the ordinary run before the saver started. The empty
+  pad's eight develop: monitoring, then a status check, then the active threads, then the exit
+  strategy, then the data pipeline's variance, then its performance ceiling. The notes pad's three
+  are a real chain: postgres 16 and the migration script, then the script assumes a schema that
+  may not exist, then the first run fails so the retry logic must handle "not found" rather than
+  treat it as transient.
+- AND THE MARGINS GO NEGATIVE WHILE THE MODE KEEPS SPEAKING, ON THE RECORD. The empty pad's run
+  starts at +3.59 and crosses to -1.44 by the third line. The seat is asked, at every renewal,
+  what it would do on its own, and after two or three lines it answers hold - and the record says
+  so beside every line. Two lines of eight were lines the resident itself wanted. That is the
+  honest shape for this mode: the trigger is the mode, never a margin the mode invented.
+- TRAP, mine, in the driver: the new saver case wrote its fixture with open(path, "w"), and
+  Python's text mode turns LF into CRLF on Windows. nib preserves a file's own convention
+  (SPEC 4.3.2), so the document came back CRLF and every line compared carried a stray carriage
+  return. Two assertions failed on a mechanism that was working. newline="" now. The un-say case
+  writes the same way and passes only because it compares substrings; noted, not changed on this
+  branch.
+- TRAP, the card's: the first --ai run of this branch failed nine checks in the MAIN case with "no
+  resident line in 120 s", and nvidia-smi read 14327 MiB used at its start. Three CLI saver runs
+  had just finished and llama-server was resident; the model could not load. Re-run on a free card
+  (4340 MiB), every one of those checks passed. HANDOFF 4.7 again: one model on the card at a
+  time, and a red --ai run is worth re-running once before it is believed.
+- NEXT on this branch, if it is kept: the horizon is SHORT and that is the finding, not a defect
+  to engineer around - widening the manners would buy a longer monologue of worse lines, and the
+  fix is a tune. The saver's cue is unpinned and therefore uncalibrated; the honest end state is a
+  tuned continuation disposition, at which point the cue joins the pin. Entry on idle time is a
+  policy over the switch, and the [focus] lane of the vision brainstorm is the right trigger for
+  it. Whether a SKEPTIC may interrupt the SPEAKER's monologue is a question the week would answer.
+
 ## 2026-09-05 (evening) · 0.10.3 - the manners across the switch, the refusal, and the flush clock
 
 - THE MANNERS SURVIVE THE SWITCH (SPEC 6.3.5, 6.2.11.1). The sidecar carries, for each seat that

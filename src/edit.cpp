@@ -74,7 +74,8 @@ struct Theme {
 };
 
 enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop,
-           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom, CmdWrap };
+           CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom, CmdWrap,
+           CmdSaver = 23 };   // 20–22 are Stage 4's on main (ask, mode, emit); the saver keeps clear of them
 constexpr UINT WM_NIB_CMD = WM_APP + 1;
 
 // A judged span, in CURRENT document coordinates, with the three seats' margins at that boundary.
@@ -167,6 +168,12 @@ struct View {
     uint64_t forming_gen = 0;   // the wire's counter, so a repaint costs nothing when nothing moved
     bool fast_timer = false;
     uint64_t abort_rows = 0;
+    // THE SCREEN SAVER (docs/BRAINSTORMS_2026-09-05.md §4): the resident holds the floor. Its block
+    // is the document's TAIL; the human's typing anywhere else is the interruption, and the human
+    // touching the tail holds the floor — the per-block rule, in commit_emission.
+    bool saver = false;
+    bool saver_armed = false;   // switched on while the mind was loading: begin once it is Ready
+    size_t last_key_at = 0;     // where the hand last edited, for the per-block floor
     std::vector<Mark> marks;
     std::vector<EditRec> edits;
     struct { uint32_t boundary = 0; int n = 0; JudgmentRow rows[3]; } pend;   // three seats, one row
@@ -461,6 +468,7 @@ void after_edit(HWND h, bool caret_from_doc) {
 void note_edit(size_t start, size_t ndel, size_t ins, bool human = true) {
     if (human) {
         g->last_key_ms = mono_ms();
+        g->last_key_at = start;
         // the floor: the hand has the floor while it is moving, and yields it by pausing (6.3.2).
         // A seat's own block is not a hand and does not take the floor from anyone.
         g->wire.note_human_edit(g->last_key_ms);
@@ -923,13 +931,51 @@ void stop_resident(bool wait, const char* why) {
     if (wait) finish_stop();
 }
 
+void saver_set(HWND h, bool on);
+
 void ai_set(HWND h, bool on) {
     if (on == g->ai_wanted) return;
+    if (!on && g->saver) saver_set(h, false);   // no mind, no floor to hold: the saver goes with it
     tape_row("switch", canon::obj({ { "which", canon::str("ai") }, { "from", canon::str(g->ai_wanted ? "on" : "off") },
                                     { "to", canon::str(on ? "on" : "off") } }), true);
     g->ai_wanted = on;
     if (on) { start_resident(); set_status("AI: loading " + model_name()); }
     else { stop_resident(false, "off"); set_status("AI stopping - the trunk is being saved, then the card comes back"); }
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// ---- the screen saver -------------------------------------------------------------------------
+// The resident holds the floor (docs/BRAINSTORMS_2026-09-05.md §4). On: the mind is switched on
+// if it is not, and once it is Ready and folded the standing instruction arrives as WORLD on the
+// host's lane — never as a prompt, the mandates being inside the serve hash — and the SPEAKER,
+// whose mandate is to answer when addressed, answers it; from then on its want renews itself at
+// every line it says (Resident::own_line). Its block is the tail of the document; the human's
+// typing anywhere else is the interruption; the mode is a switch on the tape and never a timer.
+void saver_begin(HWND h) {
+    if (!g->ingest || g->wire.state() != WireState::Ready) return;
+    g->wire.set_saver(true);
+    g->ingest->typed(kSaverLane, std::string(kSaverAddress) + "\n", mono_ms(), g->doc.size(), g->doc.revisions());
+    tape_percepts();
+    nlog("saver	1	%s", kSaverAddress);
+    set_status("screen saver: the resident holds the floor - type anywhere to interrupt, Ctrl+Shift+M ends it");
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+void saver_set(HWND h, bool on) {
+    if (on == g->saver) return;
+    tape_row("switch", canon::obj({ { "which", canon::str("saver") }, { "from", canon::str(g->saver ? "on" : "off") },
+                                    { "to", canon::str(on ? "on" : "off") } }), true);
+    g->saver = on;
+    if (on) {
+        if (!g->ai_wanted) { g->saver_armed = true; ai_set(h, true); }
+        else if (g->wire.state() == WireState::Ready && g->fold_done) saver_begin(h);
+        else g->saver_armed = true;
+    } else {
+        g->saver_armed = false;
+        g->wire.set_saver(false);
+        nlog("saver	0");
+        set_status("screen saver off");
+    }
     InvalidateRect(h, nullptr, TRUE);
 }
 
@@ -996,21 +1042,35 @@ void refuse_emission(const EmitRow& r, const char* why) {
 }
 
 void commit_emission(HWND h, const EmitRow& r) {
-    // the clause it depends on, carried forward to the text as it stands now. A revision of 0 is
-    // no revision: the wire no longer holds the span this want was judged at, and a block with no
-    // dep has nowhere honest to go — until 2026-09-05 it went after the document's first line.
-    if (r.rev == 0) { refuse_emission(r, "span-unknown"); return; }
-    size_t a = r.a, b = r.b;
-    if (!transform_span(r.rev, a, b)) { refuse_emission(r, "span-edited"); return; }
-    // THE FLOOR, checked again at the moment of writing. The thread refused to compose while the
-    // hand was moving; between composing and arriving there is half a second in which the hand may
-    // have started again, and a block written into that is exactly what 6.3.2 forbids.
-    if (g->last_key_ms && (int64_t)(mono_ms() - g->last_key_ms) < g->th.floor_ms) { refuse_emission(r, "floor"); return; }
-
     const std::string& t = g->doc.text();
-    if (b > t.size()) b = t.size();
-    const size_t nl = t.find('\n', b);
-    size_t at = nl == std::string::npos ? t.size() : nl + 1;
+    // THE SAVER'S LINE has no dep span: its block is the document's TAIL, its subject is the whole
+    // trunk, and the floor it respects is the tail's — the human touching the last line holds it,
+    // the human typing anywhere else does not. That is SPEC 6.3.2's per-block rule, which the saver
+    // is the first mode to need (docs/BRAINSTORMS_2026-09-05.md §4).
+    const bool saver_line = g->saver && r.seat == kSaverSeat;
+    size_t a = r.a, b = r.b, at = 0;
+    if (saver_line) {
+        at = t.size();
+        size_t tail = g->idx.start[g->idx.count() - 1];
+        if (tail == t.size() && g->idx.count() > 1) tail = g->idx.start[g->idx.count() - 2];   // an empty last line: the block before it
+        if (g->last_key_ms && (int64_t)(mono_ms() - g->last_key_ms) < g->th.floor_ms && g->last_key_at >= tail) {
+            refuse_emission(r, "floor");
+            return;
+        }
+    } else {
+        // the clause it depends on, carried forward to the text as it stands now. A revision of 0 is
+        // no revision: the wire no longer holds the span this want was judged at, and a block with
+        // no dep has nowhere honest to go — until 2026-09-05 it went after the document's first line.
+        if (r.rev == 0) { refuse_emission(r, "span-unknown"); return; }
+        if (!transform_span(r.rev, a, b)) { refuse_emission(r, "span-edited"); return; }
+        // THE FLOOR, checked again at the moment of writing. The thread refused to compose while the
+        // hand was moving; between composing and arriving there is half a second in which the hand
+        // may have started again, and a block written into that is exactly what 6.3.2 forbids.
+        if (g->last_key_ms && (int64_t)(mono_ms() - g->last_key_ms) < g->th.floor_ms) { refuse_emission(r, "floor"); return; }
+        if (b > t.size()) b = t.size();
+        const size_t nl = t.find('\n', b);
+        at = nl == std::string::npos ? t.size() : nl + 1;
+    }
     std::string ins = std::string("[") + seats()[r.seat].name + "] " + r.say + "\n";
     if (at > 0 && t[at - 1] != '\n') ins = "\n" + ins;   // never joined onto the end of a human's line
 
@@ -1018,8 +1078,12 @@ void commit_emission(HWND h, const EmitRow& r) {
     std::string err;
     if (!g->doc.apply(cs, seats()[r.seat].name, err)) { refuse_emission(r, "apply-failed"); return; }
     note_edit(at, 0, ins.size(), false);
-    if (g->caret >= at) g->caret += ins.size();
-    if (g->anchor >= at) g->anchor += ins.size();
+    // The hand's caret moves past the block when it was past the insertion point. A caret sitting
+    // exactly at the tail stays BEFORE the saver's line, so the human keeps writing on their own
+    // line above it and the monologue piles up below; a block placed after a clause keeps the old
+    // rule, where the caret at the clause's end follows the block.
+    if (g->caret > at || (!saver_line && g->caret == at)) g->caret += ins.size();
+    if (g->anchor > at || (!saver_line && g->anchor == at)) g->anchor += ins.size();
     // The seat's own words go back to the pad through the sanctioned door (kind 's'): the mind
     // hears its line only now, once the document really holds it, decoded raw on its lane and
     // judged never (SPEC 5.1.6 as amended, 6.3.6). A line refused above never reaches this point,
@@ -1036,6 +1100,7 @@ void commit_emission(HWND h, const EmitRow& r) {
         { "at", canon::num((int64_t)at) }, { "bytes", canon::num((int64_t)ins.size()) },
         { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
         { "stop", canon::str(std::string(1, r.stop)) }, { "say", canon::str(r.say) },
+        { "saver", canon::boolean(saver_line) }, { "cue", canon::str(r.cue == 's' ? "saver" : "pinned") },
     }), true);
     nlog("emit	%u	%s	%.2f	%zu	%s", r.boundary, seats()[r.seat].name, (double)r.margin, at, r.say);
     // the document changed under the caret without passing through edit_splice
@@ -1062,6 +1127,7 @@ void record_abort(const EmitRow& r) {
         { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
         { "aired", canon::str(r.say) }, { "killed", canon::str(r.killed) },
         { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
+        { "cue", canon::str(r.cue == 's' ? "saver" : "pinned") },
     }), true);
     ++g->abort_rows;
     nlog("abort	%u	%s	%.2f	%.2f	%s	%s	|	%s", r.boundary, seats()[r.seat].name,
@@ -1100,12 +1166,16 @@ void poll_forming(HWND h) {
     if (g->forming_active) {
         g->forming_seat = seat;
         g->forming_text = text;
-        size_t a = fa, b = fb;
-        if (!transform_span(rev, a, b)) b = g->doc.size();   // the span moved; anchor to the end
         const std::string& t = g->doc.text();
-        if (b > t.size()) b = t.size();
-        const size_t nl = t.find('\n', b);
-        g->forming_at = nl == std::string::npos ? t.size() : nl + 1;
+        if (g->saver && seat == kSaverSeat) {
+            g->forming_at = t.size();   // the saver's block is the tail, so its words form there
+        } else {
+            size_t a = fa, b = fb;
+            if (!transform_span(rev, a, b)) b = g->doc.size();   // the span moved; anchor to the end
+            if (b > t.size()) b = t.size();
+            const size_t nl = t.find('\n', b);
+            g->forming_at = nl == std::string::npos ? t.size() : nl + 1;
+        }
         g->forming_row = g->ridx.row_of(g->forming_at ? g->forming_at - 1 : 0);
     } else {
         g->forming_text.clear();
@@ -1137,6 +1207,7 @@ void poll_wire(HWND h) {
             tape_row("coefficient", canon::obj({ { "name", canon::str("n_ctx") }, { "value", canon::num(g->rcfg.n_ctx) } }), true);
             fold_on_ready();
             set_status(ssprintf("AI on (%s): %s loaded in %.1f s", g->wire.boot().c_str(), model_name().c_str(), g->wire.load_ms() / 1000.0));
+            if (g->saver_armed) { g->saver_armed = false; saver_begin(h); }   // switched on while it loaded
         } else if (s == WireState::Error) {
             nlog("resident	error	%s", g->wire.detail().c_str());
             tape_row("error", canon::obj({ { "text", canon::str(g->wire.detail()) } }), true);
@@ -1389,6 +1460,7 @@ std::string resident_line() {
                 if (g->ingest->dropped()) l += "  ·  DROPPED";
             }
             if (g->wire.window_full()) l += ssprintf("  ·  WINDOW FULL: %llu words unperceived", (unsigned long long)g->wire.dropped_words());
+            if (g->saver) l += "  ·  SAVER: the resident holds the floor";
             l += "  ·  0 B egress";
             return l;
         }
@@ -1688,6 +1760,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     if (ctrl && shift) { ai_set(h, !g->ai_wanted); return 0; }   // the AI switch
                     if (ctrl) { g->anchor = 0; move_to(h, g->doc.size(), true, false); }
                     return 0;
+                case 'M': if (ctrl && shift) saver_set(h, !g->saver); return 0;   // the screen saver
                 case 'C': if (ctrl) copy_sel(h); return 0;
                 case 'X':
                     if (ctrl && has_sel()) {
@@ -1732,6 +1805,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case CmdTop: move_to(h, 0, false, false); break;
                 case CmdBottom: move_to(h, g->doc.size(), false, false); break;   // the driver's windows are visible, and a click in one is the operator's
                 case CmdWrap: set_wrap(h, !g->wrap); break;
+                case CmdSaver: saver_set(h, !g->saver); break;
                 case CmdHome: move_to(h, g->idx.start[g->idx.line_of(g->caret)], false, false); break;
                 case CmdEnd: {
                     const size_t l = g->idx.line_of(g->caret);

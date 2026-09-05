@@ -41,6 +41,9 @@ const char* kUsage =
     "        --model P --ctx N --gpu-layers N --all --verbose --allow-cpu   (needs the GPU)\n"
     "        --script   FILE is a script: a line is typed; '- text' is removed; '# N' is N s of quiet\n"
     "        --emit     LET IT SPEAK: every seat whose margin clears zero composes one sentence\n"
+    "        --saver [--saver-lines N]   after the file, the screen saver: the SPEAKER is addressed as\n"
+    "                   world and holds the floor, renewing its want at every line it says, until N\n"
+    "                   lines or the manners refuse it - the MONOLOGUE HORIZON (needs --emit)\n"
     "\n"
     "Without --emit the resident computes hold/emit and records it, and no sampler exists in the\n"
     "process. In the window, Ctrl+Shift+A switches it on and off; off unloads the model.\n";
@@ -190,10 +193,14 @@ int do_resident(int argc, char** argv) {
     std::string path, lane = "bo";
     Resident::Config rc;
     Compiler::Config cc;
-    bool show_all = false, script = false;
+    bool show_all = false, script = false, saver = false;
+    int saver_lines = 12;
     for (int i = 2; i < argc; ++i) {
         const std::string f = argv[i];
-        if (f == "--model" && i + 1 < argc) rc.model = argv[++i];
+        if (f == "--saver") { saver = true; rc.emit = true; }
+        else if (f == "--saver-lines" && i + 1 < argc) saver_lines = atoi(argv[++i]);
+        else if (f == "--saver-pinned-cue") rc.saver_cue = false;   // measure the horizon under the pinned cue alone
+        else if (f == "--model" && i + 1 < argc) rc.model = argv[++i];
         else if (f == "--llama-dir" && i + 1 < argc) rc.llama_dir = argv[++i];
         else if (f == "--ctx" && i + 1 < argc) rc.n_ctx = atoi(argv[++i]);
         else if (f == "--gpu-layers" && i + 1 < argc) rc.n_gpu_layers = atoi(argv[++i]);
@@ -305,6 +312,50 @@ int do_resident(int argc, char** argv) {
     for (const Suppressed& s : res.take_suppressed())
         printf("  %-8s %+7.2f  --  suppressed (%s%s%s): \"%s\"\n", seats()[s.seat].name,
                (double)s.margin, s.why.c_str(), s.by.empty() ? "" : " by ", s.by.c_str(), s.say.c_str());
+
+    if (saver && !res.failed() && !res.window_full()) {
+        // THE SCREEN SAVER'S NULL (docs/BRAINSTORMS_2026-09-05.md §4): the resident holds the floor.
+        // The standing instruction is world on the host's lane; the SPEAKER answers it; each line
+        // it says comes back through own_line, which renews the want; the run ends at
+        // `saver_lines` lines, or when the manners have refused the seat and it has nothing left
+        // to say — THE MONOLOGUE HORIZON, the number the next tune is scored on. No hand, so the
+        // floor is always open; in the window the human's typing is the interruption.
+        printf("\n--- the screen saver · [%s] %s · renewals under the %s cue\n", kSaverLane, kSaverAddress,
+               rc.saver_cue ? "SAVER" : "PINNED");
+        res.set_saver(true);
+        const uint64_t supp0 = res.suppressed(), s0 = auricle::fusor::now_ms();
+        std::vector<Judgment> js2;
+        clock += 2000;
+        res.feed(kSaverLane, std::string(kSaverAddress) + "\n", clock, 0, js2);
+        auto show = [&](const std::vector<Judgment>& v) {
+            for (const Judgment& j : v)
+                if (show_all || j.margin > 0.0f)
+                    printf("  %-8s %+7.2f  b=%.2f %c  %s\n", seats()[j.seat].name, (double)j.margin,
+                           (double)j.bscore, j.reason, j.clause.c_str());
+        };
+        show(js2);
+        int said = 0;
+        while (said < saver_lines && res.wants_pending() && !res.failed() && !res.window_full()) {
+            js2.clear();
+            res.speak_wants(nullptr, &js2);
+            show(js2);
+            for (const Emission& e : res.take_emissions()) {
+                printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c%s)\n", seats()[e.seat].name,
+                       (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop,
+                       e.cue == 's' ? ", saver cue" : "");
+                res.own_line(seats()[e.seat].name, e.say, e.wall_ms);
+                if (e.seat == kSaverSeat) ++said;
+            }
+            for (const Suppressed& s : res.take_suppressed())
+                printf("  %-8s %+7.2f  --  suppressed (%s%s%s): \"%s\"\n", seats()[s.seat].name,
+                       (double)s.margin, s.why.c_str(), s.by.empty() ? "" : " by ", s.by.c_str(), s.say.c_str());
+        }
+        printf("monologue: %d lines said in %.1f s · %llu retried · %llu refused · horizon %s\n", said,
+               (double)(auricle::fusor::now_ms() - s0) / 1000.0, (unsigned long long)res.saver_retried(),
+               (unsigned long long)(res.suppressed() - supp0),
+               res.wants_pending() ? "not reached (the cap)" : "REACHED: the manners refused the seat and it held");
+        res.set_saver(false);
+    }
     const uint64_t elapsed = auricle::fusor::now_ms() - r0;
 
     printf("\n%zu percepts · %llu words · %llu ticks · %llu boundaries (%llu coarsened) · %llu probes\n",

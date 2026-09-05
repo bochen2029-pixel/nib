@@ -62,6 +62,7 @@ void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string&
     stop_.store(false, std::memory_order_release);
     ckpt_req_.store(false, std::memory_order_release);
     human_ms_.store(0, std::memory_order_release);
+    saver_.store(false, std::memory_order_release);
     boundaries_ = 0; probes_ = 0; wanted_ = 0; ticks_ = 0; deltas_ = 0; dropped_words_ = 0;
     window_full_ = false; context_used_ = 0; load_ms_ = 0; hash_ms_ = 0; probe_ms_ = 0; cursor_rev_ = 0;
     hash_cached_ = false;
@@ -194,6 +195,9 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             { "clause_tok_cap", canon::num(cfg.clause_tok_cap) },
             { "flush_ms", canon::num(cfg.flush_ms) },
             { "bscore_gate", canon::flt(cfg.bscore_gate) },
+            { "saver_retries", canon::num(cfg.saver_retries) },
+            { "saver_dup_overlap", canon::num(cfg.saver_dup_overlap) },
+            { "saver_cue", canon::boolean(cfg.saver_cue) },
             { "seats", canon::arr(mand) },
             { "mode", canon::str("room") },
             { "egress_bytes", canon::num(0) },
@@ -287,6 +291,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             r.gen_ms = e.gen_ms;
             r.toks = e.toks;
             r.stop = e.stop;
+            r.cue = e.cue;
             r.why[0] = 0;
             const size_t n = e.say.size() < sizeof r.say - 1 ? e.say.size() : sizeof r.say - 1;
             memcpy(r.say, e.say.data(), n);
@@ -306,6 +311,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             r.gen_ms = ab.gen_ms;
             r.toks = ab.toks;
             r.stop = 'k';
+            r.cue = ab.cue;
             const std::string why = "abort:" + ab.why;
             const size_t wn = why.size() < sizeof r.why - 1 ? why.size() : sizeof r.why - 1;
             memcpy(r.why, why.data(), wn);
@@ -372,22 +378,34 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         return true;
     };
     while (!stop_.load(std::memory_order_acquire)) {
+        {   // the screen saver: a switch the editor owns and the resident follows
+            const bool sv = saver_.load(std::memory_order_acquire);
+            if (sv != res.saver()) { res.set_saver(sv); ship_emissions(); }
+        }
         if (!step()) {
             // THE FLOOR. The ring is empty, so nothing is half-perceived; if the hand has been
             // still for the floor window, the seats compose what they still want to say. While it
             // is typing, nothing is composed at all — that is the refusal, and it costs nothing
-            // because it never runs the model.
+            // because it never runs the model. THE SAVER'S SEAT is the exception, by the human's
+            // leave: it composes with the floor closed, and the editor's per-block rule decides
+            // whether its line may land at the tail while the hand is at the tail.
             if (res.wants_pending()) {
                 const int64_t floor = floor_ms_.load(std::memory_order_relaxed);
                 const uint64_t human = human_ms_.load(std::memory_order_acquire);
                 const bool open = floor <= 0 || human == 0 ||
                                   (int64_t)(mono_ms() - human) >= floor;
-                if (open) {
+                const bool saver_open = res.saver() && res.saver_wants();
+                if (open || saver_open) {
                     WireSeam s;
                     s.w = this;
                     s.step = step;
                     s.spans = &spans;
-                    res.speak_wants(&s);
+                    js.clear();
+                    res.speak_wants(&s, &js, open ? -1 : kSaverSeat);
+                    // the saver's prompt judgment of a line that landed inside its sentence
+                    const uint64_t rev = cursor_rev_.load(std::memory_order_acquire);
+                    for (const Judgment& j : js) { ship(j, rev); remember_span((uint32_t)j.boundary, rev); }
+                    if (!js.empty()) clause_open = false;
                     ship_emissions();
                     publish();
                 }
@@ -408,6 +426,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         }
     }
     set_state(WireState::Stopping);
+    if (res.saver()) res.set_saver(false);   // no floor to hold on the way out; a renewal waiting is on the record
     // Off drains what the ring still holds — bounded, so a switch never hangs behind a long
     // fold — then the clause still open is a real final, then the state is saved if asked.
     {

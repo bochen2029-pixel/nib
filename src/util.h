@@ -11,7 +11,7 @@
 namespace nib {
 
 // One version string, so the binary cannot report a number the repository has moved past.
-inline constexpr const char* kVersion = "0.10.3";
+inline constexpr const char* kVersion = "0.10.3+saver";
 
 inline std::string ssprintf(const char* f, ...) {
     va_list ap;

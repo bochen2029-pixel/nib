@@ -1,0 +1,4 @@
+Notes for Monday.
+The staging database is postgres 16, and the migration script is written for it.
+The retry limit is three and the client backs off after the third failure.
+Lunch is at noon in the small room.

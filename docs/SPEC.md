@@ -775,6 +775,65 @@ accumulating; probing there would fork the trunk under the speaking seat and cou
 sentence inside the first. Delayed judgments are counted. This is SPEC 5.1.4's rule at the finest
 grain the program has: delay a judgment, never drop a percept.
 
+### 6.5 The screen saver — the resident holds the floor
+
+**[BUILT 2026-09-05, on the `saver` branch]** — `docs/BRAINSTORMS_2026-09-05.md` §4, by the
+operator's word. TURN-BASED speaks when asked, RESIDENT on evidence, the saver unless stopped. Same
+seat, same seed, same sampler: only the trigger differs, and the mode is a switch on the tape.
+
+6.5.1 The saver is a **switch** (`Ctrl+Shift+M`; the driver's `saver`), recorded as a `switch` row
+with `which: saver`, shown on the status line as `SAVER`. It switches the mind on if it is off. It
+is never a timer: silence is world (5.1.9) and never a clock that wakes the mind.
+
+6.5.2 The standing instruction arrives as **world**, on the host's lane — `[host] Watcher, talk to
+me about anything until I interrupt.` — a percept on the tape and never a prompt, because the
+mandates are inside the serve hash (6.2.2). The SPEAKER answers it under its own mandate; that
+first line is a real want at a real boundary, composed with the pinned cue.
+
+6.5.3 **The want renews itself.** When the saver's seat's line has joined the trunk through the
+document (5.1.6 as amended), the seat wants again at once; the margin it is asked for at that
+moment rides the row, so the record says what the seat itself thought each time the mode made it
+speak. Its clause is the newest thing the world said, never its own line: a seat that named its own
+line as the clause re-armed the manners' repeat rule and repeated itself verbatim (measured
+2026-09-05, the first null).
+
+6.5.4 **The continuation cue.** Under the pinned speak-cue the horizon is one to two sentences,
+because that cue asks for one line about what was just perceived, and a seat holding the floor has
+just perceived its own line. Renewals are composed with the saver's cue instead, which asks for one
+more sentence that adds something new. The cue is NOT in the serve hash and is not pinned; the gate
+that makes the seat speak is the pinned probe, the sampler is the pinned chain, and every `emit`
+and `abort` row it produces says `cue: saver`. `--saver-pinned-cue` measures the horizon without
+it, and `Config::saver_cue` is the same knob in the window.
+
+6.5.5 **The manners.** The refractory budget is an interruption budget and does not apply to a
+seat the human asked to keep talking; `repeat`, `repeat_other` and `resolved` do, and the saver's
+seat also remembers its last sixteen lines so a monologue cannot cycle through them. A line the
+manners refuse is composed once more (`saver_retries`) before the seat holds; every refusal is a
+row. When the seat holds, the monologue has reached its **horizon**: the number of lines said
+before the manners refused the seat, which `--resident FILE --saver` prints, and which the next
+tune is scored on.
+
+6.5.6 **Its block is the tail.** The saver's lines are appended at the end of the document, each
+its own `[SPEAKER] ` line, and the human's caret is never moved by them when it sits at the tail.
+**The per-block floor** (6.3.2, the rule the spec always meant): the saver composes while the hand
+moves — the human typing anywhere else *is* the interruption — and its line is refused (`floor`)
+only when the human's last edit within `floor_ms` touched the tail. The other seats keep the global
+floor and their placement after the clause they answer.
+
+6.5.7 **The seam, read in both directions.** A world line that lands inside the saver's sentence
+re-probes the seat; the sentence dies when the seat's judgment **changes sign** — in RESIDENT the
+flip from above zero, in the saver the flip *to* above zero, the world having just said something
+the seat itself wants to answer — or when the world settles the point. So the three verbs of the
+brainstorm are one mechanism: a re-probe that holds continues the sentence (ignore); one that
+flips kills it (pause); and the next sentence is composed off a trunk that holds the human's words
+(adapt). The delayed judgment of the line that landed (6.4.4) is made at the end of the sentence
+rather than at the next percept, so the seat's answer is not held until the human types again.
+
+6.5.8 Rule 5 holds absolutely: the saver types at the sampler's cadence and no other; its pauses are
+re-probes that came back one way and its continuations re-probes that came back the other. Rule 6
+holds in the file. Off is off: a renewal still waiting is dropped as `saver_off`, on the record, and
+the mind going off takes the saver with it.
+
 ---
 
 ## 7 · Authorship

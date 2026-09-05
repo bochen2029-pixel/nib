@@ -28,7 +28,8 @@ WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_CLOSE = 0x0102, 0x0100, 0x0101, 0x0010
 WM_NIB_CMD = 0x8000 + 1                     # WM_APP + 1, matching edit.cpp
 CMD = dict(save=1, save_as=2, open=3, undo=4, redo=5, select_all=6,
            replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12,
-           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18, wrap=19)
+           ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18, wrap=19,
+           saver=23)   # 20-22 are Stage 4's on main
 
 
 def vram_used_mib():
@@ -694,6 +695,89 @@ def main():
                 check(False, "the un-say tape did not parse: %s" % ex)
             v = subprocess.run([a.exe, "--verify", doc7 + ".tape.jsonl"], capture_output=True, text=True)
             check(v.returncode == 0 and "INTACT" in v.stdout, "and its chain verifies: %s" % v.stdout.strip())
+
+        # ---- 13 · THE SCREEN SAVER: the resident holds the floor (the saver branch) --------------
+        # docs/BRAINSTORMS_2026-09-05.md §4. The switch goes on; the standing instruction arrives as
+        # world on the host's lane; the SPEAKER answers it and keeps going, each line at the tail
+        # of the document; the hand types on the FIRST line meanwhile and every byte lands there;
+        # the resident either goes on or takes a sentence back; the switch goes off; the tape says.
+        print(LF + "the screen saver")
+        doc9, log9 = scratch("saver.txt"), scratch("nine.log")
+        ai_files = ai_files + (doc9, doc9 + ".tape.jsonl", log9, doc9 + ".trunk.bin", doc9 + ".trunk.bin.prev",
+                               doc9 + ".trunk.meta", doc9 + ".trunk.txt")
+        for stale in (doc9 + ".tape.jsonl", doc9 + ".trunk.bin", doc9 + ".trunk.bin.prev", doc9 + ".trunk.meta", doc9 + ".trunk.txt"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+        human0 = "Notes for Monday."
+        human1 = "The staging database is postgres 16, and the migration script is written for it."
+        # newline="" so Python does not translate LF to CRLF: nib preserves a file's own
+        # convention (SPEC 4.3.2), so a CRLF fixture leaves a stray CR on every line compared here
+        with open(doc9, "w", encoding="utf-8", newline="") as f:
+            f.write(human0 + LF + human1 + LF)
+        n9 = Nib(a.exe, doc9, log9)
+        nr = n9.count("resident")
+        n9.cmd("ai_on")
+        rr = n9.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), nr, timeout=150)
+        check(rr is not None and rr[1] == "ready", "a resident for the screen saver: %s" % (rr[2:4] if rr else "no resident",))
+        if rr is not None and rr[1] == "ready":
+            time.sleep(1.0)
+            ns, ne = n9.count("saver"), n9.count("emit")
+            n9.cmd("saver")
+            srow = n9.wait_for("saver", ns, timeout=10)
+            check(srow is not None and srow[1] == "1", "the switch is on and the standing instruction went in as world: %s" % (srow[2][:40] if srow and len(srow) > 2 else "no saver line",))
+            e1 = n9.wait_for_match("emit", lambda l: l[2] == "SPEAKER", ne, timeout=60, poll=0.1)
+            e2 = n9.wait_for_match("emit", lambda l: l[2] == "SPEAKER", ne + 1, timeout=60, poll=0.1) if e1 else None
+            check(e1 is not None and e2 is not None,
+                  "the resident holds the floor: two lines said unasked, one after the other: %r / %r"
+                  % (e1[5][:48] if e1 else "none", e2[5][:48] if e2 else "none"))
+            n9.save()
+            lines = read_bytes(doc9).decode("utf-8", "replace").split(LF)
+            sp = [i for i, x in enumerate(lines) if x.startswith("[SPEAKER] ")]
+            nonblank = [i for i, x in enumerate(lines) if x.strip()]
+            tail_ok = bool(sp) and lines[nonblank[-1]].startswith("[SPEAKER] ") and lines[0] == human0 and human1 in lines and min(sp) > lines.index(human1)
+            check(tail_ok, "its lines are the tail of the document, below the human's, which are untouched (%d SPEAKER lines)" % len(sp))
+            # the interruption: the hand types on the first line while the monologue runs
+            na, nq = n9.count("abort"), n9.count("emit")
+            n9.cmd("top")
+            n9.cmd("end")
+            interject = " We also moved the standup to nine."
+            n9.type_paced(interject, 0.02)
+            e3 = n9.wait_for_match("emit", lambda l: l[2] == "SPEAKER", nq, timeout=60, poll=0.1)
+            n9.save()
+            lines2 = read_bytes(doc9).decode("utf-8", "replace").split(LF)
+            check(lines2[0] == human0 + interject, "every byte typed while the resident held the floor landed on the human's own line: %r" % lines2[0][:64])
+            check(not any(x.startswith("[SPEAKER] ") for x in lines2[:2]), "and none of the resident's lines was written into the human's block")
+            aborts = n9.count("abort") - na
+            check(e3 is not None or aborts > 0,
+                  "the resident answered the interruption by going on or by taking a sentence back: %d more lines, %d aborts"
+                  % (n9.count("emit") - nq, aborts))
+            ns = n9.count("saver")
+            n9.cmd("saver")
+            srow2 = n9.wait_for("saver", ns, timeout=10)
+            n_off = n9.count("emit")
+            time.sleep(5.0)
+            check(srow2 is not None and srow2[1] == "0" and n9.count("emit") - n_off <= 1,
+                  "off is off: the switch is on the log, and at most one line already in flight followed it (%d)" % (n9.count("emit") - n_off))
+        nr = n9.count("resident")
+        n9.cmd("ai_off")
+        n9.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=40)
+        n9.save()
+        n9.close()
+        try:
+            with open(doc9 + ".tape.jsonl", encoding="utf-8") as f:
+                srows = [json.loads(l) for l in f if l.strip()]
+            sw = [r.get("body", {}) for r in srows[1:] if r.get("kind") == "switch" and r.get("body", {}).get("which") == "saver"]
+            host = [r for r in srows[1:] if r.get("kind") == "percept" and r.get("body", {}).get("lane") == "host"]
+            saver_emits = [r for r in srows[1:] if r.get("kind") == "emit" and r.get("body", {}).get("saver") is True]
+            check(len(sw) >= 2 and sw[0].get("to") == "on" and sw[-1].get("to") == "off" and len(host) == 1 and len(saver_emits) >= 2,
+                  "the tape carries the saver's switch rows, the host's one line, and the lines said under the saver: %d switch, %d host, %d emit"
+                  % (len(sw), len(host), len(saver_emits)))
+        except Exception as ex:
+            check(False, "the saver's tape did not parse: %s" % ex)
+        v = subprocess.run([a.exe, "--verify", doc9 + ".tape.jsonl"], capture_output=True, text=True)
+        check(v.returncode == 0 and "INTACT" in v.stdout, "and its chain verifies: %s" % v.stdout.strip())
 
         kinds = collections.Counter(r.get("kind") for r in rows[1:])
         wanted = ("session_open", "changeset", "percept", "switch", "fold", "session", "mandate", "coefficient", "judgment", "end", "ckpt", "emit", "save", "session_close")

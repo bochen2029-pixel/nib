@@ -63,6 +63,10 @@ struct Emission {
     uint64_t gen_ms = 0;
     int      toks = 0;
     char     stop = 'c';        // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
+    // 'p' the pinned speak-cue · 's' the saver's continuation cue (kSaverCue), which is NOT inside
+    // the serve hash: the gate that made the seat speak is the pinned one, the phrasing is the
+    // saver's, and every row says which.
+    char     cue = 'p';
 };
 
 // A sentence that was begun and taken back. Stage 3: the demonstration the project is for.
@@ -80,6 +84,7 @@ struct Abort {
     uint64_t gen_ms = 0;
     int      toks = 0;
     int      probes = 0;         // re-probes taken inside the sentence
+    char     cue = 'p';          // which cue composed the sentence that died (Emission::cue)
 };
 
 // The seam, seen from inside a generation. The resident owns the mouth; the caller owns the ring
@@ -93,6 +98,17 @@ struct Seam {
     // caller can anchor the forming words to the same span the finished block will land on.
     virtual void forming(int seat, uint64_t boundary, const std::string& text, bool active) = 0;
 };
+
+// THE SCREEN SAVER (docs/BRAINSTORMS_2026-09-05.md §4): the resident holds the floor. Its standing
+// instruction arrives as WORLD, on the host's own lane — never as a prompt, because the mandates
+// are inside the serve hash and a prompt would move the pin — and it is the SPEAKER's mandate
+// ("you respond when directly addressed") that answers it. After that the want renews itself at
+// every line the seat says: the trigger is the mode, not the margin, and the margin the seat is
+// asked for each time rides the record. TURN-BASED speaks when asked, RESIDENT on evidence, the
+// saver unless stopped; same seat, same seed, same sampler across all three.
+inline constexpr const char* kSaverLane = "host";
+inline constexpr const char* kSaverAddress = "Watcher, talk to me about anything until I interrupt.";
+inline constexpr int kSaverSeat = 0;   // SPEAKER
 
 // A line a seat composed and the manners refused to say twice. Counted and recorded, never
 // dropped: a suppression is a fact about the mind, and say-it-once is a tune's problem, not a
@@ -172,6 +188,22 @@ public:
         int64_t want_ttl_ms = 30000;    // a want the floor never opened for goes stale: the moment passed
         int   dup_overlap = 3;          // content words shared with the seat's own last line
         int   cross_overlap = 4;        // ... with another seat's, which is a higher bar
+        // The saver: a line the manners refuse is composed once more before the seat holds —
+        // rejection sampling under the ladder, every refusal on the record — because the human
+        // asked for a monologue, and a seat that stops at its first repeat has a horizon of one.
+        int   saver_retries = 1;
+        // The saver's continuation cue for renewals (kSaverCue): the pinned cue asks for one line
+        // about what was just perceived, and once the seat has commented, what it just perceived
+        // is its own comment — measured 2026-09-05, the horizon under the pinned cue is one to two
+        // sentences on every pad. False measures that horizon; true is the screen saver.
+        bool  saver_cue = true;
+        // The paraphrase valve for the saver's seat. `dup_overlap` (3) was measured for a catch
+        // restated in a watch-room; a monologue about one document shares the document's nouns
+        // in every sentence, and at 3 the valve refused "postgres 16 is fast, but the migration
+        // script assumes a schema that might not exist yet" as a repeat of "the staging database
+        // is postgres 16, and the migration script is written for it" (2026-09-05). The six-in-ten
+        // test still catches a line said twice; this is the bar for saying the same THING.
+        int   saver_dup_overlap = 5;
     };
     static constexpr int kMinCtx = 2048;   // below this the window is smaller than the seed's margin
 
@@ -198,7 +230,20 @@ public:
     void manners_import(const std::string& lines);
     // The ladder as a pure check: "" if the line may be said, else the reason (resolved · repeat ·
     // repeat_other · refractory), with `by` the other seat for repeat_other. Records nothing.
-    const char* manners_allows(int seat, const std::string& say, const std::string& about, std::string& by) const;
+    // `interrupting` false is the saver's seat: the refractory budget is an interruption budget,
+    // and a seat the human asked to keep talking interrupts nobody.
+    const char* manners_allows(int seat, const std::string& say, const std::string& about, std::string& by,
+                               bool interrupting = true) const;
+
+    // THE SCREEN SAVER. On: the saver seat's want renews itself at every line it says (own_line),
+    // and the seam kills a sentence when the seat's judgment changes SIGN in either direction (a
+    // seat made to speak at a negative margin stops when the world makes it want to). Off drops a
+    // renewal still waiting, on the record. Pure to switch; the mouth is what speaks.
+    void set_saver(bool on);
+    bool saver() const { return saver_; }
+    bool saver_wants() const { return want_[kSaverSeat].live; }
+    uint64_t saver_lines() const { return saver_lines_; }
+    uint64_t saver_retried() const { return saver_retried_; }
 
     // Ingest one percept and judge if a thought closed. This is the free tail of the ingest pass
     // (SPEC 6.2.3): the model is never polled, it is decoded into and read at the frontier.
@@ -227,7 +272,10 @@ public:
     // what each seat WANTS and composes nothing; the caller, which is the only party that knows
     // whether the hand has paused, calls this when the floor is open. Pausing is how a person
     // yields the floor, and this is the line that makes that true.
-    void speak_wants(Seam* seam = nullptr);
+    // `late`, when given, receives the judgment the saver makes at the end of a sentence for a
+    // world line that landed inside it (6.4.4 delays it; the saver judges it as the sentence
+    // ends). `only_seat` composes one seat's want and leaves the others waiting for the floor.
+    void speak_wants(Seam* seam = nullptr, std::vector<Judgment>* late = nullptr, int only_seat = -1);
     bool wants_pending() const;
 
     // What was said, and what the manners would not say twice, since the last call. Drained by the
@@ -276,10 +324,12 @@ private:
     // world took it back mid-word, in which case an Abort was recorded. `boundary` is the want's:
     // the boundary whose clause the sentence is about, which every row of the record carries so
     // that the span an emission depends on is the span it was judged at, not the newest one.
-    bool speak(int seat, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam);
+    bool speak(int seat, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam,
+               std::vector<Judgment>* late, bool saver_cue);
     float probe_one(int seat);   // one seat, one fork of the trunk as it stands NOW
     // The manners ladder. True when the line may be said; otherwise it is recorded as suppressed.
-    bool allowed_to_say(int seat, uint64_t boundary, float margin, const std::string& say, const std::string& about);
+    bool allowed_to_say(int seat, uint64_t boundary, float margin, const std::string& say, const std::string& about,
+                        bool interrupting = true);
     void flush_own_speech();   // the seats' lines onto the trunk, once the world's line has closed
     bool ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out);
     bool room_for(size_t ntok);
@@ -317,6 +367,8 @@ private:
     std::vector<Abort> aborts_;
     uint64_t emitted_ = 0, suppressed_ = 0, gen_ms_ = 0, aborted_ = 0, deferred_ = 0, seam_probes_ = 0;
     uint64_t own_lines_ = 0;
+    bool saver_ = false;
+    uint64_t saver_lines_ = 0, saver_retried_ = 0;
     int gen_depth_ = 0;              // inside a generation: judgment is delayed, ingest never is
     std::string last_world_line_;    // the newest thing the world said, for the acceptance test
     // What the thread still commits to the trunk on its own: the aired prefix of an abort, which
@@ -334,7 +386,11 @@ private:
         float margin = 0.0f;
         uint64_t boundary = 0, at_ms = 0;
         std::string clause;
+        bool renewal = false;   // the saver's self-renewing want, composed with the saver's cue
     } want_[3];
+    // the saver's seat remembers its recent lines, so a monologue cannot cycle through them either
+    std::vector<std::string> saver_history_;
+    static constexpr size_t kSaverHistory = 16;
     // the manners' memory, per seat
     std::string last_say_[3], last_clause_[3];
     uint64_t last_say_i_[3]{}, last_say_ms_[3]{};
