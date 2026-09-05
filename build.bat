@@ -23,8 +23,8 @@ rem never touches a llama symbol (CLAUDE.md: a battery that needs a 9B stops bei
 set LLAMA=C:\auricle\third_party\llama.cpp
 if not exist "%LLAMA%\lib\llama.lib" ( echo build: FAIL - llama import libs not found at %LLAMA%\lib & exit /b 1 )
 set CXXFLAGS=/nologo /c /std:c++20 /O2 /W4 /WX /permissive- /EHsc /utf-8 /MT /Zc:__cplusplus /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Isrc /I"%AURICLE%" /I"%LLAMA%\include"
-cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\doc.cpp src\edit.cpp src\ingest.cpp src\resident.cpp src\tape.cpp src\wire.cpp src\selftest.cpp || exit /b 1
-link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj doc.obj edit.obj ingest.obj resident.obj tape.obj wire.obj selftest.obj ^
+cl %CXXFLAGS% src\nib.cpp src\changeset.cpp src\doc.cpp src\edit.cpp src\ingest.cpp src\resident.cpp src\tape.cpp src\wire.cpp src\twin.cpp src\selftest.cpp || exit /b 1
+link /nologo /SUBSYSTEM:CONSOLE /OUT:nib.exe nib.obj changeset.obj doc.obj edit.obj ingest.obj resident.obj tape.obj wire.obj twin.obj selftest.obj ^
   "%LLAMA%\lib\llama.lib" "%LLAMA%\lib\ggml.lib" "%LLAMA%\lib\ggml-base.lib" ^
   kernel32.lib user32.lib gdi32.lib comdlg32.lib bcrypt.lib delayimp.lib ^
   /DELAYLOAD:llama.dll /DELAYLOAD:ggml.dll /DELAYLOAD:ggml-base.dll || exit /b 1

@@ -9,6 +9,7 @@
 #include "ingest.h"
 #include "resident.h"
 #include "tape.h"
+#include "twin.h"
 #include "util.h"
 #include "wire.h"
 
@@ -1514,6 +1515,82 @@ int run_selftest() {
         r2.manners_import("m1.say\tOld news.\nm1.clause\tx\nm1.age_ms\t1000\nm1.since_i\t99\nm1.resolved\t0\nm1.open\t1\n");
         check(std::string(r2.manners_allows(1, "Old news.", "y", by)).empty(),
               "a line said more boundaries ago than the window holds may be said again");
+    }
+
+    section("the replay twin - the rows onto one clock, and the wake policies");
+    {
+        // The pure half of nib --twin: a tape with two sessions is read onto one clock that never
+        // runs backwards, the world and the resident's own rows are told apart, and the three wake
+        // policies land where they should. None of it needs a model.
+        const std::string path = scratch_path("twin.jsonl");
+        DeleteFileA(path.c_str());
+        Tape t;
+        std::string e;
+        t.open(path, "nib:twin-test", {}, e);
+        t.append("session_open", 0, canon::obj({ { "doc", canon::str("x") }, { "lane", canon::str("bo") }, { "epoch_ms", "1000000" } }));
+        t.append("session", 5, canon::obj({ { "model", canon::str("C:/models/test.gguf") }, { "arm", canon::str("resident") } }));
+        // rows in time order, as a session writes them; a synthetic tape out of order would only
+        // exercise the never-backwards rule
+        t.append("changeset", 900, canon::obj({ { "rev", "1" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str("Z:0>1+1$H") } }));
+        t.append("percept", 1000, canon::obj({ { "id", "1" }, { "lane", canon::str("bo") }, { "kind", canon::str("w") }, { "rev", "1" }, { "text", canon::str("Hello. ") } }));
+        t.append("percept", 1500, canon::obj({ { "id", "2" }, { "lane", canon::str("bo") }, { "kind", canon::str("w") }, { "rev", "1" }, { "text", canon::str("Still typing. ") } }));
+        t.append("judgment", 1520, canon::obj({ { "i", "1" }, { "clause", canon::str("Still typing.") },
+                                                { "margins", canon::obj({ { "SPEAKER", canon::flt(-6.0) }, { "SKEPTIC", canon::flt(4.5) }, { "SENTINEL", canon::flt(-5.0) } }) } }));
+        // the hand keeps moving after the percept flushed: the floor is a keystroke clock, and so is the wake
+        t.append("changeset", 2900, canon::obj({ { "rev", "2" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str("Z:1>1=1+1$i") } }));
+        t.append("emit", 3600, canon::obj({ { "i", "1" }, { "seat", canon::str("SKEPTIC") }, { "m", canon::flt(4.5) }, { "say", canon::str("A line.") }, { "trigger", canon::str("p") } }));
+        t.append("changeset", 3650, canon::obj({ { "rev", "3" }, { "author", canon::str("SKEPTIC") }, { "kind", canon::str("a") }, { "cs", canon::str("Z:2>1=2+1$x") } }));   // a seat's block is not the hand
+        t.append("percept", 3700, canon::obj({ { "id", "3" }, { "lane", canon::str("SKEPTIC") }, { "kind", canon::str("s") }, { "rev", "3" }, { "text", canon::str("A line.") } }));
+        t.append("ask", 5000, canon::obj({ { "mode", canon::str("turn") }, { "wants", "1" } }));
+        t.append("changeset", 5990, canon::obj({ { "rev", "4" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str("Z:3>1=3+1$B") } }));
+        t.append("tick", 6000, canon::obj({ { "id", "4" }, { "text", canon::str("[tick +45s]") } }));
+        t.append("percept", 6000, canon::obj({ { "id", "5" }, { "lane", canon::str("bo") }, { "kind", canon::str("w") }, { "rev", "4" }, { "text", canon::str("Back. ") } }));
+        t.append("percept", 6050, canon::obj({ { "id", "6" }, { "lane", canon::str("bo") }, { "kind", canon::str("w") }, { "rev", "4" }, { "folded", "true" }, { "text", canon::str("Back. ") } }));   // a fold's duplicate
+        t.append("session_close", 6100, canon::obj({}));
+        // a second session: its own clock restarts at 0, and its epoch says the hand was away
+        // 93.9 s (1,100,000 − (1,000,000 + 6,100)) — the gap a wake policy should see
+        t.append("session_open", 0, canon::obj({ { "doc", canon::str("x") }, { "lane", canon::str("bo") }, { "epoch_ms", "1100000" } }));
+        t.append("changeset", 490, canon::obj({ { "rev", "5" }, { "author", canon::str("bo") }, { "kind", canon::str("e") }, { "cs", canon::str("Z:4>1=4+1$N") } }));
+        t.append("percept", 500, canon::obj({ { "id", "1" }, { "lane", canon::str("bo") }, { "kind", canon::str("w") }, { "rev", "5" }, { "text", canon::str("Next day. ") } }));
+        t.close();
+        std::vector<TapeRow> rows;
+        Tape::read_rows(path, rows, e);
+        std::vector<TwinEv> ev;
+        std::string model, lane;
+        twin_collect(rows, ev, model, lane);
+        size_t human = 0, own = 0, ticks = 0, judg = 0, emits = 0, asks = 0, keys = 0, ons = 0;
+        for (const TwinEv& x : ev) {
+            if (x.kind == "w" || x.kind == "d") ++human;
+            else if (x.kind == "s") ++own;
+            else if (x.kind == "t") ++ticks;
+            else if (x.kind == "judgment") ++judg;
+            else if (x.kind == "emit") ++emits;
+            else if (x.kind == "ask") ++asks;
+            else if (x.kind == "k") ++keys;
+            else if (x.kind == "on") ++ons;
+        }
+        check(model == "C:/models/test.gguf" && lane == "bo", "the session rows name the model and the hand's lane: " + model + ", " + lane);
+        check(human == 4 && own == 1 && ticks == 1 && judg == 1 && emits == 1 && asks == 1 && keys == 4 && ons == 1,
+              ssprintf("the rows are told apart: %zu human (a fold's duplicate skipped), %zu own, %zu tick, %zu judgment, %zu emit, %zu ask, %zu keystrokes (a seat's block is not one), %zu resident", human, own, ticks, judg, emits, asks, keys, ons));
+        bool monotone = true;
+        for (size_t i = 1; i < ev.size(); ++i) if (ev[i].t < ev[i - 1].t) monotone = false;
+        // the first session starts at +1 (the chain's rule), its rows at their own `at` plus one;
+        // the second session's first percept sits 93.9 s after the first session's last row
+        check(monotone && ev.back().t == 6101 + 93900 + 500 && ev.back().text == "Next day. ",
+              ssprintf("the clock never runs backwards, and the gap between sessions is the wall clock's: the second session's first percept is at +%llu (want 100501)", (unsigned long long)ev.back().t));
+        const TwinEv* j = nullptr;
+        for (const TwinEv& x : ev) if (x.kind == "judgment") j = &x;
+        check(j && j->m[1] > 4.4f && j->m[1] < 4.6f && j->m[0] < -5.9f, "a judgment row's margins come through in seat order");
+        // the wakes read the keystrokes (901, 2901, 5991, 100491): the hand kept moving until 2901
+        // after the percept at 1501, so the first wake is 4901 and not 3501
+        const auto wp = twin_wakes_by_pause(ev, 2000);
+        check(wp.size() == 3 && wp[0] == 4901 && wp[1] == 7991 && wp[2] == ev.back().t + 2000 - 10,
+              ssprintf("pause:2 wakes 2 s after the last keystroke of each burst, the session gap included: %zu wakes at +%llu, +%llu, +%llu", wp.size(),
+                       (unsigned long long)(wp.size() > 0 ? wp[0] : 0), (unsigned long long)(wp.size() > 1 ? wp[1] : 0), (unsigned long long)(wp.size() > 2 ? wp[2] : 0)));
+        const auto wa = twin_wakes_by_ask(ev);
+        check(wa.size() == 1 && wa[0] == 5001, ssprintf("ask wakes where the hand asked: %zu at +%llu", wa.size(), (unsigned long long)(wa.empty() ? 0 : wa[0])));
+        const auto we = twin_wakes_every(ev, 2500);
+        check(we.size() >= 3 && we[0] == 3401 && we[1] == 5901, ssprintf("every:2.5 is a schedule from the first keystroke: %zu wakes, the first at +%llu", we.size(), (unsigned long long)(we.empty() ? 0 : we[0])));
     }
 
     section("refusals");

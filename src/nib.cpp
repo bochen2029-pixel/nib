@@ -6,6 +6,7 @@
 #include "ingest.h"
 #include "resident.h"
 #include "tape.h"
+#include "twin.h"
 #include "util.h"
 
 #include <windows.h>
@@ -41,6 +42,11 @@ const char* kUsage =
     "        --model P --ctx N --gpu-layers N --all --verbose --allow-cpu   (needs the GPU)\n"
     "        --script   FILE is a script: a line is typed; '- text' is removed; '# N' is N s of quiet\n"
     "        --emit     LET IT SPEAK: every seat whose margin clears zero composes one sentence\n"
+    "  nib --twin TAPE.jsonl [opts]      the replay twin: re-drive a tape's world through a turn-based\n"
+    "        policy on the same weights, and pair it with what the resident did (Stage 4b)\n"
+    "        --wake pause:S | ask | every:S   when the twin is asked (default pause:2, the floor)\n"
+    "        --exact    prefill word by word, in the resident's own batches   --no-emit   judge only\n"
+    "        --out F    the record (default TAPE.twin.jsonl)   --model P --ctx N --gpu-layers N --quiet\n"
     "\n"
     "Without --emit the resident computes hold/emit and records it, and no sampler exists in the\n"
     "process. In the window, Ctrl+Shift+A switches it on and off; off unloads the model.\n";
@@ -350,6 +356,7 @@ int main(int argc, char** argv) {
     if (a == "--about") return do_about(argc, argv);
     if (a == "--ingest") return do_ingest(argc, argv);
     if (a == "--resident") return do_resident(argc, argv);
+    if (a == "--twin") return do_twin(argc, argv);
     if (a == "--unpack" && argc > 2) return do_unpack(argv[2]);
     if (a == "--ops" && argc > 2) return do_ops(argv[2]);
     if (a == "--check" && argc > 2) return do_check(argv[2]);

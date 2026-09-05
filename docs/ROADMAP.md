@@ -28,14 +28,14 @@ four; Stage 1c went green in the small hours of 2026-09-05.*
 | **I** | 3 · un-saying, made visible | ✔ 2026-09-05 | 0.10.0 |
 | **I** | the read of 0.10.0 — the span memory, own speech through the document, the manners across the switch | ✔ 2026-09-05 | 0.10.1–0.10.3 |
 | **I** | 4a · the two switches, and the key | ✔ 2026-09-05 | 0.11.0 |
-| **I** | 4b · the replay twin, `nib --twin` | ○ | |
+| **I** | 4b · the replay twin, `nib --twin` | ✔ 2026-09-05 | 0.11.1 |
 | **I** | 5 · **a week of real work** — the falsifier for the whole idea | ○ | |
 | **II** | 6 · discovery | ○ | |
 | **II** | 7 · rooms | ○ | |
 | **II** | 8 · convergence | ○ | |
 | **III** | 9 · three seats | ○ | |
 
-**236 checks green in the exe, 30 more from the window driver, and 76 with the resident switched on
+**243 checks green in the exe, 30 more from the window driver, and 76 with the resident switched on
 inside the window** (2026-09-05, three identical driver runs). The exe links kernel32, user32,
 gdi32, comdlg32 and bcrypt (the model's SHA-256) — no network DLL, enforced at build — plus
 llama.cpp and ggml, all three **delay-loaded**, which the build asserts rather than assumes. Nothing touches a llama symbol until `--resident` asks for one, so `--selftest`,
@@ -549,16 +549,35 @@ estate's one number that matters next is a resident against a maximally-good tur
 identical weights, and every flip of that toggle during real work is a paired sample with exactly
 one variable — observational, not matched-input, and printed as such.
 
-### ○ Stage 4b — the replay twin
+### ✔ Stage 4b — the replay twin · 0.11.1
 
 `nib --twin TAPE` (SPEC 6.1.6): the matched-input half. A fresh context per wake, the seed and the
 human's percepts so far prefilled in the serve format, one judgment per wake through the pinned
 probe, the same cue, sampler, cap and manners; then, wake by wake, what the twin did beside what
 the resident did at the boundaries inside that turn, the gap, the percepts the twin was blind to
-while it composed, and the scaffold table (D1's parity clause, printable).
+while it composed, and the scaffold table (D1's parity clause, printable). The wakes read the
+hand's keystrokes; a chained record goes beside the tape.
 
 *Falsifier: a twin that inherits fewer scaffolds than the resident; a gap printed without the blind
-count and the observational caveat beside it.*
+count and the observational caveat beside it.* — Did not fire: the scaffold table prints with every
+run and names what the twin lacks (the seam, coarsening, decode-on-delta), the blind count and the
+caveat print beside every gap.
+
+**The first twin race on this box, 2026-09-05, on the driver's own tapes.** On the main case's tape
+(459 keystrokes, 8 human percepts, 4 wakes): both arms spoke at the same two seat-turns and held at
+the other five, and the twin's line landed **0.1–0.9 s before** the resident's across two runs,
+because a twin asked exactly at the pause skips the editor's poll and the second gate. On the un-say tape (2 wakes): the
+twin composed the correction while **blind to the concession** that landed as it wrote, then said it
+**again** at the next wake, after "Sorry, postgres 16."; the resident took its line back mid-word and
+said nothing that stood — *twin only 2, resident only 0, resident took back 1, blind 1.* With
+`--exact` the twin's margin at the claim reads +5.1 against +5.5 batched and the resident's own
++5.06: the kernel's batch drift, measured. Prefill cost 1.5 k tokens in 0.9 s across four wakes.
+
+Two things the race found that are not the twin's. The second redundant line passed the manners
+because the acceptance detector does not know "Sorry, X" and the re-arm rule read the concession
+(two shared content words) as the topic returning — the `settled_by_world` gap, now measured, in
+`docs/BACKLOG.md`. And the observational caveat is real: the human's "Sorry" was a reply to the
+resident's aired prefix, which the twin never wrote.
 
 ### ○ Stage 5 — a week of real work
 

@@ -1047,3 +1047,53 @@
   policies, the per-wake reseed-and-prefill, the pairing, the blind count, the scaffold table, a
   chained record beside the tape); the resident needs `reseed`, `world_line` and `judge_wake`, the
   CLI its dispatch, build.bat the file, and --selftest the pure parts.
+
+## 2026-09-05 (night) · 0.11.1 - Stage 4b: the replay twin, and the first twin race on this box
+
+- `nib --twin TAPE` (SPEC 6.1.6). The tape's rows onto one clock (sessions chained on the wall
+  clock's gap where the session_open rows carry an epoch); three wake policies; per wake a fresh
+  trunk (`Resident::reseed`), the seed and the human's percepts so far prefilled in the serve
+  format (`world_line`), one judgment through the pinned probe (`judge_wake`, reason `w`), then
+  the same speak_wants, the same manners, the twin hearing its own line through own_line; the
+  pairing against the resident's rows in the same turn; the blind count; the scaffold table; a
+  chained record beside the tape. Seven checks on the pure parts with no model.
+- THE INSTRUMENT'S OWN LESSONS, four, each from a wrong first reading of a real tape. (1) The
+  wake policy read the percepts, which arrive per sentence, so a hand still typing the next
+  sentence read as two seconds of silence and the twin woke sixteen times where the hand paused
+  four; the tape has every keystroke as a changeset row and the floor is a keystroke clock, so the
+  wakes read those now. (2) Folded percepts of later lives replayed the same document three
+  times; a folded percept that duplicates a live one of an earlier life is skipped, and the world
+  is every human edit once. (3) Wakes before the resident's first session row were paired against
+  a resident that did not yet exist; they say so now. (4) A resident's line lands half a second
+  after its floor opens - the composition, the editor's poll, the second gate - so a turn shared
+  by both arms read as two solo ones until the window ran 1.5 s past the wake. And the synthetic
+  tape in the selftest was twice out of time order, which the never-backwards rule dutifully
+  re-based; a tape is written in time order and the test now is too.
+- THE FIRST TWIN RACE ON THIS BOX, on the driver's own tapes, 2026-09-05. Main case (459
+  keystrokes, 8 human percepts once each, 22 resident judgments, 4 wakes): both arms spoke at the
+  same two seat-turns (the SKEPTIC's Pacific line, the SENTINEL's users-table line) and held at the
+  other five; the twin's lines landed 0.5 and 0.9 s BEFORE the resident's on one tape and 0.1 and
+  0.2 s on the next, because a twin asked exactly at the pause skips the editor's poll and the
+  second gate; blind 0; 1.5 k tokens prefilled in 0.9 s. Un-say tape (82 keystrokes, 4 percepts, 2 wakes): the twin composed "That contradicts
+  what we established - it's postgres 16, not mysql 5." at +5.5 while BLIND to "Sorry, postgres 16."
+  landing as it wrote, and at the next wake, after the concession, said it AGAIN at +2.4; the
+  resident took its line back mid-word (+5.06 -> -1.77) and said nothing that stood. Twin only 2,
+  resident only 0, resident took back 1, blind 1. That is the thesis's number in miniature, and it
+  is on a record two verifiers read.
+- THE KERNEL'S DRIFT, measured. `--exact` prefills word by word in the resident's own batches: the
+  twin's margin at the claim reads +5.1 exact against +5.5 batched, and the resident's own at the
+  same clause was +5.06. The batched twin sits about 0.4 logits above the decode-on-delta path on
+  this line - the drift SPEC 6.2.12 named (mean 0.16, max 0.84) - and the exact twin is within
+  0.05 of the resident. Prefill costs four times more that way (1354 ms against 345 for 685
+  tokens); the default stays batched with the drift printed as a caveat, and --exact is the
+  measurement to take before a margin is compared across the arms.
+- TWO THINGS THE RACE FOUND THAT ARE NOT THE TWIN'S. The second redundant line passed the manners:
+  "Sorry, postgres 16." is not an acceptance the detector knows, and the re-arm rule read its two
+  shared content words as the topic returning - a concession that restates the seat's point is the
+  opposite of that. The settled_by_world gap, measured; filed. And the observational caveat is
+  real in the smallest case: the human's "Sorry" was a reply to the resident's aired prefix, which
+  the twin never wrote.
+- Green: --selftest 243/0; drive.py 30/0, three runs; drive.py --ai 76/0 (the window's path is
+  untouched by this commit; run for the record); the twin on both tapes, and --exact on one.
+- STAGE 4 IS COMPLETE. NEXT, by the operator's ruling that the LAN lands before the week: Act II,
+  Stage 6, discovery - the end of the build-phase network gate and the start of SPEC 9.2's.

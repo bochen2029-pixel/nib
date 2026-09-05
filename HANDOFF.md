@@ -38,15 +38,15 @@ rescues that, and the finding gets published beside the laws it bought.
 
 | | |
 |---|---|
-| version | **0.11.0** — Stage 4a, the two switches and the key; the read of 0.10.0's remediation landed as 0.10.1–0.10.3 (`docs/BACKLOG.md`, first section); branch `main` |
+| version | **0.11.1** — Stage 4 complete (4a the two switches and the key, 4b the replay twin); the read of 0.10.0's remediation landed as 0.10.1–0.10.3 (`docs/BACKLOG.md`); branch `main` |
 | public | **https://github.com/bochen2029-pixel/nib** — MIT, pushed 2026-09-05, 22 commits through this handoff |
-| stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3, 4a — **all green, every falsifier fired at** |
-| next | **Stage 4b** — the replay twin, `nib --twin` (SPEC 6.1.6); then Stage 5, the week |
-| oracles | `--selftest` **236** · `tools/drive.py` **30** · `tools/drive.py --ai` **76** |
+| stages | 0a, 0b, 0c, 0d, 0e, 1a, 1b, 1c, 1d, 2, 3, 4a, 4b — **all green, every falsifier fired at** |
+| next | **Act II, Stage 6 — discovery**, by the operator's ruling that the LAN lands before the week (ROADMAP); then 7, then **Stage 5, the week** |
+| oracles | `--selftest` **243** · `tools/drive.py` **30** · `tools/drive.py --ai` **76** · `nib --twin` on the driver's tapes |
 
 ```bash
 build.bat                          # /W4 /WX, zero warnings, two gates
-nib.exe --selftest                 # 236 passed, 0 failed        (no model, no GPU)
+nib.exe --selftest                 # 243 passed, 0 failed        (no model, no GPU)
 python tools/drive.py              # 30 passed, 0 failed         (no model, no GPU)
 python tools/drive.py --ai         # 76 passed, 0 failed         (needs the card, ~1 min when it is free)
 nib.exe --about                    # the serve pin, the backends by name, the module gate
@@ -154,7 +154,8 @@ model and no card.
 | `src/wire.h/.cpp` | The resident on its own thread inside the window. Two rings out (judgments, emissions), a forming *state*, the floor gate, the checkpoint, `fold_log` and `fold_tape`. |
 | `src/tape.h/.cpp` | The family's append-only hash-chained record: BLAKE2b-256, canonical JSON, six keys a row. Ported from fray, which is glance's, which is REGISTRAR's. Torn-row recovery. Also SHA-256 (the model's hash) and the atomic file helpers. |
 | `src/edit.cpp` | The Win32/GDI window. Every edit goes through `Doc::splice`. Per-monitor DPI, word wrap, the gutter, two status rows, the forming plane, the floor's second gate, block placement, the driver seam. |
-| `src/selftest.cpp` | The oracle: 236 checks, none of which need a model. |
+| `src/twin.h/.cpp` | **The replay twin** (Stage 4b): the tape's rows onto one clock, the wake policies on the hand's keystrokes, a fresh context per wake, one judgment per wake, the pairing, the blind count, the scaffold table, a chained record. |
+| `src/selftest.cpp` | The oracle: 243 checks, none of which need a model. |
 | `src/nib.cpp` | The console verbs. |
 | `tools/drive.py` | The window battery: posts messages, reads artefacts, never synthesises input and never looks at the screen. |
 | `tools/snap.py` | Gitignored snapshots with an MD5 manifest (§10). |
@@ -271,18 +272,30 @@ absent from the other.* — Cannot fire by construction; the driver fires at the
 in TURN-BASED a 3.5 s pause composes nothing while judgments keep running, and the key composes
 the live want with `trigger: k`.
 
-### Next: Stage 4b — the replay twin
+### Stage 4b — the replay twin · 0.11.1
 
 `nib --twin TAPE` (SPEC 6.1.6): a fresh context per wake, the seed and the human's percepts so far
 prefilled in the serve format, one judgment per wake through the pinned probe, the same cue,
 sampler, cap and manners, and a wake-by-wake pairing against the resident's rows on the same tape —
-the gap between them, the percepts the twin was blind to while it composed, and the scaffold table
-(D1's parity clause, printable). `src/twin.h/.cpp` is written; the resident needs `reseed`,
-`world_line` and `judge_wake`, the CLI its dispatch, `build.bat` the file, and `--selftest` the pure
-parts (the rows onto one clock, the wake policy). **This is the estate's decisive number**, run for
-the first time on a real tape of writing, and it carries an honest limitation to print with every
-table: nib's pairs are **observational, not matched-input** — the human wrote what they wrote beside
-the resident's lines, and the twin's lines were not on the page.
+the gap, the percepts the twin was blind to while it composed, and the scaffold table (D1's parity
+clause, printable). The wakes read the hand's keystrokes; `--wake pause:S | ask | every:S`;
+`--exact` prefills word by word to measure the kernel's batch drift. **The first twin race on this
+box is in the ROADMAP**: on the driver's tapes the arms agreed on every seat-turn of the main case
+with the twin 0.1–0.9 s earlier, and on the un-say tape the twin said the correction blind to the
+concession and then again after it, where the resident took its line back and said nothing that
+stood. The caveat printed with every table: observational, not matched-input in the strict sense.
+
+### Next: Act II, Stage 6 — discovery, then Stage 7, then the week
+
+By the operator's ruling the shipped product autodiscovers on the LAN by default, and Stages 6 and 7
+land before Stage 5 so that the week runs on the build that ships. Stage 6 ends the build-phase
+network gate and replaces it with SPEC 9.2: no HTTP client, no DNS resolver, a socket layer that
+refuses any destination outside the machine's own subnet by construction, the runtime module gate
+kept for `wininet`, `winhttp`, `urlmon` and `dnsapi`, and an egress counter that reads what was
+actually sent. IPv4 only, a UDP beacon, a peer table with a TTL, no configuration. *Falsifier: two
+machines on the same subnet that do not find each other within five seconds; or a beacon that
+reaches anything off the local segment.* Read ASSEMBLY §3 (the host serialises) and the Etherpad
+deep read's §2.8 (the protocol) first.
 
 Then **Stage 5, the week of real work** — the falsifier for the whole idea. Then Act II: discovery
 (on by default in the shipped product, by operator ruling), rooms, convergence.
@@ -368,12 +381,12 @@ Full list in `docs/BACKLOG.md`. The ones that matter:
 
 ## 12 · Resume here
 
-**If you are continuing the work:** Stage 4b, per §8 — `src/twin.cpp` exists and needs the three
-resident primitives named there. Read the review's §5.5 for the shadow twin and `--twin`, and the
-devlog under "the read of 0.10.0" before the resident's own-speech path is touched, because the
-design there replaced the one the K5 lift map describes. **Another session works on the screen
-saver on its own branch** (`docs/BRAINSTORMS_2026-09-05.md` §4) and shares the card: a red `--ai`
-run may be theirs, so check `nvidia-smi` before believing one.
+**If you are continuing the work:** Act II, Stage 6, per §8. Read the devlog under "the read of
+0.10.0" before the resident's own-speech path is touched, because the design there replaced the one
+the K5 lift map describes; and the two 0.11 entries before the wire's floor policy or the twin are
+touched. **Another session works on the screen saver on its own branch**
+(`docs/BRAINSTORMS_2026-09-05.md` §4) and shares the card: a red `--ai` run may be theirs, so check
+`nvidia-smi` before believing one.
 
 **If you are a fresh session:** read `CLAUDE.md`, then `docs/SPEC.md`, then this file's §4 and §10,
 then `build.bat && nib.exe --selftest && python tools/drive.py`. Do not run `--ai` until you have

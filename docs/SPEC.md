@@ -514,13 +514,33 @@ key-triggered composition produces carries `trigger: k`.
 the resident's thread and drops the live wants; on constructs it. At every instant "no sampler
 exists" and "it may not write" are one fact (6.3), and the flip is a `switch` row.
 
-6.1.6 **The replay twin [SPECIFIED, Stage 4b].** `nib --twin TAPE` re-drives a tape's world through
-a turn-based policy offline on the same weights — a fresh context per wake, the seed and the human's
-percepts so far prefilled in the serve format, one judgment per wake, the same cue, sampler, cap
-and manners — and prints, wake by wake, what the twin did beside what the resident did at the
-boundaries inside that turn, with the gap between them, the percepts the twin was blind to while
-it composed, and the table of which scaffold was in play in which arm (D1's parity clause, made
-printable). This is the matched-input half of the twin race: both arms see the same bytes.
+6.1.6 **The replay twin [BUILT 2026-09-05, Stage 4b, 0.11.1].** `nib --twin TAPE` re-drives a tape's
+world through a turn-based policy offline on the same weights — a fresh context per wake, the seed
+and the human's percepts so far prefilled in the serve format, one judgment per wake through the
+pinned probe, the same cue, sampler, cap and manners (`src/twin.h/.cpp`; the resident's `reseed`,
+`world_line`, `judge_wake`) — and prints, wake by wake, what the twin did beside what the resident
+did at the boundaries inside that turn, the gap between them, the percepts the twin was blind to
+while it composed, and the table of which scaffold was in play in which arm (D1's parity clause,
+made printable). A chained record goes beside the tape (`TAPE.twin.jsonl`). This is the
+matched-input half of the twin race: both arms see the same human bytes.
+
+6.1.6.1 **The instrument's rules, each bought by a wrong first reading (devlog, 0.11.1).** The wake
+policy reads the hand's *keystrokes* — every changeset row the hand made — and not the percepts,
+which arrive per sentence and read as silence while the next sentence is being typed; `pause:S`
+wakes S after the last keystroke of every burst (default 2 s, the floor, so the twin is asked exactly
+when the resident's floor would have opened), `ask` wakes at the tape's own `ask` rows, `every:S` is a
+schedule. A folded percept that duplicates a live one of an earlier life is skipped: the twin's world
+is every human edit once. A wake before the resident's first `session` row is paired against nobody
+and says so. The resident's line lands about half a second after the floor opens — the composition,
+the editor's poll, the second gate — so a turn's window runs 1.5 s past both wakes. Sessions are
+chained on the wall clock's gap where both `session_open` rows carry an epoch. `--exact` prefills
+word by word in the resident's own batches, so the kernel's batch-size drift can be measured
+rather than assumed: on the un-say tape, +5.5 batched against +5.1 exact against the resident's
+own +5.06 at the same clause.
+
+6.1.6.2 **The caveat, printed with every table.** Observational, not matched-input in the strict
+sense: the human wrote what they wrote beside the resident's lines, and the twin's lines were not
+on the page. Both arms saw the same human bytes; only their own words differ.
 
 ### 6.2 The loop
 

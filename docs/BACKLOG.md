@@ -58,6 +58,15 @@ decode of a percept itself stalled.
   un-saying were structurally absent; SPEC 11.1 said 201 checks; SPEC 8.1.2 said there was no emit
   path yet; the handoff counted its own commit out.
 
+## Landed in 0.11.1 (Stage 4b, 2026-09-05)
+
+The replay twin, `nib --twin TAPE` (SPEC 6.1.6): three wake policies on the hand's keystrokes, a
+fresh context per wake with the seed and the human's percepts prefilled in the serve format (folded
+duplicates skipped), one judgment per wake through the pinned probe, the same cue, sampler, cap and
+manners, the pairing against the resident's rows with a 1.5 s window past the wake, the blind count,
+the scaffold table, `--exact` for the kernel's batch drift, a chained record beside the tape; seven
+checks on the pure parts with no model. The first twin race on this box is in the ROADMAP.
+
 ## Landed in 0.11.0 (Stage 4a, 2026-09-05)
 
 The mode switch RESIDENT / TURN-BASED as the wire's floor policy and nothing else (`Ctrl+Shift+T`,
@@ -88,6 +97,12 @@ follows is what is still open.
 - **`settled_by_world` has never fired in a measured run,** only `margin_flipped`. The acceptance
   detector's phrase list is small and a human's real acceptance is usually paraphrased. Worth
   sweeping the tapes offline before widening it, because a false acceptance silences a seat.
+  **Measured by the twin race (0.11.1):** after "Sorry, postgres 16." the twin said its correction
+  again, because "Sorry, X" is not on the list and the manners' re-arm rule read the concession's
+  two shared content words as the topic returning. A concession that *restates the seat's point*
+  is the opposite of the topic returning; the re-arm rule should not fire on a line the acceptance
+  detector would call a concession once it knows the shape. The resident escaped it only because
+  its own judgment at that line was −1.19.
 
 ## Still open from Stage 2 (2026-09-05)
 

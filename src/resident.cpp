@@ -816,6 +816,86 @@ void Resident::set_emit(bool on) {
 
 bool Resident::emitting() const { return p_ && p_->smp; }
 
+// ---- Stage 4b: the replay twin's primitives ---------------------------------------------------
+bool Resident::reseed() {
+    if (!p_ || !p_->ctx) return false;
+    llama_memory_seq_rm(p_->mem, TRUNK, -1, -1);
+    llama_memory_seq_rm(p_->mem, DECIDE, -1, -1);
+    llama_memory_seq_rm(p_->mem, GEN, -1, -1);
+    trunk_toks_.clear();
+    npast_ = 0;
+    clause_.clear();
+    clause_toks_ = 0;
+    pending_commits_.clear();
+    last_world_line_.clear();
+    window_full_ = false;
+    dropped_words_ = 0;
+    failure_.clear();
+    for (Want& w : want_) w.live = false;
+    const std::string seed = std::string(SEED_SYS) + SEED_EXAMPLES + SEED_OPEN;
+    const auto stoks = tk(p_->vocab, seed, true);
+    if (!decode(stoks, TRUNK, 0, false)) { failure_ = "reseeding the trunk failed"; return false; }
+    npast_ = (long long)stoks.size();
+    last_flush_ms_ = wall_ms();
+    boot_ = "seed";
+    return true;
+}
+
+bool Resident::world_line(const std::string& lane, const std::string& text, bool word_by_word) {
+    if (!ctx_ || failed() || window_full_) return false;
+    std::string line = text;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+    if (line.empty()) return true;
+    if (lane.empty()) {
+        const auto tt = tk(p_->vocab, "\n" + line, false);
+        if (!room_for(tt.size())) return false;
+        if (!decode(tt, TRUNK, npast_, true)) return false;
+        npast_ += (long long)tt.size();
+        return true;
+    }
+    last_world_line_ = line;
+    if (!word_by_word) {
+        const auto t = tk(p_->vocab, std::string("\n[") + lane + "] " + line, false);
+        if (!room_for(t.size())) return false;
+        if (!decode(t, TRUNK, npast_, true)) return false;
+        npast_ += (long long)t.size();
+        return true;
+    }
+    // the resident's own batches: the prefix, then one word at a time, exactly as feed does it
+    const auto pre = tk(p_->vocab, std::string("\n[") + lane + "] ", false);
+    if (!room_for(pre.size())) return false;
+    if (!decode(pre, TRUNK, npast_, true)) return false;
+    npast_ += (long long)pre.size();
+    size_t p = 0;
+    bool first = true;
+    while (p < line.size()) {
+        size_t q = line.find(' ', p);
+        if (q == std::string::npos) q = line.size();
+        if (q > p) {
+            const auto wt = tk(p_->vocab, (first ? "" : " ") + line.substr(p, q - p), false);
+            if (!wt.empty()) {
+                if (!room_for(wt.size())) return false;
+                if (!decode(wt, TRUNK, npast_, true)) return false;
+                npast_ += (long long)wt.size();
+                ++words_;
+            }
+            first = false;
+        }
+        p = q + 1;
+    }
+    return true;
+}
+
+void Resident::judge_wake(const std::string& clause, std::vector<Judgment>& out) {
+    if (!ctx_ || failed() || window_full_) return;
+    std::string c = clause;
+    while (!c.empty() && (c.back() == '\n' || c.back() == '\r')) c.pop_back();
+    if (c.empty()) return;
+    clause_ = c;
+    clause_toks_ = 0;
+    judge("w", 0.0f, out);
+}
+
 int Resident::wants_live() const {
     int n = 0;
     for (const Want& w : want_) if (w.live) ++n;

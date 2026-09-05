@@ -248,6 +248,20 @@ public:
     void set_emit(bool on);
     bool emitting() const;
 
+    // ---- Stage 4b: the replay twin's primitives (SPEC 6.1.6) --------------------------------
+    // A fresh trunk: the seed decoded again, every count that is about the trunk reset, the
+    // manners and their memory kept — the twin's ladder persists across its wakes as the
+    // resident's does across boundaries, so both arms carry the same scaffold.
+    bool reseed();
+    // A whole line onto the trunk in the serve format, judged never: the twin's prefill. An empty
+    // lane is a raw line (a tick). `word_by_word` decodes it in the resident's own batches — one
+    // word at a time, as decode-on-delta did — so a margin can be compared with the resident's
+    // free of the kernel's batch-size drift (--exact); otherwise the line goes in one batch.
+    bool world_line(const std::string& lane, const std::string& text, bool word_by_word = false);
+    // One judgment of the trunk as it stands, all three seats, reason 'w' (a wake), recording the
+    // wants exactly as a boundary would, so that speak_wants composes them the same way.
+    void judge_wake(const std::string& clause, std::vector<Judgment>& out);
+
     // What was said, and what the manners would not say twice, since the last call. Drained by the
     // caller after `feed`; empty unless Config::emit.
     std::vector<Emission> take_emissions();

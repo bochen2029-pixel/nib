@@ -27,9 +27,11 @@ window used, and `0 B egress`, which is structurally true and not a promise.*
 > off and the mind's held state is saved; switch it on and the same mind comes back, told how long
 > it was away and shown what happened meanwhile, or else labelled the twin.
 >
-> **236 checks in the exe, 30 from the window driver and 76 more with the resident on**, run before
-> every commit. Stage 4a, the two switches and the key, landed as 0.11.0; the replay twin (4b) is
-> next. The normative spec is
+> **243 checks in the exe, 30 from the window driver and 76 more with the resident on**, run before
+> every commit. Stage 4 — the two switches, the key, and the replay twin that re-drives a tape
+> through a turn-based policy on the same weights — landed as 0.11.0 and 0.11.1; the first twin
+> race on this box is in `docs/ROADMAP.md`. Next is Act II's discovery, then the week. The
+> normative spec is
 > `docs/SPEC.md`; the stages and their falsifiers are `docs/ROADMAP.md`; the open items are
 > `docs/BACKLOG.md`; the rules are `CLAUDE.md`; the review that set the work order is
 > `docs/CRYSTALLIZATION_2026-09-04_FABLE5-1.md`. The name is provisional.
@@ -121,7 +123,7 @@ the whole test battery build and run **without a model and without a GPU** — l
 only when you switch the resident on.
 
 ```
-nib.exe --selftest      236 checks: the changeset port against Etherpad's own vectors, the op log,
+nib.exe --selftest      243 checks: the changeset port against Etherpad's own vectors, the op log,
                         the compiler's byte conservation, word wrap, the tape's hash chain
 python tools/drive.py   30 more, by driving a real window through its message seam
 nib.exe --edit FILE     the editor
@@ -134,6 +136,8 @@ libraries at `C:/auricle/third_party/llama.cpp`, and a GGUF the seed was tuned f
 
 ```
 nib.exe --resident FILE --emit     what each seat wanted to say, and what it said
+nib.exe --twin TAPE.jsonl          the replay twin: the same weights, asked only at the pauses,
+                                   paired wake by wake against what the resident did on that tape
 ```
 
 Keys: `Ctrl+S` save · `Ctrl+O` open · `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo, by burst ·
