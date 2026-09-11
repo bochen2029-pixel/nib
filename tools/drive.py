@@ -200,7 +200,13 @@ TWO_LINES = ("hello world" + LF + "second line" + LF).encode()
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--exe", default=r"C:\nib\nib.exe")
+    # THE EXE BESIDE THIS DRIVER, not a path to somebody else's tree. This defaulted to
+    # C:\nib\nib.exe and therefore drove MAIN's binary from inside the saver worktree: every
+    # drive.py run on this branch, including the 30/0 this branch claimed, was measuring a build
+    # that does not contain the branch's own code. A worktree's battery must test its own worktree,
+    # or a fork reports green for the wrong reason - which is the hazard FORK.json was written for.
+    ap.add_argument("--exe", default=os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nib.exe"))
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--ai", action="store_true", help="also switch the resident on inside the window (needs the model and the card)")
     a = ap.parse_args()
@@ -407,6 +413,31 @@ def main():
     check(got == longline,
           "no byte was lost to wrapping: %d chars typed, %d on disk" % (len(longline), len(got)))
     n7.close()
+
+    # ---- 12 · Dave mode: a switch, with no mind behind it ------------------------------------
+    # WHO, not WHEN. The point of this case is that the mode needs no model: it selects the tail
+    # that phrases a line, so the switch, its tape row and its survival across an AI cycle are all
+    # checkable on a machine with no card. What it SOUNDS like is a measurement, and it is not this.
+    print(LF + "dave mode")
+    davef, log8 = scratch("dave.txt"), scratch("eight.log")
+    n8 = Nib(a.exe, davef, log8)
+    n8.type("The staging database is mysql 5.")
+    nb = n8.count("dave")
+    n8.cmd("dave"); d1 = n8.wait_for("dave", nb)
+    n8.cmd("dave"); d2 = n8.wait_for("dave", nb + 1)
+    check(d1 is not None and d2 is not None and d1[1] == "1" and d2[1] == "0",
+          "Dave mode toggles and lands on the log: %s then %s" % (d1[1] if d1 else "?", d2[1] if d2 else "?"))
+    # The mode is a state that changes what the resident IS, so rule 8 says it goes on the tape.
+    n8.save()
+    n8.close()
+    rows = [json.loads(x) for x in read_bytes(davef + ".tape.jsonl").decode("utf-8", "replace").splitlines() if x.strip()]
+    sw = [r for r in rows if r.get("kind") == "switch" and r.get("body", {}).get("which") == "dave"]
+    check(len(sw) == 2 and sw[0]["body"]["to"] == "on" and sw[1]["body"]["to"] == "off",
+          "both flips are on the tape as switch rows with which=dave (%d found)" % len(sw))
+    # And the mode never touched the gate: no model was ever loaded, so nothing composed, and the
+    # document holds exactly what the hand typed.
+    check(read_bytes(davef).decode("utf-8", "replace") == "The staging database is mysql 5.",
+          "the mode wrote nothing into the document with no mind in the process")
 
     # ---- 10 · the resident, switched on inside the window (--ai) ---------------------------
     # Stage 1c's falsifiers, fired through the seam: the resident loads on its own thread while
