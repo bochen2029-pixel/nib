@@ -670,7 +670,10 @@ void paste(HWND h) {
 // fold ships the LAST percepts that fit and counts the rest, loudly, on the tape and the status
 // line. The molt (Stage 2) is what makes a long document a non-event.
 size_t fold_budget_bytes() {
-    const int toks = g->rcfg.n_ctx - 512 - 430 - 1024;
+    // kTailReserve tracks `room_for`'s reserve (resident.h). It moved from 512 when Dave mode made
+    // a cue a thousand tokens long; if the fold kept the old number it would hand the trunk more
+    // than the window can hold once such a cue is decoded after it.
+    const int toks = g->rcfg.n_ctx - (int)kTailReserve - 430 - 1024;
     return toks > 0 ? (size_t)toks * 7 / 2 : 0;
 }
 

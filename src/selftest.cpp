@@ -1537,6 +1537,64 @@ int run_selftest() {
               "the standing instruction addresses the Watcher on the host's lane, and the saver's seat is the SPEAKER");
     }
 
+    section("dave mode - a third cue, and the pin that must not move");
+    {
+        // WHO, not WHEN. Everything here is pure: no model, no card, no DLL. The whole claim of the
+        // mode is that it changes the phrasing and nothing else, and these are the checks that the
+        // claim is structurally true rather than merely intended.
+        check(serve_hash() == kServeHashPin,
+              "the serve hash is still fusord's pin with a third cue in the file - the gate is untouched");
+
+        // The tails are distinct strings, and the unpinned two are NOT the pinned one.
+        check(std::string(cue_tail('p')) != std::string(cue_tail('s')) &&
+              std::string(cue_tail('p')) != std::string(cue_tail('d')) &&
+              std::string(cue_tail('s')) != std::string(cue_tail('d')),
+              "the three cues are three different strings");
+
+        // An unknown letter must fall back to the PINNED tail and never to a mode's words.
+        check(std::string(cue_tail('z')) == std::string(cue_tail('p')) &&
+              std::string(cue_tail(0)) == std::string(cue_tail('p')),
+              "a cue letter this build does not know composes with the pinned tail, never with a mode's");
+
+        // And it must never be LABELLED pinned, which is the failure the label exists to prevent.
+        check(std::string(cue_name('p')) == "pinned" && std::string(cue_name('s')) == "saver" &&
+              std::string(cue_name('d')) == "dave" && std::string(cue_name(0)) == "none" &&
+              std::string(cue_name('z')) == "?",
+              "every cue names itself on the tape, and an unknown one is '?' and not 'pinned'");
+
+        // Every tail must close the assistant turn the same way, or the frame the tune saw is gone.
+        const std::string close = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+        bool ends = true;
+        for (char c : { 'p', 's', 'd' }) {
+            const std::string t = cue_tail(c);
+            ends = ends && t.size() >= close.size() && t.compare(t.size() - close.size(), close.size(), close) == 0;
+        }
+        check(ends, "all three cues end with the same assistant-turn opener - train and serve agree");
+
+        // Dave's cue carries Dave and not a watcher, and says so before the persona begins.
+        const std::string d = cue_tail('d');
+        check(d.find("You are Dave.") != std::string::npos &&
+              d.find("Set that seat aside") != std::string::npos,
+              "the dave cue sets the seat aside in the open and then says who is speaking");
+        check(d.find("\xE2\x80\x94") == std::string::npos,
+              "and contains no em dash, which the persona itself forbids");
+
+        // THE RESERVE (resident.h kTailReserve). A byte bound, so this needs no tokenizer: no BPE
+        // token for ASCII prose averages under two characters, so bytes/2 is a safe upper bound on
+        // the token count. If a tail ever outgrows the reserve, this fails here and not on the card.
+        size_t worst = 0;
+        for (char c : { 'p', 's', 'd' }) worst = worst > strlen(cue_tail(c)) ? worst : strlen(cue_tail(c));
+        check((long long)(worst / 2) + 28 + 64 < kTailReserve,
+              ssprintf("the longest cue is %zu bytes, under the %lld-token tail reserve with the sentence after it",
+                       worst, (long long)kTailReserve));
+
+        // The receipt for an unpinned string: a stable, non-zero hash that is not the serve pin.
+        const uint64_t dh = dave_cue_hash();
+        check(dh != 0 && dh != kServeHashPin && dh == dave_cue_hash(),
+              ssprintf("the dave cue has its own stable hash 0x%016llx, which is not the pin",
+                       (unsigned long long)dh));
+    }
+
     section("refusals");
     {
         std::string err;

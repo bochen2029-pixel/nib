@@ -133,6 +133,12 @@ bool near_dup(const std::string& a, const std::string& b);
 // kernel before it).
 bool looks_like_acceptance(const std::string& s);
 
+// The cue tails and the names they wear on the tape. Pure, so --selftest fires at them with no
+// model and no card. Only CUE_C is inside serve_hash(); cue_tail is what makes the other two
+// reachable, and cue_name is what stops a row claiming the pinned frame composed a mode's line.
+const char* cue_tail(char cue);
+const char* cue_name(char cue);
+
 // The three seats, verbatim from fusord.cpp. Exposed so the selftest can hash them without a GPU.
 struct Seat { const char* name; const char* mandate; };
 const Seat* seats();            // 3 of them
@@ -148,6 +154,24 @@ void register_seats(PadSource& src);
 uint64_t serve_hash();
 // fusord's pin, 2026-08-12. nib computing the same number is the proof that the lift was verbatim.
 inline constexpr uint64_t kServeHashPin = 0xe7ffa5704ba31076ull;
+
+// A receipt, not a pin: the hash of the unpinned dave cue, so the tape names which persona spoke.
+// It gates nothing — the resident starts whatever this is — and it is never mixed into serve_hash().
+uint64_t dave_cue_hash();
+
+// THE TAIL RESERVE, and the defect it closes. `room_for` keeps the trunk this far below the wall,
+// because `speak()` decodes a WHOLE cue at npast_ onto the GEN fork and only then generates up to
+// `gen_cap` tokens — with no room check of its own. Until Dave mode no cue was long enough to make
+// that a question: the pinned cue is ~40 tokens and the saver's ~80, against a reserve of 512 that
+// happened to cover them and was sized for neither. Dave's persona cue is ~1,010, which does not
+// fit, and the failure is late and fatal: a decode fails mid-session, the wire goes to Error, and
+// the tape records `llama_decode failed at position N`.
+//
+// So the reserve is a named number that covers the longest tail this build carries, and --selftest
+// fires at the RELATIONSHIP rather than trusting it (a byte bound, so the check needs no model).
+// If a tail is ever lengthened past it, the selftest fails at the desk instead of the run failing
+// on the card. `fold_budget_bytes()` in edit.cpp subtracts the same constant and must move with it.
+inline constexpr long long kTailReserve = 2048;
 
 // The DLLs, loaded by name and never by directory: `ggml_backend_load_all_from_path` would also
 // load `ggml-rpc.dll`, which imports ws2_32 — a socket library in a process whose status line
