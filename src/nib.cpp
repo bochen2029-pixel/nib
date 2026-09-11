@@ -44,6 +44,9 @@ const char* kUsage =
     "        --saver [--saver-lines N]   after the file, the screen saver: the SPEAKER is addressed as\n"
     "                   world and holds the floor, renewing its want at every line it says, until N\n"
     "                   lines or the manners refuse it - the MONOLOGUE HORIZON (needs --emit)\n"
+    "        --dave     DAVE MODE: the same gate, the same seat, a different voice. Lines are\n"
+    "                   composed with the unpinned dave cue and every row says cue: dave. It is\n"
+    "                   orthogonal to --saver and composes with it (needs --emit)\n"
     "\n"
     "Without --emit the resident computes hold/emit and records it, and no sampler exists in the\n"
     "process. In the window, Ctrl+Shift+A switches it on and off; off unloads the model.\n";
@@ -193,13 +196,14 @@ int do_resident(int argc, char** argv) {
     std::string path, lane = "bo";
     Resident::Config rc;
     Compiler::Config cc;
-    bool show_all = false, script = false, saver = false;
+    bool show_all = false, script = false, saver = false, dave = false;
     int saver_lines = 12;
     for (int i = 2; i < argc; ++i) {
         const std::string f = argv[i];
         if (f == "--saver") { saver = true; rc.emit = true; }
         else if (f == "--saver-lines" && i + 1 < argc) saver_lines = atoi(argv[++i]);
         else if (f == "--saver-pinned-cue") rc.saver_cue = false;   // measure the horizon under the pinned cue alone
+        else if (f == "--dave") { dave = true; rc.emit = true; rc.dave = true; }
         else if (f == "--model" && i + 1 < argc) rc.model = argv[++i];
         else if (f == "--llama-dir" && i + 1 < argc) rc.llama_dir = argv[++i];
         else if (f == "--ctx" && i + 1 < argc) rc.n_ctx = atoi(argv[++i]);
@@ -237,6 +241,13 @@ int do_resident(int argc, char** argv) {
 
     Resident res;
     std::string err;
+    // --saver-pinned-cue exists to measure the horizon with NO unpinned cue in the frame, and
+    // --dave is one. Silently letting Dave's tail win would contaminate the control run with a
+    // different unpinned string, so the combination is refused rather than decided implicitly.
+    if (dave && !rc.saver_cue) {
+        fprintf(stderr, "nib: --saver-pinned-cue measures the horizon with no unpinned cue; --dave is one. Pick one.\n");
+        return 2;
+    }
     const uint64_t t0 = auricle::fusor::now_ms();
     printf("loading %s (ctx %d, %d gpu layers) ...\n", rc.model.c_str(), rc.n_ctx, rc.n_gpu_layers);
     fflush(stdout);
@@ -245,6 +256,12 @@ int do_resident(int argc, char** argv) {
            (double)(auricle::fusor::now_ms() - t0) / 1000.0, res.model_desc().c_str(),
            res.backends().c_str(), res.devices().c_str(),
            res.have_gpu() ? "" : "  (CPU ONLY - this will be slow)", res.module_count());
+    if (dave) {
+        res.set_dave(true);
+        printf("DAVE MODE: the gate is the pinned probe and the seed has not moved; only the cue that\n"
+               "phrases a line is different. dave cue 0x%016llx (unpinned, not in the serve hash).\n\n",
+               (unsigned long long)dave_cue_hash());
+    }
 
     // The pad compiles the file exactly as it would compile typing, so what the resident sees
     // here is byte-identical to what it would see from the window. A script is the same stream
@@ -293,8 +310,8 @@ int do_resident(int argc, char** argv) {
         // what it said, and what the manners would not let it say twice. The CLI has no document
         // for a line to come back through, so it feeds each line back itself (SPEC 6.3.6).
         for (const Emission& e : res.take_emissions()) {
-            printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
-                   (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);
+            printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c, %s cue)\n", seats()[e.seat].name,
+                   (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop, cue_name(e.cue));
             res.own_line(seats()[e.seat].name, e.say, e.wall_ms);
         }
         for (const Suppressed& s : res.take_suppressed())
@@ -305,8 +322,8 @@ int do_resident(int argc, char** argv) {
     res.finish(js);
     res.speak_wants();
     for (const Emission& e : res.take_emissions()) {
-        printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c)\n", seats()[e.seat].name,
-               (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop);
+        printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c, %s cue)\n", seats()[e.seat].name,
+               (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop, cue_name(e.cue));
         res.own_line(seats()[e.seat].name, e.say, e.wall_ms);
     }
     for (const Suppressed& s : res.take_suppressed())
@@ -342,7 +359,7 @@ int do_resident(int argc, char** argv) {
             for (const Emission& e : res.take_emissions()) {
                 printf("  %-8s %+7.2f  ->  \"%s\"   (%d tok, %llu ms, stop %c%s)\n", seats()[e.seat].name,
                        (double)e.margin, e.say.c_str(), e.toks, (unsigned long long)e.gen_ms, e.stop,
-                       e.cue == 's' ? ", saver cue" : "");
+                       ssprintf(", %s cue", cue_name(e.cue)).c_str());
                 res.own_line(seats()[e.seat].name, e.say, e.wall_ms);
                 if (e.seat == kSaverSeat) ++said;
             }

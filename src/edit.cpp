@@ -69,13 +69,14 @@ struct Theme {
     int n_ctx = 16384;   // 272 MiB of q8_0 KV on this model, measured 2026-09-04; 8192 was 136
     int gpu_layers = 99;
     bool ai = false;   // the switch's position at startup; off is the safe default on a shared card
+    bool dave = false; // Dave mode's position at startup; the mode is a switch, this is where it starts
     bool emit = true;  // Stage 2: may the resident WRITE. Nothing happens until the AI switch is on
     int floor_ms = 2000;   // the hand yields the floor by pausing this long (SPEC 6.3.2)
 };
 
 enum Cmd { CmdSave = 1, CmdSaveAs, CmdOpen, CmdUndo, CmdRedo, CmdSelectAll, CmdReplay, CmdHome, CmdEnd, CmdSelToHome, CmdTop,
            CmdIngest, CmdAiOn, CmdAiOff, CmdLatency, CmdJudgments, CmdTape, CmdBottom, CmdWrap,
-           CmdSaver = 23 };   // 20–22 are Stage 4's on main (ask, mode, emit); the saver keeps clear of them
+           CmdSaver = 23, CmdDave = 24 };   // 20–22 are Stage 4's on main (ask, mode, emit)
 constexpr UINT WM_NIB_CMD = WM_APP + 1;
 
 // A judged span, in CURRENT document coordinates, with the three seats' margins at that boundary.
@@ -173,6 +174,8 @@ struct View {
     // touching the tail holds the floor — the per-block rule, in commit_emission.
     bool saver = false;
     bool saver_armed = false;   // switched on while the mind was loading: begin once it is Ready
+    bool dave = false;          // no `dave_armed` twin: Dave does not wait for the mind, because a
+                                // mode that answers WHO has nothing to say about whether there is one
     size_t last_key_at = 0;     // where the hand last edited, for the per-block floor
     std::vector<Mark> marks;
     std::vector<EditRec> edits;
@@ -228,6 +231,7 @@ void load_theme(Theme& t) {
         else if (k == "n_ctx") { const int n = atoi(v.c_str()); if (n >= Resident::kMinCtx) t.n_ctx = n; }
         else if (k == "gpu_layers") t.gpu_layers = atoi(v.c_str());
         else if (k == "ai") t.ai = v == "on" || v == "1" || v == "true";
+        else if (k == "dave") t.dave = v == "on" || v == "1" || v == "true";
         else if (k == "emit") t.emit = !(v == "off" || v == "0" || v == "false");
         else if (k == "floor_ms") { const int n = atoi(v.c_str()); if (n >= 0) t.floor_ms = n; }
         else if (k == "wrap") t.wrap = !(v == "off" || v == "0" || v == "false");
@@ -982,6 +986,25 @@ void saver_set(HWND h, bool on) {
     InvalidateRect(h, nullptr, TRUE);
 }
 
+// ---- Dave mode ---------------------------------------------------------------------------------
+// WHO, not WHEN (docs/DAVE_MODE.md §2). The saver decides when a seat speaks; this decides whose
+// voice phrases the line, and the two compose rather than competing for one switch. It does NOT
+// switch the mind on the way saver_set does — a mode that answers "who" has nothing to say about
+// whether there is a mind to be it — and it touches no part of the gate: same probe, same seed,
+// same sampler, same pin. Every row it produces says `cue: dave`, and the session row carries the
+// hash of the persona bytes, because an unpinned string still owes the tape an identity (rule 8).
+void dave_set(HWND h, bool on) {
+    if (on == g->dave) return;
+    tape_row("switch", canon::obj({ { "which", canon::str("dave") }, { "from", canon::str(g->dave ? "on" : "off") },
+                                    { "to", canon::str(on ? "on" : "off") } }), true);
+    g->dave = on;
+    g->wire.set_dave(on);
+    nlog("dave	%d", on ? 1 : 0);
+    set_status(on ? "Dave: the resident writes as Dave - the gate is unchanged, every line says cue: dave"
+                  : "Dave off - the seats speak as themselves again");
+    InvalidateRect(h, nullptr, TRUE);
+}
+
 // ---- the wrap switch -----------------------------------------------------------------------------
 // Word wrap is a state that changes what is seen, so it goes on the tape like the AI switch, and it
 // is on the status line while it is off (a long line running off the edge with no sign is the bug
@@ -1038,7 +1061,7 @@ void refuse_emission(const EmitRow& r, const char* why) {
         { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },
         { "m", canon::flt(r.margin) }, { "why", canon::str(why) },
         { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
-        { "say", canon::str(r.say) },
+        { "say", canon::str(r.say) }, { "cue", canon::str(cue_name(r.cue)) },
     }), true);
     ++g->refused_rows;
     nlog("refused	%u	%s	%.2f	%s	%s", r.boundary, seats()[r.seat].name, (double)r.margin, why, r.say);
@@ -1103,7 +1126,7 @@ void commit_emission(HWND h, const EmitRow& r) {
         { "at", canon::num((int64_t)at) }, { "bytes", canon::num((int64_t)ins.size()) },
         { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
         { "stop", canon::str(std::string(1, r.stop)) }, { "say", canon::str(r.say) },
-        { "saver", canon::boolean(saver_line) }, { "cue", canon::str(r.cue == 's' ? "saver" : "pinned") },
+        { "saver", canon::boolean(saver_line) }, { "cue", canon::str(cue_name(r.cue)) },
     }), true);
     nlog("emit	%u	%s	%.2f	%zu	%s", r.boundary, seats()[r.seat].name, (double)r.margin, at, r.say);
     // the document changed under the caret without passing through edit_splice
@@ -1130,7 +1153,7 @@ void record_abort(const EmitRow& r) {
         { "rev", canon::num((int64_t)r.rev) }, { "a", canon::num((int64_t)r.a) }, { "b", canon::num((int64_t)r.b) },
         { "aired", canon::str(r.say) }, { "killed", canon::str(r.killed) },
         { "gen_ms", canon::num((int64_t)r.gen_ms) }, { "toks", canon::num(r.toks) },
-        { "cue", canon::str(r.cue == 's' ? "saver" : "pinned") },
+        { "cue", canon::str(cue_name(r.cue)) },
     }), true);
     ++g->abort_rows;
     nlog("abort	%u	%s	%.2f	%.2f	%s	%s	|	%s", r.boundary, seats()[r.seat].name,
@@ -1210,6 +1233,11 @@ void poll_wire(HWND h) {
             tape_row("coefficient", canon::obj({ { "name", canon::str("n_ctx") }, { "value", canon::num(g->rcfg.n_ctx) } }), true);
             fold_on_ready();
             set_status(ssprintf("AI on (%s): %s loaded in %.1f s", g->wire.boot().c_str(), model_name().c_str(), g->wire.load_ms() / 1000.0));
+            // Wire::start resets the thread's copy of both switches, so a mode that outlives one
+            // life of the mind has to be re-asserted here. Without this line Dave silently stops
+            // after any AI off→on cycle while the status line still says DAVE. The saver escapes it
+            // only because ai_set turns it off explicitly and saver_armed restarts it.
+            if (g->dave) g->wire.set_dave(true);
             if (g->saver_armed) { g->saver_armed = false; saver_begin(h); }   // switched on while it loaded
         } else if (s == WireState::Error) {
             nlog("resident	error	%s", g->wire.detail().c_str());
@@ -1464,6 +1492,8 @@ std::string resident_line() {
             }
             if (g->wire.window_full()) l += ssprintf("  ·  WINDOW FULL: %llu words unperceived", (unsigned long long)g->wire.dropped_words());
             if (g->saver) l += "  ·  SAVER: the resident holds the floor";
+            // after the saver's clause, so Dave × SAVER shows both: they are different axes
+            if (g->dave) l += "  ·  DAVE: the resident writes as Dave";
             l += "  ·  0 B egress";
             return l;
         }
@@ -1764,6 +1794,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     if (ctrl) { g->anchor = 0; move_to(h, g->doc.size(), true, false); }
                     return 0;
                 case 'M': if (ctrl && shift) saver_set(h, !g->saver); return 0;   // the screen saver
+                case 'D': if (ctrl && shift) dave_set(h, !g->dave); return 0;     // Dave mode
                 case 'C': if (ctrl) copy_sel(h); return 0;
                 case 'X':
                     if (ctrl && has_sel()) {
@@ -1809,6 +1840,7 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case CmdBottom: move_to(h, g->doc.size(), false, false); break;   // the driver's windows are visible, and a click in one is the operator's
                 case CmdWrap: set_wrap(h, !g->wrap); break;
                 case CmdSaver: saver_set(h, !g->saver); break;
+                case CmdDave: dave_set(h, !g->dave); break;
                 case CmdHome: move_to(h, g->idx.start[g->idx.line_of(g->caret)], false, false); break;
                 case CmdEnd: {
                     const size_t l = g->idx.line_of(g->caret);
@@ -1965,6 +1997,7 @@ int run_editor(const std::string& path_utf8) {
     g->rcfg.n_gpu_layers = g->th.gpu_layers;
     g->rcfg.hash_cache = narrow(exe_dir()) + "\\runs\\model-hashes.txt";   // the model's SHA-256, remembered on size and mtime
     g->rcfg.emit = g->th.emit;
+    g->rcfg.dave = g->th.dave;
     g->wire.set_floor_ms(g->th.floor_ms);
 
     // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow
@@ -2011,6 +2044,7 @@ int run_editor(const std::string& path_utf8) {
 
     ShowWindow(h, driven ? SW_SHOWNOACTIVATE : SW_SHOW);
     UpdateWindow(h);
+    if (g->th.dave) dave_set(h, true);   // before the mind: the mode does not wait for one
     if (g->th.ai) ai_set(h, true);
 
     MSG msg;

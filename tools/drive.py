@@ -29,7 +29,7 @@ WM_NIB_CMD = 0x8000 + 1                     # WM_APP + 1, matching edit.cpp
 CMD = dict(save=1, save_as=2, open=3, undo=4, redo=5, select_all=6,
            replay=7, home=8, end=9, sel_to_home=10, top=11, ingest=12,
            ai_on=13, ai_off=14, latency=15, judgments=16, tape=17, bottom=18, wrap=19,
-           saver=23)   # 20-22 are Stage 4's on main
+           saver=23, dave=24)   # 20-22 are Stage 4's on main
 
 
 def vram_used_mib():
