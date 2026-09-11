@@ -4,9 +4,19 @@
 *"nib has a screensaver mode — could it have a Dave mode instead?"* This is the answer, and the
 answer is yes, cheaply, without moving the pin.**
 
-Status: **[SPEC] — designed here, not built.** Nothing in nib was modified to write this. Every
+Status: **[BUILT 2026-09-10] — D1 is in, on branch `dave` off `saver`.** This document was written
+as a spec earlier the same day; what follows is unchanged from that writing, because it turned out
+to be right about the mechanism. Where it was wrong or silent, §10 at the end records it. Every
 claim about nib's internals below was read out of this tree on 2026-09-10 and is cited to a file
 and line. Where this document and the code disagree, **the code is right and this is the defect.**
+
+> **What shipped:** `DAVE_CUE_C` (the persona verbatim, 3,597 bytes, sha256 `f7b939b8…0659fb5`),
+> `cue_tail`/`cue_name`/`dave_cue_hash`, `speak(..., char cue)`, a `dave_` switch on the resident
+> and the wire, `Ctrl+Shift+D`, the `dave` theme key, `--dave`, `cue` on every emit/abort/refused
+> row and `dave`/`dave_cue` on the session row. **`--selftest` 252/0** (was 243), **`drive.py`
+> 33/0** (was 30). `serve_hash()` still computes `0xe7ffa5704ba31076`.
+>
+> **Not yet measured:** what it sounds like. That needs the card, and the card was full.
 
 ---
 
@@ -238,3 +248,57 @@ saver cue, hash), `src/edit.cpp` (the saver, cue labelling), `docs/BRAINSTORMS_2
 `README.md`, and in the Tenancy tree `CLAUDE.md` (A1–A9) and `src-tauri/src/prompts.rs`.
 Not read: `docs/SPEC.md`, `docs/ROADMAP.md`, `docs/BACKLOG.md`, `src/twin.*` (absent from this
 tree), the review directory. A claim here that contradicts those is this document's error.*
+
+---
+
+## 10 · What the build found that this document did not say (2026-09-10, appended)
+
+*Written after D1 landed. The mechanism above survived contact; these are the four things the spec
+was wrong or silent about, kept here rather than edited into the text above, because a spec that
+quietly rewrites itself to match what was built stops being evidence of anything.*
+
+**10.1 · The context reserve, and it would have killed the first run.** §4 costed the change as "one
+string constant, one enum value, one branch, one tape label" and that was right about the cue and
+wrong about the window. `room_for` kept the trunk 512 tokens below the wall; `speak()` then decodes
+an ENTIRE cue at `npast_` onto the GEN fork and generates after it, **with no room check of its
+own**. The standing requirement was therefore `cue_tokens + gen_cap <= 512`, which the pinned cue
+(~40) and the saver's (~80) met by luck and nobody had ever had to think about. The persona cue is
+~1,010 tokens and does not fit: the failure is a `llama_decode` failure mid-session, late, fatal to
+the run, and reported as a position number rather than as "your cue is too long". The reserve is now
+`kTailReserve`, a named constant covering the longest tail this build carries, `fold_budget_bytes()`
+moved with it, and `--selftest` fires at the relationship with a byte bound so the check needs no
+tokenizer.
+
+**10.2 · Two tape rows would have lied, and one carried no label at all.** `edit.cpp` wrote
+`r.cue == 's' ? "saver" : "pinned"` in two places, so a Dave line would have been recorded as
+composed by the pinned frame — silently, on a hash-chained tape, which is the one failure the label
+exists to prevent. And `Suppressed` had no cue field, so a Dave line the manners refused reached the
+tape with no mode label at all, which would have silently emptied §7's "partition the margins by
+cue" of exactly the rows perseveration lives in. `cue_name` answers `"?"` for a letter it does not
+know and never `"pinned"`; the refused row carries a cue now.
+
+**10.3 · One voice while the mode is on (rule 6), which §4 did not consider.** A block is labelled
+with its seat's name, so a SKEPTIC want composed in Dave's voice writes `[SKEPTIC] <Dave>` into the
+file — visibly ambiguous about who is on the other end. `speak_wants` already takes an `only_seat`,
+so while Dave is on, one seat composes; every seat still probes and every margin still reaches the
+tape, so §5's byproduct calibration accrues for all three exactly as before. Relabelling the block
+to `[DAVE]` is the obvious alternative and is a trap: `own_line` matches a block's lane to a seat by
+NAME, and an unmatched lane is decoded onto the trunk with no seat remembering it said the line, so
+say-it-once would quietly stop working.
+
+**10.4 · The branch's own battery was testing main's binary.** `tools/drive.py` in this worktree
+defaulted to `C:\nib\nib.exe`, so every `drive.py` run made from inside the saver worktree — the
+30/0 this branch recorded on 2026-09-05 included — drove a build that does not contain this branch's
+code. It could only surface once a driver case exercised a command id that exists here and not on
+main, which Dave mode is the first to do. Fixed to the exe beside the driver itself. This is the
+fork hazard `C:/sill/FORK.json` was written for, found the way it says these are found.
+
+**10.5 · Still open, and deliberately not guessed at.** The manners are calibrated for a watcher
+restating a catch (`dup_overlap = 3`), not for a person whose register is conversational and
+recurrent, so expect `repeat` refusals in RESIDENT that have nothing to do with the gate. Do not
+widen the constant quietly: add `dave_dup_overlap` and put it on the session row beside
+`saver_dup_overlap`, so a coefficient that moves is on the record like every other one (rule 8).
+And §4's known weakness stands untested: with one monolithic tail, **Dave × SAVER loses the saver's
+"one sentence that adds something new, never a repeat"** instruction, which is what bought the
+horizon of eight. If the measured Dave × SAVER horizon collapses, the fix is to make the persona a
+prefix that composes with either instruction rather than a whole tail. Measure before building it.

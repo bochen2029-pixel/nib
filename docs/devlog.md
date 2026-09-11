@@ -1079,3 +1079,67 @@ docs/BRAINSTORMS_2026-09-05.md section 4, filed the same evening from the operat
   Stage 4: the two switches and the paired record - RESIDENT / TURN-BASED with the seat, the
   seed and the sampler pinned identical across the toggle, the judgments running in shadow
   during TURN-BASED, and `nib --twin` re-driving a tape through the turn-based policy offline.
+
+## 2026-09-10 · the `dave` branch - a mode is a cue, not a mind
+
+- THE ASK: "nib has a screensaver mode - could it have a Dave mode instead?" A design document was
+  written the same morning (`docs/DAVE_MODE.md`) by a session working in C:\sill and C:\DAVE, and
+  it turned out to be right about the mechanism, so D1 was built from it rather than re-derived.
+  Dave is a system prompt on stock Qwen3.5-9B, and emit-v11's adapter config names
+  `unsloth/Qwen3.5-9B` as its base with r=32, alpha=64 and all seven projections - checked on disk
+  at C:/auricle/runs/qlora_v11/adapter_9b_v11/adapter_config.json, because the whole portability
+  argument rests on it and it is one file away.
+- THE MECHANISM, unchanged from the saver's: the tail that phrases a line is selected, the GATE is
+  not. `serve_hash()` is a straight-line fold over fifteen individually named strings, so a
+  sixteenth file-scope constant cannot move it, and --selftest computes 0xe7ffa5704ba31076 with
+  DAVE_CUE_C sitting in the same file. speak()'s `bool saver_cue` became `char cue`; cue_tail falls
+  back to the PINNED tail for a letter it does not know, and cue_name answers "?" rather than
+  "pinned", because guessing wrong in that direction puts a lie on a hash-chained tape.
+- THE PERSONA IS A LITERAL, 3,597 bytes, sha256 f7b939b8...0659fb5, verbatim from Tenancy's
+  prompts.rs and found byte-identical inside both packaged v0.2.0 binaries. Not a file: a run-time
+  read would break SPEC 9.5 (the resident touches no file system beyond the open document) and put
+  a failure path in front of the mode. It was generated into the .cpp mechanically and round-tripped
+  back to the original bytes before it was spliced, because nobody should retype 3.6 KB by hand.
+  dave_cue_hash() is rule 8's price for an unpinned string: the tape names which persona spoke.
+- A TRAP ON THE WAY IN, worth printing: the helper that spliced the literal refused with "anchor
+  matches 0 times" because nib's sources are CRLF and the helper's files were LF - and `cat -A`
+  through Git Bash's sed showed no ^M, so the eye said they matched. A blind sed would have written
+  a mixed-ending file instead of refusing. The splicer now takes its line endings from the target.
+- THE DEFECT THE DESIGN MISSED, and it would have killed the first run. room_for kept the trunk 512
+  tokens below the wall; speak() then decodes an ENTIRE cue at npast_ onto the GEN fork and
+  generates after it, with no room check of its own. So the standing requirement was
+  cue_tokens + gen_cap <= 512, which the pinned cue (~40) and the saver's (~80) met by luck. The
+  persona cue is ~1,010 and does not: a failed decode mid-session, reported as a position number.
+  kTailReserve is now a named constant covering the longest tail this build carries, --selftest
+  fires at the relationship with a byte bound so it needs no tokenizer, and fold_budget_bytes()
+  moved with it.
+- TWO ROWS WOULD HAVE LIED. edit.cpp wrote `r.cue == 's' ? "saver" : "pinned"` twice, so a Dave line
+  would have been recorded as composed by the pinned frame; and Suppressed had no cue field at all,
+  so a refused Dave line reached the tape with no mode label - which would have silently emptied
+  "partition the margins by cue" of exactly the rows perseveration lives in.
+- ONE VOICE WHILE THE MODE IS ON. A block is labelled with its seat's name, so a SKEPTIC want in
+  Dave's voice writes `[SKEPTIC] <Dave>` into the file, which is rule 6's one prohibition. Fixed
+  with machinery that already existed - speak_wants takes an only_seat - so one seat composes while
+  every seat still probes and every margin still reaches the tape. Relabelling the block [DAVE] is
+  the obvious alternative and is a trap: own_line matches a lane to a seat BY NAME, and an unmatched
+  lane is decoded onto the trunk with no seat remembering it, so say-it-once would stop working.
+- AND THE BRANCH'S BATTERY WAS TESTING MAIN'S BINARY. tools/drive.py in this worktree defaulted to
+  `C:\nib\nib.exe`, so every drive.py run ever made from inside the saver worktree - including the
+  30/0 this branch recorded on 2026-09-05, and the 30/0 taken as a baseline this morning - drove a
+  build without this branch's code in it. It could only surface once a driver case exercised a
+  command id that exists here and not on main, which Dave mode is the first to do; a wrap toggle
+  works on both binaries. The default is now the exe beside the driver itself. This is the fork
+  hazard C:/sill/FORK.json was written for, found the way FORK.json says these are found.
+- Green: --selftest 252/0 (was 243), drive.py 33/0 (was 30, and was measuring the wrong exe),
+  --about pin verbatim, both build gates, zero warnings at /W4 /WX.
+- NOT MEASURED, and deliberately not guessed at: what Dave sounds like through this frame. The card
+  held 3,748 MiB free against the ~7 GB the 9B needs (llama-server had grown to 8,287 MiB x2) and
+  `warden preflight --need 6G --vram 7G` returned NO-GO, so the run waits rather than evicting
+  somebody else's model. The falsifier is written and unfired: three probes over one stream and one
+  seat, pinned vs saver vs dave, with the persona-violation rules from C:/sill/tests as the check.
+- ALSO UNMEASURED, and named so it is not forgotten: Dave x SAVER loses the saver's "one sentence
+  that adds something new, never a repeat", which is what bought the horizon of eight, because the
+  persona is a whole tail rather than a prefix. And the manners are calibrated at dup_overlap 3 for
+  a watcher restating a catch, not for a person whose register is recurrent, so repeat refusals in
+  RESIDENT should be expected and NOT quietly tuned away - if the constant moves it becomes
+  dave_dup_overlap on the session row, like every other coefficient.
