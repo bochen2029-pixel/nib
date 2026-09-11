@@ -564,6 +564,7 @@ Resident::~Resident() {
 bool Resident::start(const Config& cfg, std::string& err, const std::string& restore_path, long long expect_npast,
                      const std::string& manners) {
     cfg_ = cfg;
+    dave_ = cfg.dave;   // the mode's position at startup; the switch may flip it at any time after
     if (cfg_.n_ctx < kMinCtx) {
         err = "n_ctx " + std::to_string(cfg_.n_ctx) + " is below the minimum of " + std::to_string(kMinCtx);
         return false;
@@ -824,14 +825,14 @@ float Resident::probe_one(int m) {
 // this returns: nothing a seat says reaches the trunk here — that happens at the end of the line
 // (flush_own_speech), so a seat's words are never spliced into the middle of somebody else's.
 bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam,
-                     std::vector<Judgment>* late, bool saver_cue) {
+                     std::vector<Judgment>* late, char cue) {
     if (!p_ || !p_->smp || !ctx_) return false;
     const uint64_t t0 = wall_ms();
     const uint64_t d0 = deferred_;   // judgments the world's lines would have had, had a seat not been speaking
     llama_memory_seq_rm(p_->mem, GEN, -1, -1);
     llama_memory_seq_cp(p_->mem, TRUNK, GEN, -1, -1);
     const auto ct = tk(p_->vocab, std::string(CUE_A) + kSeats[m].name + CUE_B + kSeats[m].mandate +
-                                      (saver_cue ? SAVER_CUE_C : CUE_C), false);
+                                      cue_tail(cue), false);
     if (!decode(ct, GEN, npast_, true)) { llama_memory_seq_rm(p_->mem, GEN, -1, -1); return false; }
     long long gpos = npast_ + (long long)ct.size();
     std::vector<float> gl((size_t)p_->n_vocab);
@@ -930,7 +931,7 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
         a.gen_ms = wall_ms() - t0;
         a.toks = toks;
         a.probes = probes;
-        a.cue = saver_cue ? 's' : 'p';
+        a.cue = cue;
         aborts_.push_back(std::move(a));
         ++aborted_;
         // It really did say the part that reached the surface, so the mind hears that much of
@@ -951,7 +952,7 @@ bool Resident::speak(int m, uint64_t boundary, float margin, const std::string& 
     out.gen_ms = wall_ms() - t0;
     out.toks = toks;
     out.stop = stop;
-    out.cue = saver_cue ? 's' : 'p';
+    out.cue = cue;
     return true;
 }
 
@@ -1004,11 +1005,13 @@ const char* Resident::manners_allows(int m, const std::string& say, const std::s
 // RECORDED as suppressed with its reason, never silently dropped — the difference between a mind
 // that held its tongue and a harness that lost a sentence has to stay visible on the tape.
 bool Resident::allowed_to_say(int m, uint64_t boundary, float margin, const std::string& say, const std::string& about,
-                              bool interrupting) {
+                              bool interrupting, char cue) {
     std::string by;
     const char* why = manners_allows(m, say, about, by, interrupting);
     if (why[0]) {
         Suppressed s;
+        s.cue = cue;             // which tail composed the line the manners refused, so a refusal
+                                 // can be partitioned by mode like every emission can
         s.wall_ms = wall_ms();
         s.boundary = boundary;   // the want's; the manners' own clock stays the current count
         s.seat = m;
@@ -1184,10 +1187,17 @@ void Resident::speak_wants(Seam* seam, std::vector<Judgment>* late, int only_sea
         // the world moved, and the prompt judgment at the end of the sentence decides what next.
         const bool saver_seat = saver_ && m == kSaverSeat;
         const int tries = saver_seat ? 1 + (cfg_.saver_retries > 0 ? cfg_.saver_retries : 0) : 1;
+        // WHICH TAIL COMPOSES THIS LINE. The two axes are orthogonal (docs/DAVE_MODE.md §2): the
+        // saver decides WHEN a seat may speak, Dave decides WHO is speaking, and they compose. The
+        // saver's renewal wants the continuation cue; Dave wants the persona; when both are on
+        // Dave's is the tail, and the row says `cue: dave` with `saver: true` beside it, so the
+        // pair is never ambiguous on the tape.
+        const bool renewal = saver_seat && w.renewal && cfg_.saver_cue;
+        const char cue = dave_ ? 'd' : (renewal ? 's' : 'p');
         for (int t = 0; t < tries; ++t) {
             Emission e;
-            if (!speak(m, w.boundary, w.margin, w.clause, e, seam, late, saver_seat && w.renewal && cfg_.saver_cue)) break;
-            if (allowed_to_say(m, w.boundary, w.margin, e.say, w.clause, !saver_seat)) {
+            if (!speak(m, w.boundary, w.margin, w.clause, e, seam, late, cue)) break;
+            if (allowed_to_say(m, w.boundary, w.margin, e.say, w.clause, !saver_seat, cue)) {
                 emissions_.push_back(e);
                 ++emitted_;
                 break;

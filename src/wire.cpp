@@ -63,6 +63,7 @@ void Wire::start(const Resident::Config& cfg, PadSource* src, const std::string&
     ckpt_req_.store(false, std::memory_order_release);
     human_ms_.store(0, std::memory_order_release);
     saver_.store(false, std::memory_order_release);
+    dave_.store(false, std::memory_order_release);   // the editor re-asserts it when the life is Ready
     boundaries_ = 0; probes_ = 0; wanted_ = 0; ticks_ = 0; deltas_ = 0; dropped_words_ = 0;
     window_full_ = false; context_used_ = 0; load_ms_ = 0; hash_ms_ = 0; probe_ms_ = 0; cursor_rev_ = 0;
     hash_cached_ = false;
@@ -198,6 +199,10 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             { "saver_retries", canon::num(cfg.saver_retries) },
             { "saver_dup_overlap", canon::num(cfg.saver_dup_overlap) },
             { "saver_cue", canon::boolean(cfg.saver_cue) },
+            { "dave", canon::boolean(cfg.dave) },
+            // Rule 8's price for an unpinned string: the tape names WHICH persona bytes were in the
+            // frame, so a reader can tell one mind from another even though the cue is not pinned.
+            { "dave_cue", canon::str(ssprintf("0x%016llx", (unsigned long long)dave_cue_hash())) },
             { "seats", canon::arr(mand) },
             { "mode", canon::str("room") },
             { "egress_bytes", canon::num(0) },
@@ -333,6 +338,7 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
             r.seat = s.seat;
             r.margin = s.margin;
             r.stop = 0;
+            r.cue = s.cue;   // 0 when nothing was composed; cue_name renders that "none"
             const std::string why = s.by.empty() ? s.why : s.why + ":" + s.by;
             const size_t wn = why.size() < sizeof r.why - 1 ? why.size() : sizeof r.why - 1;
             memcpy(r.why, why.data(), wn);
@@ -378,9 +384,14 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
         return true;
     };
     while (!stop_.load(std::memory_order_acquire)) {
-        {   // the screen saver: a switch the editor owns and the resident follows
+        {   // the two switches the editor owns and the resident follows: WHEN (the saver) and WHO
+            // (Dave). No ship_emissions() on the Dave edge: set_saver drops a live renewal and must
+            // put that suppression on the record, while set_dave produces none — it changes only
+            // which tail the next composition uses.
             const bool sv = saver_.load(std::memory_order_acquire);
             if (sv != res.saver()) { res.set_saver(sv); ship_emissions(); }
+            const bool dv = dave_.load(std::memory_order_acquire);
+            if (dv != res.dave()) res.set_dave(dv);
         }
         if (!step()) {
             // THE FLOOR. The ring is empty, so nothing is half-perceived; if the hand has been
@@ -401,7 +412,18 @@ void Wire::run(Resident::Config cfg, PadSource* src, std::string restore_path, l
                     s.step = step;
                     s.spans = &spans;
                     js.clear();
-                    res.speak_wants(&s, &js, open ? -1 : kSaverSeat);
+                    // ONE VOICE WHILE DAVE IS ON (CLAUDE.md rule 6). The block a seat writes is
+                    // labelled with the seat's name, so a SKEPTIC want composed in Dave's voice
+                    // would put `[SKEPTIC] <Dave>` in the file — visibly ambiguous about who is on
+                    // the other end, which is the one thing rule 6 forbids. Composing only one seat
+                    // fixes it with the machinery that already exists, and costs nothing else:
+                    // every seat still probes and every margin still reaches the tape, so §5's
+                    // byproduct calibration accrues for all three exactly as before. Relabelling
+                    // the block to [DAVE] instead would break own_line, which matches a block's
+                    // lane to a seat BY NAME — an unmatched lane is decoded onto the trunk with no
+                    // seat remembering it said the line, and say-it-once stops working.
+                    const int only = res.dave() ? kSaverSeat : (open ? -1 : kSaverSeat);
+                    res.speak_wants(&s, &js, only);
                     // the saver's prompt judgment of a line that landed inside its sentence
                     const uint64_t rev = cursor_rev_.load(std::memory_order_acquire);
                     for (const Judgment& j : js) { ship(j, rev); remember_span((uint32_t)j.boundary, rev); }

@@ -60,7 +60,8 @@ struct EmitRow {
     char     stop;         // 'e' end-of-generation · 'n' newline · 's' sentence close · 'c' the cap
     float    margin_after; // the margin when the seam asked again, for an abort
     int      probes;       // re-probes taken inside the sentence
-    char     cue;          // 'p' the pinned cue · 's' the saver's (Emission::cue); 0 for a suppression
+    char     cue;          // 'p' the pinned cue · 's' the saver's · 'd' Dave's (Emission::cue);
+                           // 0 when nothing was composed, which cue_name renders "none"
     char     why[32];      // "" said it · resolved · repeat · refractory · stale · abort:<cause>
     char     say[512];     // what was said, or for an abort what reached the surface
     char     killed[384];  // an abort's silent remainder: what would have been said
@@ -153,6 +154,9 @@ public:
     // it is on, the saver's seat composes with the floor closed — the hand typing elsewhere is the
     // interruption, not the floor — and the other seats still wait for the pause.
     void set_saver(bool on) { saver_.store(on, std::memory_order_release); }
+    // DAVE MODE: the second switch the editor owns and the thread follows. It changes only which
+    // tail composes a line, so unlike the saver it opens no floor, owns no want and drops none.
+    void set_dave(bool on) { dave_.store(on, std::memory_order_release); }
 
     // THE FORMING PLANE (SPEC 6.4.1). The half-written sentence, as it is sampled. It is a STATE
     // and not a stream: the editor reads the newest one it can and renders that, and a frame it
@@ -189,6 +193,7 @@ private:
     std::atomic<uint64_t> human_ms_{0};
     std::atomic<int64_t> floor_ms_{0};
     std::atomic<bool> saver_{false};
+    std::atomic<bool> dave_{false};
     std::atomic<uint64_t> forming_gen_{0};
     mutable std::mutex form_mu_;
     bool forming_active_ = false;

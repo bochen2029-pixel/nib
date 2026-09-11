@@ -119,6 +119,11 @@ struct Suppressed {
     int      seat = 0;
     float    margin = 0.0f;
     std::string say, clause, why, by;   // why ∈ resolved · repeat · repeat_other · refractory
+    char     cue = 0;   // which tail composed the refused line: 'p' pinned · 's' saver · 'd' dave.
+                        // 0 when nothing was composed (a stale want, or the saver going off), which
+                        // cue_name renders "none". Without this a refused Dave line reaches the tape
+                        // with no mode label at all, and partitioning the margins by cue would
+                        // silently lose every refusal — which is where the perseveration lives.
 };
 
 // ---- the manners, as pure functions so --selftest fires at them with no model ------------------
@@ -228,6 +233,9 @@ public:
         // is postgres 16, and the migration script is written for it" (2026-09-05). The six-in-ten
         // test still catches a line said twice; this is the bar for saying the same THING.
         int   saver_dup_overlap = 5;
+        // Dave mode's position at startup (the theme's `dave` key, or --dave). The switch may flip
+        // at any time; this is only where it starts, and the session row records it.
+        bool  dave = false;
     };
     static constexpr int kMinCtx = 2048;   // below this the window is smaller than the seed's margin
 
@@ -268,6 +276,16 @@ public:
     bool saver_wants() const { return want_[kSaverSeat].live; }
     uint64_t saver_lines() const { return saver_lines_; }
     uint64_t saver_retried() const { return saver_retried_; }
+
+    // DAVE MODE (docs/DAVE_MODE.md). ORTHOGONAL to the saver, and deliberately NOT a third position
+    // of it: TURN-BASED / RESIDENT / SAVER answer WHEN a seat speaks; this answers WHO is speaking.
+    // It owns no want, opens no floor and starts nothing — it selects the tail that phrases a line,
+    // and every row it produces says `cue: dave`. The gate is untouched: same probe, same seed, same
+    // sampler, same pin. There is no set_dave body to write, unlike set_saver, which must drop a
+    // live renewal on the record: Dave owns no want, so there is nothing to drop. A want composed
+    // after the switch flips simply carries the new cue, and the row says which.
+    void set_dave(bool on) { dave_ = on; }
+    bool dave() const { return dave_; }
 
     // Ingest one percept and judge if a thought closed. This is the free tail of the ingest pass
     // (SPEC 6.2.3): the model is never polled, it is decoded into and read at the frontier.
@@ -349,11 +367,11 @@ private:
     // the boundary whose clause the sentence is about, which every row of the record carries so
     // that the span an emission depends on is the span it was judged at, not the newest one.
     bool speak(int seat, uint64_t boundary, float margin, const std::string& about, Emission& out, Seam* seam,
-               std::vector<Judgment>* late, bool saver_cue);
+               std::vector<Judgment>* late, char cue);
     float probe_one(int seat);   // one seat, one fork of the trunk as it stands NOW
     // The manners ladder. True when the line may be said; otherwise it is recorded as suppressed.
     bool allowed_to_say(int seat, uint64_t boundary, float margin, const std::string& say, const std::string& about,
-                        bool interrupting = true);
+                        bool interrupting = true, char cue = 'p');
     void flush_own_speech();   // the seats' lines onto the trunk, once the world's line has closed
     bool ingest_word(const std::string& w, size_t backlog, std::vector<Judgment>& out);
     bool room_for(size_t ntok);
@@ -392,6 +410,7 @@ private:
     uint64_t emitted_ = 0, suppressed_ = 0, gen_ms_ = 0, aborted_ = 0, deferred_ = 0, seam_probes_ = 0;
     uint64_t own_lines_ = 0;
     bool saver_ = false;
+    bool dave_ = false;
     uint64_t saver_lines_ = 0, saver_retried_ = 0;
     int gen_depth_ = 0;              // inside a generation: judgment is delayed, ingest never is
     std::string last_world_line_;    // the newest thing the world said, for the acceptance test
