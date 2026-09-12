@@ -302,3 +302,128 @@ And §4's known weakness stands untested: with one monolithic tail, **Dave × SA
 "one sentence that adds something new, never a repeat"** instruction, which is what bought the
 horizon of eight. If the measured Dave × SAVER horizon collapses, the fix is to make the persona a
 prefix that composes with either instruction rather than a whole tail. Measure before building it.
+
+---
+
+## 11 · The monologue: Dave × SAVER as a thing you click (2026-09-12, appended)
+
+*The bearings of 2026-09-12 fired §7's falsifier for the first time (six CLI runs, archived beside
+this tree under `runs/2026-09-12-dave-falsifier/`, findings in `C:\nib\docs\BEARINGS_2026-09-12.md`
+§4): the gate did not move, the voice is his, the cue costs 0.4–1.0 s a line, and Dave × SAVER
+halves the horizon exactly as §10.5 predicted. The operator's next ask was the obvious one: make
+the screen saver with a person in it something you launch by clicking. This section is what that
+is, what was decided on the way, and how it is tested.*
+
+**What `nib --monologue [FILE]` does.** Opens the window **maximized**, titled *Dave — the resident
+holds the floor*, and throws three switches itself, in this order and each as a `switch` row on the
+tape: Dave on (WHO), then the saver on (WHEN) — and `saver_set`, as it always has, switches the
+mind on and arms itself, so `poll_wire` begins the monologue the moment the trunk is Ready and
+folded. Nothing else changed: the standing instruction still arrives as world on the host's lane,
+the SPEAKER still answers it under the pinned probe, every line still says `cue: dave` with
+`saver: true` beside it, typing anywhere is still the interruption, `Ctrl+Shift+M` still ends it,
+`Ctrl+Shift+A` still returns the card, and closing the window quits. With a FILE the monologue is
+appended to that document and its tape sits beside it; without one the tape lands in `runs/`
+beside the exe. `Dave monologue.cmd` in the bundle is one line: `start "" "%~dp0nib.exe" --monologue`.
+
+**What was decided, and why.**
+
+- **A launch flag, not a theme default.** The saver read of 2026-09-09 ruled that a `saver on`
+  key shipping on by default in the editor's theme would be wrong, and it still is: `--edit` is
+  the editor. The monologue is a different *launch* of the same exe, so it is a verb, and the
+  theme's `ai` and `dave` positions are not consulted by it — that launch *is* the request. `emit`
+  is forced on for the same reason: a screen saver whose mind may not write is a blank screen.
+- **The session row tells the truth.** `Resident::Config::dave` is the resident's *startup*
+  position and is what the session row records. A monologue that only threw the switch after the
+  fact would have written `dave: false` on a session that was Dave from its first line — §10.2's
+  lie, one row over. So the launch sets the startup position too, and the switch row that follows
+  records the same fact from the editor's side.
+- **No any-key-to-quit.** A screensaver dismisses on the first keystroke; this one answers it.
+  Typing into the monologue is the whole point of the mode (the interruption is the measurement),
+  so the keyboard participates and never dismisses. Ending is a deliberate chord; quitting is the
+  window's close box.
+- **A driven window is never maximized.** Rule 12: the driver's window is created no-activate and
+  takes nothing. A maximized no-activate window would still cover the operator's screen, so
+  `NIB_DRIVER` wins over `--monologue` on the show state, and only the click gets the full screen.
+  The consequence is that the driver's monologue case cannot check the maximize; the operator's
+  first click does.
+- **Relative theme paths are anchored to the exe.** A bundle launched from a shortcut, from a
+  `.cmd` and from a double-click gets three different working directories. `anchor_to_exe` takes
+  a `model` or `llama_dir` with no drive letter and no root relative to the exe's own directory,
+  so `llama_dir .` means the bundle every time. Absolute paths are untouched, so nothing already
+  configured moves.
+
+**The bundle** (`tools/make_monologue_bundle.py` → `dist/dave-monologue/`, gitignored by
+`*.exe`/`*.dll`): this tree's `nib.exe`, its serve pin checked before it is copied; llama.cpp's
+runtime by allowlist — `llama`, `ggml`, `ggml-base`, every `ggml-cpu-*` (the loader picks by
+score), `ggml-cuda` and its three CUDA libraries, `libomp` — and **never `ggml-rpc.dll`**, refused
+by name, because it imports `ws2_32` and is the DLL rule 2's runtime gate exists to keep out;
+`nib.theme` with the operator's palette, a screensaver-sized font, `llama_dir .`, `ai off`,
+`dave off` (so `--edit` from the bundle is still a plain editor) and the model by absolute path
+unless `--with-model` copied the 6 GB in; `runs/` with the model-hash cache so the first launch
+does not spend seventeen seconds hashing; the `.cmd`, a `.lnk` with a working directory, and
+`About.cmd`, which runs `nib.exe --about --llama-dir <bundle>` — the receipt that the bundle's own
+DLLs bring the backends up and the module gate holds. The bundler runs that receipt itself and
+exits non-zero if the gate does not print.
+
+**How it is tested.** `tools/drive.py --ai` case 14, *the monologue*: the window is launched with
+`--monologue` on a one-line file and **nothing is posted to it** until it is time to stop. It must
+log Dave on before the mind, the mind Ready, the saver begun unasked, two SPEAKER lines said; the
+file must end in `[SPEAKER]` blocks below the untouched human line; the tape must carry `switch`
+rows for `ai`, `dave` and `saver` all going on, exactly one session row with `dave: true`, at least
+two emit rows under the dave cue and none under any other, and a chain that verifies. The bundle
+gets the same launch from a **foreign working directory** (`bundle_smoke.py`, the 09-12 session's
+scratchpad), which is the falsifier for `anchor_to_exe`: if `llama_dir .` resolved against the
+working directory the backends would not load and the run would end in `resident error`.
+
+**Still open, in the order they will bite.** The blocks in the file say `[SPEAKER]`, not Dave:
+rule 6 is satisfied (one voice, announced on the title and the status line), but a render-only
+relabel is exactly the trap §10.3 names, so the label stays until own-speech matching is by
+something other than the seat's name. The first line waits the cue's ~1,010 tokens longer than a
+watcher's would (§4 of the 09-12 bearings), which on a busy card is a visible pause before the
+first word — a number for the ROADMAP, not a defect. And the cue's closing sentence still hands
+him the word *stream* (09-12 bearings F5); on an empty pad his whole monologue is about it.
+
+---
+
+## 12 · The prefix cue landed, and it fixed two of §11's three open items (2026-09-12 evening)
+
+*§11 was written the moment the monologue became clickable, describing the whole-tail cue it still
+carried. The same evening, with the card free and `warden preflight` GO, the persona became a
+**prefix** (§10.5's named fix) and the falsifier was re-run. The numbers below are the measurement;
+they close §11's "still open" items 1 (the horizon) and 3 (the stream fixation). Item 2 (the
+`[SPEAKER]` block label) stands, on purpose — a render-only relabel is §10.3's trap.*
+
+**The change.** Dave's cue is no longer one whole tail. The persona now ends at `Begin.` and the
+sentence that follows it is **chosen the way a watcher's is**: `DAVE_CLOSE_ANSWER` when a seat
+speaks because it was addressed or wanted to (`cue: dave`), `DAVE_CLOSE_RENEWAL` when the saver's
+seat is holding the floor (`cue: dave+saver`, a fifth cue letter `'r'`). The renewal closing
+carries the saver's own law verbatim in Dave's register — *"one sentence that adds something new
+… and never a repeat or a restatement of anything you have already said"* — the sentence that
+bought the horizon of eight and that the whole tail had displaced. Neither closing names a harness
+noun, because the first build's closing said *"the stream above"* and on an empty pad that was the
+only noun Dave had. `dave_cue_hash()` now folds over **both** tails, so the receipt on the session
+row moves if the persona or either closing moves; it is `0xecfbea0abf50ce74`. `kTailReserve` went
+2048 → 3072 to cover the longer of the two (4010 bytes), and `--selftest` fires at the byte bound.
+
+**The measurement** (this box, `Qwen3.5-9B-emit-v11-Q5_K_M`, 16k ctx, q8_0 KV, card free):
+
+| pad | whole tail (09-12) | **prefix (now)** | saver alone |
+|---|---|---|---|
+| empty | 4 | **6** | 8 |
+| four lines of notes | 2 | **4** | 3 |
+
+And what he *says* changed more than the count did. On the empty pad the whole-tail cue produced
+six near-repeats about *the stream*; the prefix produces a developed riff on one of the persona's
+own obsessions — *"The history of standardized time is … a violent imposition of order on something
+fluid … a grid laid over a river … the river doesn't care about the grid; it just finds a way
+through the cracks"* — and stops when the manners refuse a repeat of it. On the notes pad he grounds
+in the real notes (postgres 16, the migration script) and brings in *abandoned infrastructure*.
+Persona violations across the empty, notes and margins runs: **0 / 1 / 1** (an em dash each in two),
+harness words **0** — the stream fixation is gone.
+
+**Green.** `--selftest` **255/0** (the dave section now checks four cues, the persona shared byte
+for byte up to `Begin`, "never a repeat" only in the renewal closing, and neither closing naming
+the stream). `drive.py` **33/0**. `drive.py --ai` **88/0** — case 14 *the monologue* now says two
+lines with nothing posted and three lines under Dave's cues, and the window's Dave developed the
+same obsession the CLI did (*"the history of standardized time"*). The bundle rebuilt on the new
+exe; its `--about` gate prints `no network module in the process` and the pin verbatim.

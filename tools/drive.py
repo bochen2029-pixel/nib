@@ -59,7 +59,7 @@ def check(ok, what):
 class Nib:
     """One running window, driven by messages and read through its log."""
 
-    def __init__(self, exe, path, log):
+    def __init__(self, exe, path, log, verb="--edit"):
         self.log = log
         # NIB_DRIVER makes the window no-activate: posted messages still arrive, the keyboard never
         # does. Without it a test window takes the foreground and eats whatever the operator is
@@ -69,7 +69,7 @@ class Nib:
         # checks (Stage 1a's falsifier) can fire without a resident; with the AI switch on, the
         # compiler runs regardless.
         env = dict(os.environ, NIB_LOG=log, NIB_DRIVER="1", NIB_COMPILE="1")
-        self.proc = subprocess.Popen([exe, "--edit", path], env=env)
+        self.proc = subprocess.Popen([exe, verb, path], env=env)
         # Bind to the window belonging to THIS process. FindWindow by class alone will happily
         # return a leftover from a previous case, or the operator's own editor — which made two
         # runs in three fail in ways that had nothing to do with the code under test.
@@ -420,6 +420,11 @@ def main():
     # checkable on a machine with no card. What it SOUNDS like is a measurement, and it is not this.
     print(LF + "dave mode")
     davef, log8 = scratch("dave.txt"), scratch("eight.log")
+    # A test that inherits a tape from a previous run is testing the previous run (HANDOFF 4.10).
+    # scratch() clears the document and never the tape beside it, and the tape is what this case
+    # reads: on 2026-09-12 the second run ever made against the right exe found FOUR dave switch
+    # rows, two of them from 2026-09-10, so the 33/0 this branch recorded was a first-run number.
+    scratch("dave.txt.tape.jsonl")
     n8 = Nib(a.exe, davef, log8)
     n8.type("The staging database is mysql 5.")
     nb = n8.count("dave")
@@ -808,6 +813,67 @@ def main():
         except Exception as ex:
             check(False, "the saver's tape did not parse: %s" % ex)
         v = subprocess.run([a.exe, "--verify", doc9 + ".tape.jsonl"], capture_output=True, text=True)
+        check(v.returncode == 0 and "INTACT" in v.stdout, "and its chain verifies: %s" % v.stdout.strip())
+
+        # ---- 14 · THE MONOLOGUE: --monologue, the screen saver with a person in it ------------
+        # docs/DAVE_MODE.md §2, Dave × SAVER, thrown by the launch and not by a hand: the window
+        # opens with the mind loading, Dave on and the saver armed; once the trunk is Ready the
+        # standing instruction goes in as world and the SPEAKER holds the floor in Dave's voice.
+        # Nothing is posted to the window until it is time to stop. The tape must say all of it:
+        # three switch rows, a session row with dave true, and every line composed under the dave
+        # cue with saver true beside it — the pair DAVE_MODE.md §10 says is never ambiguous.
+        print(LF + "the monologue")
+        doc10, log10 = scratch("monologue.txt"), scratch("ten.log")
+        ai_files = ai_files + (doc10, doc10 + ".tape.jsonl", log10, doc10 + ".trunk.bin", doc10 + ".trunk.bin.prev",
+                               doc10 + ".trunk.meta", doc10 + ".trunk.txt")
+        for stale in (doc10 + ".tape.jsonl", doc10 + ".trunk.bin", doc10 + ".trunk.bin.prev", doc10 + ".trunk.meta", doc10 + ".trunk.txt"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+        human = "Notes for tonight."
+        with open(doc10, "w", encoding="utf-8", newline="") as f:
+            f.write(human + LF)
+        n10 = Nib(a.exe, doc10, log10, verb="--monologue")
+        drow = n10.wait_for("dave", 0, timeout=10)
+        check(drow is not None and drow[1] == "1", "Dave went on at the launch, before the mind: %s" % (drow[1] if drow else "no dave line",))
+        rr = n10.wait_for_match("resident", lambda l: l[1] in ("ready", "error"), 0, timeout=150)
+        check(rr is not None and rr[1] == "ready", "the launch switched the mind on by itself: %s" % (rr[2:4] if rr else "no resident",))
+        if rr is not None and rr[1] == "ready":
+            srow = n10.wait_for("saver", 0, timeout=20)
+            check(srow is not None and srow[1] == "1", "and the saver began once the trunk was Ready, unasked: %s" % (srow[2][:40] if srow and len(srow) > 2 else "no saver line",))
+            e1 = n10.wait_for_match("emit", lambda l: l[2] == "SPEAKER", 0, timeout=90, poll=0.1)
+            e2 = n10.wait_for_match("emit", lambda l: l[2] == "SPEAKER", 1, timeout=90, poll=0.1) if e1 else None
+            check(e1 is not None and e2 is not None,
+                  "Dave holds the floor: two lines said with nothing posted to the window: %r / %r"
+                  % (e1[5][:48] if e1 else "none", e2[5][:48] if e2 else "none"))
+            n10.save()
+            lines = read_bytes(doc10).decode("utf-8", "replace").split(LF)
+            sp = [i for i, x in enumerate(lines) if x.startswith("[SPEAKER] ")]
+            nonblank = [i for i, x in enumerate(lines) if x.strip()]
+            check(bool(sp) and lines[0] == human and lines[nonblank[-1]].startswith("[SPEAKER] "),
+                  "his lines are the tail of the document and the human's line is untouched (%d SPEAKER lines)" % len(sp))
+        nr = n10.count("resident")
+        n10.cmd("ai_off")   # takes the saver with it (ai_set), and the tape says so
+        n10.wait_for_match("resident", lambda l: l[1] == "off", nr, timeout=40)
+        n10.save()
+        n10.close()
+        try:
+            with open(doc10 + ".tape.jsonl", encoding="utf-8") as f:
+                mrows = [json.loads(l) for l in f if l.strip()]
+            on = set(r["body"]["which"] for r in mrows[1:] if r.get("kind") == "switch" and r.get("body", {}).get("to") == "on")
+            sess = [r.get("body", {}) for r in mrows[1:] if r.get("kind") == "session"]
+            dave_cues = ("dave", "dave+saver")   # his answer, and his renewals under the saver's closing
+            dave_lines = [r for r in mrows[1:] if r.get("kind") == "emit" and r.get("body", {}).get("cue") in dave_cues]
+            saver_lines = [r for r in mrows[1:] if r.get("kind") == "emit" and r.get("body", {}).get("saver") is True]
+            other_cue = [r for r in mrows[1:] if r.get("kind") == "emit" and r.get("body", {}).get("cue") not in dave_cues]
+            check(on >= set(["ai", "dave", "saver"]) and len(sess) == 1 and sess[0].get("dave") is True
+                  and len(dave_lines) >= 2 and len(saver_lines) >= 1 and not other_cue,
+                  "the tape says who was on the other end: switches %s, session dave=%s, %d lines under Dave's cues (%d with saver true), %d under any other cue"
+                  % (sorted(on), sess[0].get("dave") if sess else "?", len(dave_lines), len(saver_lines), len(other_cue)))
+        except Exception as ex:
+            check(False, "the monologue's tape did not parse: %s" % ex)
+        v = subprocess.run([a.exe, "--verify", doc10 + ".tape.jsonl"], capture_output=True, text=True)
         check(v.returncode == 0 and "INTACT" in v.stdout, "and its chain verifies: %s" % v.stdout.strip())
 
         kinds = collections.Counter(r.get("kind") for r in rows[1:])

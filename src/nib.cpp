@@ -19,7 +19,7 @@
 
 namespace nib {
 int run_selftest();                          // selftest.cpp
-int run_editor(const std::string& path);     // edit.cpp
+int run_editor(const std::string& path, bool monologue = false);   // edit.cpp
 
 namespace {
 
@@ -28,6 +28,9 @@ const char* kUsage =
     "\n"
     "  nib --selftest                  the oracle: the port, the document, the compiler, the gates\n"
     "  nib --edit [FILE]               the window\n"
+    "  nib --monologue [FILE]          the screen saver with a person in it: full screen, the mind switched\n"
+    "                                  on by the launch, Dave holding the floor from the first line;\n"
+    "                                  typing anywhere is the interruption, Ctrl+Shift+M ends it\n"
     "  nib --about                     what this build is: version, serve hash, DLLs, the module gate\n"
     "  nib --verify TAPE.jsonl         walk a tape's chain (any tape in the family's format)\n"
     "  nib --unpack CS                 split a changeset into oldLen, newLen, ops and charBank\n"
@@ -45,8 +48,8 @@ const char* kUsage =
     "                   world and holds the floor, renewing its want at every line it says, until N\n"
     "                   lines or the manners refuse it - the MONOLOGUE HORIZON (needs --emit)\n"
     "        --dave     DAVE MODE: the same gate, the same seat, a different voice. Lines are\n"
-    "                   composed with the unpinned dave cue and every row says cue: dave. It is\n"
-    "                   orthogonal to --saver and composes with it (needs --emit)\n"
+    "                   composed with the unpinned dave cue and every row says cue: dave, or\n"
+    "                   cue: dave+saver for a renewal under --saver, which it composes with (needs --emit)\n"
     "\n"
     "Without --emit the resident computes hold/emit and records it, and no sampler exists in the\n"
     "process. In the window, Ctrl+Shift+A switches it on and off; off unloads the model.\n";
@@ -415,6 +418,7 @@ int main(int argc, char** argv) {
     const std::string a = argc > 1 ? argv[1] : "--help";
     if (a == "--selftest") return run_selftest();
     if (a == "--edit") return run_editor(argc > 2 ? argv[2] : "");
+    if (a == "--monologue") return run_editor(argc > 2 ? argv[2] : "", true);
     if (a == "--about") return do_about(argc, argv);
     if (a == "--ingest") return do_ingest(argc, argv);
     if (a == "--resident") return do_resident(argc, argv);

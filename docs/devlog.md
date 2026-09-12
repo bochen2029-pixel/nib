@@ -1143,3 +1143,53 @@ docs/BRAINSTORMS_2026-09-05.md section 4, filed the same evening from the operat
   a watcher restating a catch, not for a person whose register is recurrent, so repeat refusals in
   RESIDENT should be expected and NOT quietly tuned away - if the constant moves it becomes
   dave_dup_overlap on the session row, like every other coefficient.
+
+## 2026-09-12 (evening) · the monologue: Dave x SAVER as a thing you click, and the prefix cue
+
+- THE ASK, after the 09-12 falsifier fired: "finish and polish dave screensaver and make it a
+  portable exe that is clickable and launches into dave monologue mode." Dave x SAVER already IS
+  "Dave holds the floor and talks until you interrupt" (DAVE_MODE.md §2), so the work was a launch
+  path, a fix for the horizon collapse the falsifier had just measured, and a bundle.
+- THE LAUNCH: `nib --monologue [FILE]` (edit.cpp run_editor gains a bool). Opens the window
+  MAXIMIZED, titled "Dave - the resident holds the floor", and throws three switches itself in a
+  hand's order, each a switch row on the tape: dave on (WHO), then saver on (WHEN) - and saver_set,
+  as always, powers the mind on and arms itself, so poll_wire begins the monologue once Ready and
+  folded. emit and the resident's startup dave position are forced on so the session row does not
+  lie (a monologue that threw the switch only after the fact would write dave:false on a session
+  that was Dave from its first line - SS10.2's lie, one row over). The theme's ai/dave keys are not
+  consulted: the launch IS the request. A driven window still takes nothing and is never maximized
+  (rule 12 wins over --monologue on the show state), so the driver case cannot check the maximize;
+  the first click does.
+- anchor_to_exe: a model or llama_dir with no drive letter is resolved against the EXE's directory,
+  never the working directory, because a bundle launched by a .cmd, a .lnk and a double-click gets
+  three different working directories and its `llama_dir .` has to mean the bundle every time.
+- THE HORIZON FIX (DAVE_MODE.md SS10.5's prediction, built and measured the same evening). The
+  whole-tail persona displaced the saver's "one sentence that adds something new, never a repeat"
+  and halved the horizon (empty 8->4, notes 3->2, measured 09-12). So the persona is now a PREFIX
+  ending at "Begin.", and the closing is chosen like a watcher's: DAVE_CLOSE_ANSWER (cue 'd') when
+  a seat speaks because addressed or wanting to, DAVE_CLOSE_RENEWAL (cue 'r', named "dave+saver")
+  carrying the saver's law verbatim when the saver's seat holds the floor. Neither closing names a
+  harness noun (the first build's said "the stream above", and on an empty pad that was the only
+  noun Dave had, so the whole monologue was about it). Recovered: empty 4->6, notes 2->4; and what
+  he says is a developed riff on a persona obsession (standardized time -> "a grid laid over a
+  river"), not six near-repeats about the stream. Persona violations across empty/notes/margins:
+  0/1/1; harness words 0. dave_cue_hash now folds both tails (0xecfbea0abf50ce74); kTailReserve
+  2048->3072 for the longer tail (4010 bytes), checked at the byte bound by --selftest.
+- THE BUNDLE (tools/make_monologue_bundle.py -> dist/dave-monologue/, gitignored): this tree's
+  nib.exe with its pin checked before copy; the llama.cpp runtime by allowlist (llama, ggml,
+  ggml-base, every ggml-cpu-*, ggml-cuda + its three CUDA libs, libomp) and NEVER ggml-rpc.dll,
+  refused by name because it imports ws2_32; a theme with llama_dir ., a screensaver font, ai/dave
+  off (so --edit from the bundle is still an editor), the model by absolute path unless
+  --with-model; runs/ with the hash cache; "Dave monologue.cmd" (start "" "%~dp0nib.exe"
+  --monologue), a .lnk with a working dir, and About.cmd. The bundler runs nib --about --llama-dir
+  <bundle> itself and exits non-zero unless the module gate prints. 1.1 GB copied; --with-model
+  adds the 6 GB and needs nothing outside itself but a card.
+- Green: --selftest 255/0 (was 252), drive.py 33/0, drive.py --ai 88/0 (was 85/3 - the two
+  monologue-case fails were the horizon collapse; the un-say fail was the 3-char sampler race and
+  did not recur on the re-run the handoff rule requires). Pin verbatim on the tree exe and the
+  bundle exe, both build gates, /W4 /WX clean. Falsifier transcripts archived under
+  runs/2026-09-12-dave-monologue/ (gitignored).
+- STILL OPEN, unchanged: the blocks in the file say [SPEAKER], not Dave (rule 6 is met - one voice,
+  named on the title and status line - and a render-only relabel is SS10.3's trap, so it waits for
+  own-speech matching by something other than the seat name); the first line waits the ~1,010-token
+  cue longer than a watcher's, a visible pause on a busy card, a ROADMAP number not a defect.

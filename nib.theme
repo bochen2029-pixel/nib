@@ -21,6 +21,10 @@ llama_dir  C:/llama.cpp
 n_ctx      16384
 gpu_layers 99
 ai         off
+# Dave mode at startup (Ctrl+Shift+D flips it live; each flip is a switch row on the tape). WHO,
+# not WHEN: the gate is untouched, only the cue that phrases a line. `nib --monologue` ignores this
+# key and `ai` above - that launch throws AI, Dave and the screen saver itself.
+dave       off
 # May it WRITE (Stage 2). Nothing happens until the AI switch is on; then a seat whose margin
 # clears zero composes one sentence and writes it as its own block, prefixed with its name.
 emit       on

@@ -176,6 +176,8 @@ struct View {
     bool saver_armed = false;   // switched on while the mind was loading: begin once it is Ready
     bool dave = false;          // no `dave_armed` twin: Dave does not wait for the mind, because a
                                 // mode that answers WHO has nothing to say about whether there is one
+    bool monologue = false;     // --monologue: the screen saver with a person in it. The three switches
+                                // were thrown by the launch, not by a hand, and the title says whose floor it is
     size_t last_key_at = 0;     // where the hand last edited, for the per-block floor
     std::vector<Mark> marks;
     std::vector<EditRec> edits;
@@ -278,7 +280,16 @@ std::string narrow(const std::wstring& w) {
 
 void set_status(const std::string& s) { g->status = s; }
 
+// A theme path with no drive and no root is taken relative to the exe's own directory, never the
+// process's working directory: a bundle launched by a shortcut, by a .cmd and by a double-click gets
+// three different working directories, and its `llama_dir .` has to mean the bundle every time.
+std::string anchor_to_exe(const std::string& p) {
+    if (p.empty() || p[0] == '\\' || p[0] == '/' || (p.size() > 1 && p[1] == ':')) return p;
+    return narrow(exe_dir()) + "\\" + p;
+}
+
 void set_title(HWND h) {
+    if (g->monologue) { SetWindowTextW(h, L"Dave — the resident holds the floor"); return; }
     std::wstring t = L"nib — ";
     t += g->path.empty() ? L"untitled" : g->path.substr(g->path.find_last_of(L"\\/") + 1);
     if (dirty()) t += L" •";
@@ -1983,21 +1994,27 @@ LONG WINAPI on_fault(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-int run_editor(const std::string& path_utf8) {
+int run_editor(const std::string& path_utf8, bool monologue) {
     static View view;
     g = &view;
     g->t0 = mono_ms();
+    g->monologue = monologue;
     if (const char* lp = getenv("NIB_LOG")) g->log = fopen(lp, "ab");
     std::set_terminate(on_terminate);
     SetUnhandledExceptionFilter(on_fault);
     load_theme(g->th);
-    g->rcfg.model = g->th.model;
-    g->rcfg.llama_dir = g->th.llama_dir;
+    g->rcfg.model = anchor_to_exe(g->th.model);
+    g->rcfg.llama_dir = anchor_to_exe(g->th.llama_dir);
     g->rcfg.n_ctx = g->th.n_ctx;
     g->rcfg.n_gpu_layers = g->th.gpu_layers;
     g->rcfg.hash_cache = narrow(exe_dir()) + "\\runs\\model-hashes.txt";   // the model's SHA-256, remembered on size and mtime
-    g->rcfg.emit = g->th.emit;
-    g->rcfg.dave = g->th.dave;
+    // THE MONOLOGUE (--monologue): the screen saver with a person in it. The mind must be able to
+    // write whatever the theme says about the editor, so emit is forced on; and the resident's
+    // startup position is Dave, so the session row says so — the switch is thrown below, after the
+    // window exists, and goes on the tape as a switch row like every other state that changes
+    // what the resident is (rule 8).
+    g->rcfg.emit = monologue ? true : g->th.emit;
+    g->rcfg.dave = monologue ? true : g->th.dave;
     g->wire.set_floor_ms(g->th.floor_ms);
 
     // Per-monitor DPI (SPEC 4.1.2). Without this the process is DPI-unaware, GetDpiForWindow
@@ -2042,10 +2059,21 @@ int run_editor(const std::string& path_utf8) {
         open_tape();
     }
 
-    ShowWindow(h, driven ? SW_SHOWNOACTIVATE : SW_SHOW);
+    // A monologue fills the screen: it is watched, not edited. A driven one still takes nothing.
+    ShowWindow(h, driven ? SW_SHOWNOACTIVATE : (monologue ? SW_SHOWMAXIMIZED : SW_SHOW));
     UpdateWindow(h);
-    if (g->th.dave) dave_set(h, true);   // before the mind: the mode does not wait for one
-    if (g->th.ai) ai_set(h, true);
+    if (monologue) {
+        // Dave × SAVER (docs/DAVE_MODE.md §2): WHO first, then WHEN. saver_set switches the mind on
+        // by itself and arms the saver; poll_wire begins it once the trunk is Ready and folded. The
+        // same three switches a hand would throw, in the same order, each a switch row on the tape.
+        // The theme's own ai/dave positions are not consulted: this launch IS the request.
+        set_title(h);
+        dave_set(h, true);
+        saver_set(h, true);
+    } else {
+        if (g->th.dave) dave_set(h, true);   // before the mind: the mode does not wait for one
+        if (g->th.ai) ai_set(h, true);
+    }
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

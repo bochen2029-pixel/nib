@@ -1,11 +1,14 @@
 *.obj
 *.res
 *.exe
+*.dll
 *.pdb
 *.ilk
 *.log
 *.png
 !docs/*.png
+# the monologue bundle is a build artifact - regenerate it with tools/make_monologue_bundle.py
+dist/
 fray.ini
 obj/
 runs/
