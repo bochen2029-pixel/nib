@@ -1537,61 +1537,72 @@ int run_selftest() {
               "the standing instruction addresses the Watcher on the host's lane, and the saver's seat is the SPEAKER");
     }
 
-    section("dave mode - a third cue, and the pin that must not move");
+    section("dave mode - the persona as a prefix, two closings, and the pin that must not move");
     {
         // WHO, not WHEN. Everything here is pure: no model, no card, no DLL. The whole claim of the
         // mode is that it changes the phrasing and nothing else, and these are the checks that the
         // claim is structurally true rather than merely intended.
         check(serve_hash() == kServeHashPin,
-              "the serve hash is still fusord's pin with a third cue in the file - the gate is untouched");
+              "the serve hash is still fusord's pin with Dave's cues in the file - the gate is untouched");
 
-        // The tails are distinct strings, and the unpinned two are NOT the pinned one.
-        check(std::string(cue_tail('p')) != std::string(cue_tail('s')) &&
-              std::string(cue_tail('p')) != std::string(cue_tail('d')) &&
-              std::string(cue_tail('s')) != std::string(cue_tail('d')),
-              "the three cues are three different strings");
+        // Four tails, four different strings: the pinned answer, the saver's renewal, and Dave's
+        // answer and renewal, which share the persona and differ in the closing sentence.
+        const std::string tp = cue_tail('p'), ts = cue_tail('s'), td = cue_tail('d'), tr = cue_tail('r');
+        check(tp != ts && tp != td && tp != tr && ts != td && ts != tr && td != tr,
+              "the four cues are four different strings");
 
         // An unknown letter must fall back to the PINNED tail and never to a mode's words.
-        check(std::string(cue_tail('z')) == std::string(cue_tail('p')) &&
-              std::string(cue_tail(0)) == std::string(cue_tail('p')),
+        check(std::string(cue_tail('z')) == tp && std::string(cue_tail(0)) == tp,
               "a cue letter this build does not know composes with the pinned tail, never with a mode's");
 
         // And it must never be LABELLED pinned, which is the failure the label exists to prevent.
         check(std::string(cue_name('p')) == "pinned" && std::string(cue_name('s')) == "saver" &&
-              std::string(cue_name('d')) == "dave" && std::string(cue_name(0)) == "none" &&
-              std::string(cue_name('z')) == "?",
+              std::string(cue_name('d')) == "dave" && std::string(cue_name('r')) == "dave+saver" &&
+              std::string(cue_name(0)) == "none" && std::string(cue_name('z')) == "?",
               "every cue names itself on the tape, and an unknown one is '?' and not 'pinned'");
 
         // Every tail must close the assistant turn the same way, or the frame the tune saw is gone.
         const std::string close = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
         bool ends = true;
-        for (char c : { 'p', 's', 'd' }) {
-            const std::string t = cue_tail(c);
-            ends = ends && t.size() >= close.size() && t.compare(t.size() - close.size(), close.size(), close) == 0;
-        }
-        check(ends, "all three cues end with the same assistant-turn opener - train and serve agree");
+        for (const std::string* t : { &tp, &ts, &td, &tr })
+            ends = ends && t->size() >= close.size() && t->compare(t->size() - close.size(), close.size(), close) == 0;
+        check(ends, "all four cues end with the same assistant-turn opener - train and serve agree");
 
-        // Dave's cue carries Dave and not a watcher, and says so before the persona begins.
-        const std::string d = cue_tail('d');
-        check(d.find("You are Dave.") != std::string::npos &&
-              d.find("Set that seat aside") != std::string::npos,
-              "the dave cue sets the seat aside in the open and then says who is speaking");
-        check(d.find("\xE2\x80\x94") == std::string::npos,
-              "and contains no em dash, which the persona itself forbids");
+        // Dave's two tails carry Dave and not a watcher, say so before the persona begins, and share
+        // the persona byte for byte: only the closing differs.
+        check(td.find("You are Dave.") != std::string::npos && td.find("Set that seat aside") != std::string::npos &&
+              tr.find("You are Dave.") != std::string::npos && tr.find("Set that seat aside") != std::string::npos,
+              "both dave cues set the seat aside in the open and then say who is speaking");
+        const size_t begin_d = td.find("Begin.\n\n"), begin_r = tr.find("Begin.\n\n");
+        check(begin_d != std::string::npos && begin_d == begin_r && td.compare(0, begin_d + 8, tr, 0, begin_r + 8) == 0,
+              "and they share the persona byte for byte up to Begin - only the closing differs");
+        // The renewal closing carries the saver's law, the sentence that bought the horizon of eight
+        // (docs/SAVER.md) and that a whole-tail persona displaced (DAVE_MODE.md §10.5; measured
+        // 2026-09-12: 8 -> 4 on the empty pad, 3 -> 2 on the notes, one line in the window).
+        check(tr.find("never a repeat") != std::string::npos && td.find("never a repeat") == std::string::npos,
+              "the renewal closing says never a repeat, and the answer closing does not");
+        // Neither closing names the stream: a cue that hands Dave a harness noun gets a monologue
+        // about it (2026-09-12 bearings, F5).
+        check(begin_d != std::string::npos && td.substr(begin_d).find("stream") == std::string::npos &&
+              tr.substr(begin_r).find("stream") == std::string::npos,
+              "and neither closing hands him the word stream");
+        check(td.find("\xE2\x80\x94") == std::string::npos && tr.find("\xE2\x80\x94") == std::string::npos,
+              "and neither contains an em dash, which the persona itself forbids");
 
         // THE RESERVE (resident.h kTailReserve). A byte bound, so this needs no tokenizer: no BPE
         // token for ASCII prose averages under two characters, so bytes/2 is a safe upper bound on
         // the token count. If a tail ever outgrows the reserve, this fails here and not on the card.
         size_t worst = 0;
-        for (char c : { 'p', 's', 'd' }) worst = worst > strlen(cue_tail(c)) ? worst : strlen(cue_tail(c));
+        for (const std::string* t : { &tp, &ts, &td, &tr }) worst = worst > t->size() ? worst : t->size();
         check((long long)(worst / 2) + 28 + 64 < kTailReserve,
               ssprintf("the longest cue is %zu bytes, under the %lld-token tail reserve with the sentence after it",
                        worst, (long long)kTailReserve));
 
-        // The receipt for an unpinned string: a stable, non-zero hash that is not the serve pin.
+        // The receipt for the unpinned strings: one stable, non-zero hash over both of Dave's tails,
+        // which is not the serve pin and moves if the persona or either closing moves.
         const uint64_t dh = dave_cue_hash();
         check(dh != 0 && dh != kServeHashPin && dh == dave_cue_hash(),
-              ssprintf("the dave cue has its own stable hash 0x%016llx, which is not the pin",
+              ssprintf("the dave cues have one stable hash 0x%016llx, which is not the pin",
                        (unsigned long long)dh));
     }
 

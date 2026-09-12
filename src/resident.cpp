@@ -90,11 +90,21 @@ static const char* SAVER_CUE_C =
 // failure path in front of the mode and would break SPEC 9.5, which says the resident may not touch
 // the file system beyond the open document. `dave_cue_hash()` is how the tape says which bytes spoke.
 //
-// Two rules govern the wording around it. No em dash anywhere: the persona forbids them, and a cue
-// that models one teaches the thing it forbids. And the closing sentence names an ACTION, never a
+// Three rules govern the wording around it. No em dash anywhere: the persona forbids them, and a cue
+// that models one teaches the thing it forbids. The closing sentence names an ACTION, never a
 // scene — the courier's finding of 2026-09-09, where handing Dave a scene made him render the scene
-// and invent the other correspondent's dialogue, while handing him an action worked.
-static const char* DAVE_CUE_C =
+// and invent the other correspondent's dialogue, while handing him an action worked. And the
+// closing names no harness noun: the first build's closing said "the stream", and on an empty pad
+// that was the only noun he had, so every line of his monologue was about it (2026-09-12).
+//
+// THE PERSONA IS A PREFIX, NOT A TAIL (DAVE_MODE.md §10.5, measured 2026-09-12). The first build
+// made Dave's cue one whole tail, which displaced the saver's continuation law - "one sentence that
+// adds something new, never a repeat" - and halved the monologue horizon (8 -> 4 on the empty pad,
+// 3 -> 2 on the notes; one line, then silence, in the window). So the persona ends at "Begin." and
+// the closing that follows it is chosen the way it is chosen for a watcher: the ANSWER closing when
+// a seat speaks because it was addressed or wanted to, the RENEWAL closing when the saver's seat
+// is holding the floor. Same bytes of Dave either way; the tape says which closing (cue_name).
+static const char* DAVE_PERSONA =
     ". Set that seat aside. It is how you were addressed, not who you are.\n"
     "\n"
     "You are Dave. You are not an assistant. The word \"assistant\" does\n"
@@ -165,13 +175,20 @@ static const char* DAVE_CUE_C =
     "They want you to be here.\n"
     "\n"
     "Begin.\n"
-    "\n"
-    "You have been reading the stream above. Say the one thing you want to say about it now. One or two sentences. No preamble.<|im_end|>\n"
-    "<|im_start|>assistant\n"
-    "<think>\n"
-    "\n"
-    "</think>\n"
     "\n";
+
+// The two closings. The answer's is the pinned cue's job in Dave's register (one thing, now, no
+// preamble, and no noun to fixate on); the renewal's is the saver's law in Dave's register, with
+// the em dashes the saver's own sentence uses replaced, because the persona forbids them.
+static const char* DAVE_CLOSE_ANSWER =
+    "Say the one thing you want to say now. One or two sentences. No preamble."
+    "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
+static const char* DAVE_CLOSE_RENEWAL =
+    "You were asked to keep talking until you are interrupted, and you are holding the floor. Give "
+    "your next sentence now: one sentence that adds something new (a thought, an observation, a "
+    "question, an aside) and never a repeat or a restatement of anything you have already said. "
+    "No preamble."
+    "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n";
 
 const Seat* seats() { return kSeats; }
 size_t seat_count() { return 3; }
@@ -197,18 +214,17 @@ uint64_t serve_hash() {
     return h;
 }
 
-// The dave cue's own hash. NOT part of serve_hash() and never mixed into it: this is a RECEIPT for
-// an unpinned string, so the tape can say which persona bytes composed a line, and not a pin that
-// gates a start. Rule 8's price for a mode whose words are not frozen.
-uint64_t dave_cue_hash() { return fnv1a(1469598103934665603ull, DAVE_CUE_C); }
-
 // Which tail composes a line: 'p' the pinned cue, the only one inside serve_hash(); 's' the saver's
-// continuation cue; 'd' Dave's. An unknown letter falls back to the PINNED tail and never to a
-// mode's, so a value this build does not understand cannot quietly put a mode's words in the frame.
+// continuation cue; 'd' Dave answering; 'r' Dave renewing under the saver's law. An unknown letter
+// falls back to the PINNED tail and never to a mode's, so a value this build does not understand
+// cannot quietly put a mode's words in the frame.
 const char* cue_tail(char cue) {
+    static const std::string dave_answer  = std::string(DAVE_PERSONA) + DAVE_CLOSE_ANSWER;
+    static const std::string dave_renewal = std::string(DAVE_PERSONA) + DAVE_CLOSE_RENEWAL;
     switch (cue) {
         case 's': return SAVER_CUE_C;
-        case 'd': return DAVE_CUE_C;
+        case 'd': return dave_answer.c_str();
+        case 'r': return dave_renewal.c_str();
         default:  return CUE_C;
     }
 }
@@ -220,10 +236,17 @@ const char* cue_name(char cue) {
         case 'p': return "pinned";
         case 's': return "saver";
         case 'd': return "dave";
+        case 'r': return "dave+saver";
         case 0:   return "none";     // a suppression that composed nothing
         default:  return "?";
     }
 }
+
+// The dave cues' own hash. NOT part of serve_hash() and never mixed into it: this is a RECEIPT for
+// unpinned strings, so the tape can say which persona bytes - and which closings - composed a line,
+// and not a pin that gates a start. Rule 8's price for a mode whose words are not frozen. One hash
+// over both tails, so it moves if the persona or either closing moves.
+uint64_t dave_cue_hash() { return fnv1a(fnv1a(1469598103934665603ull, cue_tail('d')), cue_tail('r')); }
 
 // ---- the manners, pure ------------------------------------------------------------------------
 // Lowercase, letters and digits only, one space between words and one at each end, so a phrase can
@@ -1188,12 +1211,13 @@ void Resident::speak_wants(Seam* seam, std::vector<Judgment>* late, int only_sea
         const bool saver_seat = saver_ && m == kSaverSeat;
         const int tries = saver_seat ? 1 + (cfg_.saver_retries > 0 ? cfg_.saver_retries : 0) : 1;
         // WHICH TAIL COMPOSES THIS LINE. The two axes are orthogonal (docs/DAVE_MODE.md §2): the
-        // saver decides WHEN a seat may speak, Dave decides WHO is speaking, and they compose. The
-        // saver's renewal wants the continuation cue; Dave wants the persona; when both are on
-        // Dave's is the tail, and the row says `cue: dave` with `saver: true` beside it, so the
-        // pair is never ambiguous on the tape.
+        // saver decides WHEN a seat may speak, Dave decides WHO is speaking, and they compose. A
+        // renewal wants the continuation law and Dave wants the persona; when both are on, the
+        // persona is the prefix and the saver's law is the closing ('r', named "dave+saver" on the
+        // row), so neither displaces the other - the whole-tail version halved the horizon
+        // (DAVE_MODE.md §10.5, measured 2026-09-12).
         const bool renewal = saver_seat && w.renewal && cfg_.saver_cue;
-        const char cue = dave_ ? 'd' : (renewal ? 's' : 'p');
+        const char cue = dave_ ? (renewal ? 'r' : 'd') : (renewal ? 's' : 'p');
         for (int t = 0; t < tries; ++t) {
             Emission e;
             if (!speak(m, w.boundary, w.margin, w.clause, e, seam, late, cue)) break;

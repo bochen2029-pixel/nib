@@ -139,7 +139,7 @@ bool near_dup(const std::string& a, const std::string& b);
 bool looks_like_acceptance(const std::string& s);
 
 // The cue tails and the names they wear on the tape. Pure, so --selftest fires at them with no
-// model and no card. Only CUE_C is inside serve_hash(); cue_tail is what makes the other two
+// model and no card. Only CUE_C is inside serve_hash(); cue_tail is what makes the other three
 // reachable, and cue_name is what stops a row claiming the pinned frame composed a mode's line.
 const char* cue_tail(char cue);
 const char* cue_name(char cue);
@@ -176,7 +176,10 @@ uint64_t dave_cue_hash();
 // fires at the RELATIONSHIP rather than trusting it (a byte bound, so the check needs no model).
 // If a tail is ever lengthened past it, the selftest fails at the desk instead of the run failing
 // on the card. `fold_budget_bytes()` in edit.cpp subtracts the same constant and must move with it.
-inline constexpr long long kTailReserve = 2048;
+// 2048 covered the one Dave tail of 2026-09-10 (~1,010 tokens); 3072 covers the two of 2026-09-12,
+// the longer of which carries the persona and the saver's renewal law, against the byte bound
+// --selftest checks (bytes/2 + the sentence after it).
+inline constexpr long long kTailReserve = 3072;
 
 // The DLLs, loaded by name and never by directory: `ggml_backend_load_all_from_path` would also
 // load `ggml-rpc.dll`, which imports ws2_32 — a socket library in a process whose status line
