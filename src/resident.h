@@ -239,6 +239,12 @@ public:
         // Dave mode's position at startup (the theme's `dave` key, or --dave). The switch may flip
         // at any time; this is only where it starts, and the session row records it.
         bool  dave = false;
+        // The sampler's distribution seed. Fusord's is 11, and 11 is KEPT for every reproducible
+        // path - the CLI, the twin, the driver - so a life replays byte for byte. It is NOT in
+        // serve_hash (the pin is over the seed STRINGS and the frames, not this integer), so it is
+        // free to vary, and a real human window sets it from the clock (edit.cpp): a screen saver
+        // that says the same words every launch is a canned tape, not a resident.
+        uint32_t seed = 11;
     };
     static constexpr int kMinCtx = 2048;   // below this the window is smaller than the seed's margin
 

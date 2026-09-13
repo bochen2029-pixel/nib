@@ -41,7 +41,7 @@ const char* kUsage =
     "  nib --ingest FILE [opts]        compile a file as if typed; print the percept stream\n"
     "        --lane L --chars N --quiet-ms T --tick-s S --burst N --burst-ms M --counts\n"
     "  nib --resident FILE [opts]      run the mind over it; print what each seat wanted\n"
-    "        --model P --ctx N --gpu-layers N --all --verbose --allow-cpu   (needs the GPU)\n"
+    "        --model P --ctx N --gpu-layers N --seed N --all --verbose --allow-cpu   (needs the GPU)\n"
     "        --script   FILE is a script: a line is typed; '- text' is removed; '# N' is N s of quiet\n"
     "        --emit     LET IT SPEAK: every seat whose margin clears zero composes one sentence\n"
     "        --saver [--saver-lines N]   after the file, the screen saver: the SPEAKER is addressed as\n"
@@ -211,6 +211,7 @@ int do_resident(int argc, char** argv) {
         else if (f == "--llama-dir" && i + 1 < argc) rc.llama_dir = argv[++i];
         else if (f == "--ctx" && i + 1 < argc) rc.n_ctx = atoi(argv[++i]);
         else if (f == "--gpu-layers" && i + 1 < argc) rc.n_gpu_layers = atoi(argv[++i]);
+        else if (f == "--seed" && i + 1 < argc) rc.seed = (uint32_t)strtoul(argv[++i], nullptr, 10);
         else if (f == "--lane" && i + 1 < argc) lane = argv[++i];
         else if (f == "--chars" && i + 1 < argc) cc.chars = (size_t)atoll(argv[++i]);
         else if (f == "--tick-s" && i + 1 < argc) cc.idle_tick_s = atoll(argv[++i]);

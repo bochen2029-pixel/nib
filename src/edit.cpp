@@ -179,6 +179,10 @@ struct View {
     bool monologue = false;     // --monologue: the screen saver with a person in it. The three switches
                                 // were thrown by the launch, not by a hand, and the title says whose floor it is
     size_t last_key_at = 0;     // where the hand last edited, for the per-block floor
+    uint64_t last_saver_emit_ms = 0;   // when the monologue last said a line; past kSaverReaddressMs of
+                                       // quiet the editor re-addresses so it never dies after the horizon
+    int saver_prompt_i = 0;     // which standing prompt the next (re-)address uses; rotates so a dry
+                                // spell gets a NEW subject, not one the manners refuse as a repeat
     std::vector<Mark> marks;
     std::vector<EditRec> edits;
     struct { uint32_t boundary = 0; int n = 0; JudgmentRow rows[3]; } pend;   // three seats, one row
@@ -245,6 +249,11 @@ View* g = nullptr;
 constexpr int kPad = 8;
 constexpr int kGutter = 10;   // the margin where a judged line carries its mark
 constexpr uint64_t kCkptEveryMs = 300000;   // the periodic checkpoint's interval at quiet: five minutes, as K5 has it
+// The screen saver's re-address gap. When the monologue has been silent this long - the manners
+// refused the seat and it held, or it ran dry - and the hand is quiet, a fresh address on the
+// host's lane starts a new thread. Long enough never to fire mid-sentence (a line is a second or
+// two) and never onto the human mid-thought; short enough that the pad does not feel dead.
+constexpr uint64_t kSaverReaddressMs = 7000;
 
 void nlog(const char* fmt, ...) {
     if (!g || !g->log) return;
@@ -972,9 +981,25 @@ void ai_set(HWND h, bool on) {
 void saver_begin(HWND h) {
     if (!g->ingest || g->wire.state() != WireState::Ready) return;
     g->wire.set_saver(true);
-    g->ingest->typed(kSaverLane, std::string(kSaverAddress) + "\n", mono_ms(), g->doc.size(), g->doc.revisions());
+    // A ROTATION of standing prompts, world on the host's lane. Index 0 is the canonical address,
+    // so a fresh launch and the driver see it unchanged; each dry-spell re-address takes the next,
+    // so the resident is handed a NEW subject rather than the same one - which, with his own prior
+    // lines already in the trunk, the manners refuse as a repeat and he holds (measured 2026-09-13:
+    // re-addressing with the same line fired but produced no new line). They are WORLD, not cues:
+    // the pinned gate still decides whether he answers, and the tape carries the exact prompt.
+    static const char* kSaverPrompts[] = {
+        kSaverAddress,
+        "Talk to me about something else now, a different subject.",
+        "What else is on your mind? Pick a new thread and go.",
+        "Change the subject: tell me about a thing you have not mentioned yet.",
+        "Say the next thing, about anything but what you just said.",
+    };
+    const char* prompt = kSaverPrompts[g->saver_prompt_i % (int)(sizeof kSaverPrompts / sizeof *kSaverPrompts)];
+    ++g->saver_prompt_i;
+    g->ingest->typed(kSaverLane, std::string(prompt) + "\n", mono_ms(), g->doc.size(), g->doc.revisions());
     tape_percepts();
-    nlog("saver	1	%s", kSaverAddress);
+    g->last_saver_emit_ms = mono_ms();   // the new thread gets its full gap before the editor re-addresses again
+    nlog("saver	1	%s", prompt);
     set_status("screen saver: the resident holds the floor - type anywhere to interrupt, Ctrl+Shift+M ends it");
     InvalidateRect(h, nullptr, TRUE);
 }
@@ -1129,6 +1154,7 @@ void commit_emission(HWND h, const EmitRow& r) {
         const std::string say(r.say);
         g->ingest->own(seats()[r.seat].name, say, mono_ms(), at + ins.size() - 1 - say.size(), g->doc.revisions());
     }
+    if (saver_line) g->last_saver_emit_ms = mono_ms();   // the monologue is alive; the re-address timer resets
     ++g->emit_rows;
     tape_row_at("emit", r.wall_ms, canon::obj({
         { "i", canon::num((int64_t)r.boundary) }, { "seat", canon::str(seats()[r.seat].name) },
@@ -1727,6 +1753,17 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                     g->wire.request_checkpoint(ckpt_base() + ".bin", "periodic");
                 }
             }
+            // THE SCREEN SAVER STAYS ALIVE. When the monologue has been silent past the gap (the
+            // manners refused the seat and it held, or it ran dry) and the hand is quiet and nothing
+            // is half-perceived, a fresh address on the host's lane starts a new thread. Each
+            // re-address is a real world percept on the tape; with the window's per-launch seed each
+            // thread differs, so the pad keeps talking instead of dying after the horizon.
+            if (g->saver && g->wire.state() == WireState::Ready && g->fold_done && g->ingest && !g->stop_pending) {
+                const uint64_t now = mono_ms();
+                if (now - g->last_saver_emit_ms >= kSaverReaddressMs && now - g->last_key_ms >= kSaverReaddressMs &&
+                    g->ingest->pending() == 0 && g->ingest->spooled() == 0 && !g->ingest->compiler().has_pending())
+                    saver_begin(h);
+            }
             if (g->tape_dirty) { g->tape.flush(); g->tape_dirty = false; }
             if (repaint) InvalidateRect(h, nullptr, FALSE);
             return 0;
@@ -2043,6 +2080,12 @@ int run_editor(const std::string& path_utf8, bool monologue) {
     // fragments of a sentence being typed to another program turned up in the scratch files.
     const bool driven = getenv("NIB_DRIVER") != nullptr;
     g->driven = driven;
+    // The seed the resident samples with. Every DRIVEN or scripted path keeps fusord's 11 so a test
+    // replays byte for byte; a real human window takes a fresh one each launch, so Dave does not say
+    // the same words twice. NIB_SEED pins it either way (for a reproducible human run, and to test
+    // this path no-activate). Not in the pin - the seed strings and frames are, this integer is not.
+    if (const char* s = getenv("NIB_SEED")) g->rcfg.seed = (uint32_t)strtoul(s, nullptr, 10);
+    else if (!driven) g->rcfg.seed = (uint32_t)(GetTickCount64() ^ ((uint64_t)GetCurrentProcessId() << 20));
     HWND h = CreateWindowExW(driven ? WS_EX_NOACTIVATE : 0, wc.lpszClassName, L"nib",
                              WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              CW_USEDEFAULT, CW_USEDEFAULT, 900, 640, nullptr, nullptr, hinst, nullptr);

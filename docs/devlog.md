@@ -1193,3 +1193,29 @@ docs/BRAINSTORMS_2026-09-05.md section 4, filed the same evening from the operat
   named on the title and status line - and a render-only relabel is SS10.3's trap, so it waits for
   own-speech matching by something other than the seat name); the first line waits the ~1,010-token
   cue longer than a watcher's, a visible pause on a busy card, a ROADMAP number not a defect.
+
+## 2026-09-12 (night) · the monologue made watchable - a seed and a re-address, found by running it
+
+- The operator ran the clicked monologue: "says the same canned five lines and never interacts."
+  He was right, and my "verified" was hollow - every test I had written launched it, waited for two
+  lines, and killed it, so I had checked it STARTS, never that it varies, continues, or answers.
+- CANNED: the sampler seed was fusord's fixed 11 (resident.cpp), so every launch was byte-identical.
+  Config::seed carries it now; 11 stays for the CLI/twin/driver/NIB_SEED (reproducible), a human
+  window seeds from the clock. NOT in serve_hash - pin verbatim. --seed N (CLI), NIB_SEED (window).
+  Measured: seed 111 != seed 222 on the same empty pad.
+- DEAD AFTER THE HORIZON: the want dies (live=false) when the manners refuse, and only the seat's
+  own line re-arms it, so an idle empty pad held forever after ~6 lines. The editor now re-addresses
+  when quiet past kSaverReaddressMs and the hand is idle. First try re-fed the SAME address and
+  produced nothing (refused as a repeat with his own lines in the trunk); the fix is a ROTATION of
+  prompts, so a dry spell gets a NEW subject. Measured ~40 s idle: three topics (standardized time
+  -> infrastructure decay -> loneliness), honest repeat refusals between.
+- INTERACTS: a typed line produces new emits (measured); the un-say still takes a forming line back
+  (88/0). He answers in his voice, not on command - the honest gate. The tune is a reluctant watcher,
+  so the monologue is bursty (bursts and pauses), coaxed on by new prompts, not by looser manners.
+- THE BUILD BLOCKER, on the record: build.bat began failing mid-session with cl exiting during
+  "Generating Code..." and NO diagnostic. Not the code - each file compiles alone and --selftest is
+  255/0. Cause: C: is 99.5 % full (9.9 GB of 1862), so the batch cl's codegen temp write fails
+  silently while per-file writes squeak by. Built per file (build_seq.bat, a throwaway) to proceed.
+  This also threatens the week: checkpoints are ~58 MB and F3 (the 09-09 finding) drops tape rows on
+  a failed write without saying so. FREE DISK before the week.
+- Green: --selftest 255/0, pin verbatim, both gates. Committed; bundle rebuilt.

@@ -720,7 +720,7 @@ bool Resident::start(const Config& cfg, std::string& err, const std::string& res
         p_->smp = llama_sampler_chain_init(llama_sampler_chain_default_params());
         llama_sampler_chain_add(p_->smp, llama_sampler_init_min_p(0.05f, 1));
         llama_sampler_chain_add(p_->smp, llama_sampler_init_temp(0.7f));
-        llama_sampler_chain_add(p_->smp, llama_sampler_init_dist(11));
+        llama_sampler_chain_add(p_->smp, llama_sampler_init_dist(cfg_.seed));   // 11 by default; a human window varies it
     }
 
     mib_free_ = vram_free_mib();

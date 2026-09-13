@@ -427,3 +427,49 @@ the stream). `drive.py` **33/0**. `drive.py --ai` **88/0** — case 14 *the mono
 lines with nothing posted and three lines under Dave's cues, and the window's Dave developed the
 same obsession the CLI did (*"the history of standardized time"*). The bundle rebuilt on the new
 exe; its `--about` gate prints `no network module in the process` and the pin verbatim.
+
+---
+
+## 13 · The monologue made watchable — a per-launch seed, and it keeps talking (2026-09-12 night)
+
+*§11–§12 shipped a monologue that STARTS. The operator ran it and hit two things my tests never
+did, because every test I wrote launched it, waited for two lines, and killed it: it said the same
+lines every launch, and it went silent after the first ~6. Both are fixed; both were found by
+running it, not by me.*
+
+**Canned → a per-launch seed.** The sampler's distribution seed was fusord's fixed 11, so an empty
+pad produced a byte-identical monologue every launch (the operator's and mine both opened with "the
+history of standardized time"). 11 is kept for every reproducible path — the CLI, the twin, the
+driver, any `NIB_SEED` run — so a life still replays exactly; a real human window (`--edit`,
+`--monologue`, anything not `NIB_DRIVER`) now seeds from the clock. It is `Config::seed`, and it is
+NOT in `serve_hash` (the pin is over the seed STRINGS and the frames, not this integer), so
+`nib --about` still prints the pin verbatim. `--seed N` on the CLI, `NIB_SEED` in the window.
+Measured: seeds 111 and 222 give different monologues on the same empty pad.
+
+**Died after the horizon → the editor re-addresses with a rotating prompt.** The monologue said its
+~6 lines and held forever: the manners refuse repeats, the want goes `live=false`, and only the
+seat's own next line re-arms it. Now, when the pad has been quiet past `kSaverReaddressMs` and the
+hand is idle, the editor re-addresses on the host's lane — and with a ROTATION of prompts, because
+re-addressing with the same "talk about anything" while his own lines fill the trunk is just refused
+as a repeat (measured: same-line re-address fired and produced no line; rotated prompts produced new
+topics). Each re-address is a real world percept on the tape; the pinned gate still decides whether
+he answers. Measured over ~40 s idle on an empty pad: standardized time → "watching infrastructure
+decay; the cracks tell a better story than the blueprints" → "a specific kind of loneliness in a
+city where everyone checks their watch at the same second" — three topics, honest `repeat` refusals
+between them.
+
+**Typing re-engages him.** A typed line produces new emits (measured), and contradicting a forming
+line still takes it back mid-word (the un-say, `drive.py --ai` 88/0). He answers in his voice, not
+as a Q&A bot: the gate is honest, so he reacts when there is a reason to, not on every keystroke.
+That is the mode, not a shortfall.
+
+**Honest character, unchanged by the fix.** emit-v11 is a WATCHER tune (it mostly holds), so the
+monologue is BURSTY — a few lines, a pause, a re-address, a few more on a new subject — not a
+firehose. That is the tune's disposition (docs/SAVER.md: the horizon is short and that is the
+finding), coaxed into a continuous screen saver by new prompts rather than by loosening the manners.
+
+**Green:** `--selftest` 255/0, pin verbatim. **Build note:** `build.bat` fails on this box right
+now because C: is 99.5 % full (9.9 GB) — the batch `cl` codegen fails on a disk write with no
+diagnostic while each file compiles alone; this exe was built per file. That is an environment
+blocker, not the code, and it will bite the week too (checkpoints are ~58 MB, and F3 drops tape rows
+on a failed write without saying so). Free disk before the week.
